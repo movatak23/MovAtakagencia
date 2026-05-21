@@ -211,6 +211,13 @@ tr:hover td{background:var(--bg3)}
 
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+
+.modal-fu { max-width: 560px; }
+.fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
+.fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
+.fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
+.fu-textarea:focus { border-color: var(--accent); }
+.fu-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -293,7 +300,7 @@ tr:hover td{background:var(--bg3)}
               <th>Convertidos</th>
               <th>Follow up</th>
               <th>Taxa</th>
-              <th>Status</th>
+              <th>Status</th><th>Ações</th>
             </tr>
           </thead>
           <tbody id="clientes-tbody">
@@ -540,6 +547,7 @@ function renderClientes(clientes) {
       <td class="td-amber">${fu}</td>
       <td class="${taxaCls}">${taxa}%</td>
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
+      <td><button onclick="abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button></td>
     </tr>`;
   }).join('');
 }
@@ -617,8 +625,79 @@ document.getElementById('modal').addEventListener('click', e => {
   if (e.target === document.getElementById('modal')) fecharModal();
 });
 
+
+let fuId = null;
+async function abrirFU(id) {
+  fuId = id;
+  document.getElementById('fu-err').textContent = '';
+  document.getElementById('btn-fu-save').textContent = 'Carregando...';
+  document.getElementById('modal-fu').classList.add('open');
+  try {
+    const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
+    document.getElementById('fu-msg1').value = msgs.msg1 || '';
+    document.getElementById('fu-msg2').value = msgs.msg2 || '';
+    document.getElementById('fu-msg3').value = msgs.msg3 || '';
+    document.getElementById('fu-msg4').value = msgs.msg4 || '';
+    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+  }
+}
+function fecharFU() {
+  document.getElementById('modal-fu').classList.remove('open');
+  fuId = null;
+}
+async function salvarFU() {
+  const msg1 = document.getElementById('fu-msg1').value.trim();
+  const msg2 = document.getElementById('fu-msg2').value.trim();
+  const msg3 = document.getElementById('fu-msg3').value.trim();
+  const msg4 = document.getElementById('fu-msg4').value.trim();
+  if (!msg1 || !msg2 || !msg3 || !msg4) {
+    document.getElementById('fu-err').textContent = 'Preencha todas as 4 mensagens.';
+    return;
+  }
+  document.getElementById('btn-fu-save').textContent = 'Salvando...';
+  document.getElementById('fu-err').textContent = '';
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/followup', {
+      method: 'PATCH',
+      body: JSON.stringify({ msg1, msg2, msg3, msg4 })
+    });
+    document.getElementById('btn-fu-save').textContent = 'Salvo!';
+    setTimeout(fecharFU, 1000);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+  }
+}
+document.getElementById('modal-fu').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-fu')) fecharFU();
+});
+
 // Auto refresh a cada 2 minutos
 setInterval(() => { if (secret) carregarTudo(); }, 120000);
 </script>
+
+<div class="modal-overlay" id="modal-fu">
+  <div class="modal modal-fu">
+    <h3 id="fu-titulo">Mensagens de Follow Up</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
+    <label class="fu-label">D+1 — Mensagem 1 <span class="fu-tag">1 dia após</span></label>
+    <textarea class="fu-textarea" id="fu-msg1" rows="3"></textarea>
+    <div class="fu-hint">Enviada 1 dia após a etiqueta Follow Up ser aplicada.</div>
+    <label class="fu-label">D+3 — Mensagem 2 <span class="fu-tag">3 dias após</span></label>
+    <textarea class="fu-textarea" id="fu-msg2" rows="3"></textarea>
+    <label class="fu-label">D+7 — Mensagem 3 <span class="fu-tag">7 dias após</span></label>
+    <textarea class="fu-textarea" id="fu-msg3" rows="3"></textarea>
+    <label class="fu-label">D+14 — Mensagem 4 <span class="fu-tag">14 dias após</span></label>
+    <textarea class="fu-textarea" id="fu-msg4" rows="3"></textarea>
+    <div class="login-err" id="fu-err" style="margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharFU()">Cancelar</button>
+      <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar mensagens</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
