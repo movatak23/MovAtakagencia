@@ -470,6 +470,31 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
   }
 });
 
+// Buscar mensagens de follow up de um cliente
+app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
+  try {
+    const r = await query('SELECT followup_msgs FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    const msgs = r.rows[0].followup_msgs || {
+      msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
+      msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
+      msg3: 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
+      msg4: 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
+    };
+    res.json(msgs);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar mensagens de follow up de um cliente
+app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
+  try {
+    const { msg1, msg2, msg3, msg4 } = req.body;
+    if (!msg1 || !msg2 || !msg3 || !msg4) return res.status(400).json({ error: 'Todas as 4 mensagens sao obrigatorias.' });
+    await query('UPDATE movatak_clientes SET followup_msgs = $1 WHERE id = $2', [JSON.stringify({ msg1, msg2, msg3, msg4 }), req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Atualizar plano de um lead (quando atendente informa qual plano foi vendido)
 app.patch('/movatak/admin/leads/:id/plano', authMovatak, async (req, res) => {
   try {
