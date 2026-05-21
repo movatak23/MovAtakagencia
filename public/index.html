@@ -258,6 +258,7 @@ tr:hover td{background:var(--bg3)}
     <div class="periodo-bar">
       <h2>Visão geral</h2>
       <div class="periodo-btns">
+        <button onclick="setPeriodo(0)" id="p0">Hoje</button>
         <button onclick="setPeriodo(7)" id="p7">7 dias</button>
         <button onclick="setPeriodo(30)" id="p30" class="active">30 dias</button>
         <button onclick="setPeriodo(90)" id="p90">90 dias</button>
@@ -422,7 +423,7 @@ async function api(path, opts = {}) {
 // ── Período ────────────────────────────────────────────────
 function setPeriodo(d) {
   periodoAtual = d;
-  ['7','30','90'].forEach(x => document.getElementById('p'+x).classList.remove('active'));
+  ['0','7','30','90'].forEach(x => document.getElementById('p'+x).classList.remove('active'));
   document.getElementById('p'+d).classList.add('active');
   carregarTudo();
 }
@@ -435,9 +436,9 @@ async function carregarTudo() {
       api('/movatak/admin/clientes')
     ]);
     renderClientes(clientes);
-    renderMetricas(clientes);
+    renderMetricas(clientes, periodoAtual);
     renderGrafico(clientes);
-    renderFunil(clientes);
+    renderFunil(clientes, periodoAtual);
     atualizarStatus('Atualizado agora');
   } catch(e) {
     atualizarStatus('Erro: ' + e.message);
@@ -449,9 +450,14 @@ function atualizarStatus(txt) {
 }
 
 // ── Métricas globais ───────────────────────────────────────
-function renderMetricas(clientes) {
-  const totalLeads   = clientes.reduce((s, c) => s + parseInt(c.total_leads || 0), 0);
-  const convertidos  = clientes.reduce((s, c) => s + parseInt(c.convertidos || 0), 0);
+function renderMetricas(clientes, periodo) {
+  const isHoje = periodo === 0;
+  const totalLeads   = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.leads_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.total_leads || 0), 0);
+  const convertidos  = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.vendas_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.convertidos || 0), 0);
   const followup     = clientes.reduce((s, c) => s + parseInt(c.em_followup || 0), 0);
   const taxa         = totalLeads > 0 ? ((convertidos / totalLeads) * 100).toFixed(1) : '0.0';
   const taxaColor    = parseFloat(taxa) >= 20 ? 'green' : parseFloat(taxa) >= 10 ? 'amber' : 'red-val';
@@ -503,10 +509,15 @@ function renderGrafico(clientes) {
 }
 
 // ── Funil consolidado ──────────────────────────────────────
-function renderFunil(clientes) {
-  const total     = clientes.reduce((s, c) => s + parseInt(c.total_leads || 0), 0);
+function renderFunil(clientes, periodo) {
+  const isHoje = periodo === 0;
+  const total     = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.leads_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.total_leads || 0), 0);
   const followup  = clientes.reduce((s, c) => s + parseInt(c.em_followup || 0), 0);
-  const clientes_ = clientes.reduce((s, c) => s + parseInt(c.convertidos || 0), 0);
+  const clientes_ = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.vendas_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.convertidos || 0), 0);
 
   function step(label, valor, color) {
     const pct = total > 0 ? Math.round((valor / total) * 100) : 0;
