@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Movatak">
+<meta name="theme-color" content="#080810">
+<title>Movatak — Seus Resultados</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#080810;--bg2:#0f0f1c;--bg3:#16162a;--bg4:#1c1c32;
+  --border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.13);
+  --text:#eeeef8;--text2:#7777a0;--text3:#3a3a58;
+  --accent:#5b7fff;--green:#00d084;--amber:#f5a623;--red:#ff5a5a;
+  --mono:'DM Mono',monospace;--sans:'Syne',sans-serif;
+  --safe-top:env(safe-area-inset-top);
+  --safe-bottom:env(safe-area-inset-bottom);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:var(--bg)}
+body{font-family:var(--sans);color:var(--text)}
+
+/* ── Login ── */
+#login{
+  position:fixed;inset:0;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;z-index:100;transition:opacity .3s;
+}
+#login.out{opacity:0;pointer-events:none}
+.login-inner{width:100%;max-width:360px;animation:up .5s ease both}
+.logo-mark{
+  width:64px;height:64px;background:var(--accent);border-radius:18px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:28px;font-weight:800;color:#fff;margin:0 auto 20px;
+  box-shadow:0 0 40px rgba(91,127,255,.35);
+}
+.login-inner h1{font-size:28px;font-weight:800;text-align:center;margin-bottom:6px}
+.login-inner p{font-size:14px;color:var(--text2);text-align:center;margin-bottom:40px}
+.field-label{font-size:11px;color:var(--text2);letter-spacing:.8px;text-transform:uppercase;margin-bottom:8px;display:block}
+.field-input{
+  width:100%;background:var(--bg2);border:1px solid var(--border2);
+  border-radius:12px;padding:16px;font-size:16px;color:var(--text);
+  font-family:var(--mono);outline:none;transition:border-color .2s;
+  -webkit-appearance:none;
+}
+.field-input:focus{border-color:var(--accent)}
+.err{font-size:13px;color:var(--red);margin-top:8px;min-height:18px}
+.btn{
+  width:100%;margin-top:20px;padding:18px;border-radius:12px;
+  background:var(--accent);border:none;color:#fff;font-size:17px;
+  font-weight:700;font-family:var(--sans);cursor:pointer;
+  box-shadow:0 8px 24px rgba(91,127,255,.3);
+  transition:opacity .2s,transform .1s;
+}
+.btn:active{transform:scale(.97);opacity:.9}
+.login-foot{font-size:12px;color:var(--text3);text-align:center;margin-top:32px;line-height:1.6}
+
+/* ── App ── */
+#app{
+  position:fixed;inset:0;display:none;flex-direction:column;
+  padding-top:var(--safe-top);padding-bottom:var(--safe-bottom);
+}
+#app.show{display:flex}
+
+/* Header */
+.hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:16px 20px 12px;border-bottom:1px solid var(--border);
+  background:var(--bg);flex-shrink:0;
+}
+.hdr-left{display:flex;align-items:center;gap:10px}
+.hdr-logo{
+  width:34px;height:34px;background:var(--accent);border-radius:9px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;font-weight:800;color:#fff;
+}
+.hdr-name{font-size:15px;font-weight:700}
+.hdr-sub{font-size:11px;color:var(--text2)}
+.hdr-refresh{
+  width:36px;height:36px;border-radius:9px;border:1px solid var(--border2);
+  background:transparent;color:var(--text2);font-size:18px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer;
+}
+
+/* Filtro período */
+.periodo{
+  display:flex;gap:6px;padding:12px 20px;flex-shrink:0;
+}
+.p-btn{
+  flex:1;padding:10px 0;border-radius:10px;border:1px solid var(--border);
+  background:transparent;color:var(--text2);font-size:14px;font-weight:600;
+  font-family:var(--sans);cursor:pointer;transition:all .2s;
+}
+.p-btn.on{background:var(--accent);border-color:transparent;color:#fff}
+
+/* Scroll area */
+.scroll{flex:1;overflow-y:auto;padding:0 16px 24px;-webkit-overflow-scrolling:touch}
+
+/* Cards */
+.section-lbl{
+  font-size:11px;color:var(--text2);letter-spacing:.8px;text-transform:uppercase;
+  margin:16px 0 8px;
+}
+.cards-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+.card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  padding:16px;position:relative;overflow:hidden;
+}
+.card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:2px;
+  background:var(--c,transparent);border-radius:2px 2px 0 0;
+}
+.card.accent{--c:var(--accent)}
+.card.green{--c:var(--green)}
+.card.amber{--c:var(--amber)}
+.card.red{--c:var(--red)}
+.card-lbl{font-size:11px;color:var(--text2);margin-bottom:8px;letter-spacing:.3px}
+.card-val{font-size:28px;font-weight:800;line-height:1}
+.card.accent .card-val{color:var(--accent)}
+.card.green .card-val{color:var(--green)}
+.card.amber .card-val{color:var(--amber)}
+.card.red .card-val{color:var(--red)}
+.card-sub{font-size:11px;color:var(--text3);margin-top:4px}
+
+/* Plano top */
+.plano-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  padding:16px;display:flex;align-items:center;gap:12px;margin-bottom:10px;
+}
+.plano-icon{font-size:22px}
+.plano-nome{font-size:15px;font-weight:700}
+.plano-sub{font-size:12px;color:var(--text2);margin-top:2px}
+
+/* Gráfico */
+.chart-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  padding:16px;margin-bottom:10px;
+}
+.chart-inner{display:flex;align-items:flex-end;gap:3px;height:80px;margin-bottom:8px}
+.bar-w{flex:1;display:flex;align-items:flex-end}
+.bar-f{width:100%;border-radius:3px 3px 0 0;background:var(--bg4);transition:height .4s ease;min-height:3px}
+.bar-f.hi{background:var(--accent)}
+.chart-row{display:flex;justify-content:space-between}
+.chart-lbl{font-size:10px;color:var(--text3);font-family:var(--mono)}
+
+/* Funil */
+.funil-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:14px;
+  padding:16px;margin-bottom:10px;
+}
+.funil-item{margin-bottom:14px}
+.funil-item:last-child{margin-bottom:0}
+.funil-top{display:flex;justify-content:space-between;margin-bottom:5px}
+.funil-name{font-size:13px;color:var(--text2)}
+.funil-num{font-size:13px;font-weight:700}
+.funil-bg{height:6px;background:var(--bg4);border-radius:3px;overflow:hidden}
+.funil-fill{height:100%;border-radius:3px;transition:width .6s ease}
+.funil-pct{font-size:10px;color:var(--text3);text-align:right;margin-top:3px;font-family:var(--mono)}
+
+/* Loading / erro */
+.state{
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:60px 20px;gap:12px;
+}
+.spin{
+  width:32px;height:32px;border:2px solid var(--border2);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin .7s linear infinite;
+}
+.state-txt{font-size:14px;color:var(--text2);text-align:center}
+.retry{
+  margin-top:8px;padding:10px 20px;border-radius:8px;
+  border:1px solid var(--border2);background:transparent;
+  color:var(--accent);font-size:14px;font-family:var(--sans);cursor:pointer;
+}
+
+/* Hoje destaque */
+.hoje-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes up{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login">
+  <div class="login-inner">
+    <div class="logo-mark">M</div>
+    <h1>Seus Resultados</h1>
+    <p>Acompanhe seus leads e vendas em tempo real</p>
+    <label class="field-label">Token de acesso</label>
+    <input class="field-input" id="tkn" type="text" placeholder="mvtk_xxxx_xxxxxxxx" autocomplete="off" autocapitalize="none">
+    <div class="err" id="err"></div>
+    <button class="btn" id="entrar-btn">Entrar</button>
+    <p class="login-foot">Token fornecido pela equipe Movatak.<br>Dúvidas? Entre em contato com seu consultor.</p>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app">
+  <div class="hdr">
+    <div class="hdr-left">
+      <div class="hdr-logo">M</div>
+      <div>
+        <div class="hdr-name">Movatak</div>
+        <div class="hdr-sub" id="hdr-update">Carregando...</div>
+      </div>
+    </div>
+    <button class="hdr-refresh" id="refresh-btn" title="Atualizar">↻</button>
+  </div>
+
+  <div class="periodo">
+    <button class="p-btn" id="p7" onclick="setPeriodo(7)">7 dias</button>
+    <button class="p-btn on" id="p30" onclick="setPeriodo(30)">30 dias</button>
+    <button class="p-btn" id="p90" onclick="setPeriodo(90)">90 dias</button>
+  </div>
+
+  <div class="scroll" id="scroll">
+    <div class="state" id="loading"><div class="spin"></div><div class="state-txt">Carregando seus dados...</div></div>
+  </div>
+</div>
+
+<script>
+const API = 'https://movatakagencia-production.up.railway.app';
+let token = localStorage.getItem('mvtk_token') || '';
+let dias  = 30;
+let dados = null;
+
+// ── Login ──
+function tentarLogin() {
+  const t = document.getElementById('tkn').value.trim();
+  if (!t) { document.getElementById('err').textContent = 'Informe o token.'; return; }
+  document.getElementById('entrar-btn').textContent = 'Verificando...';
+  document.getElementById('err').textContent = '';
+  fetch(API + '/movatak/app/dashboard?dias=7', { headers: { 'x-app-token': t } })
+    .then(r => {
+      if (r.status === 401) throw new Error('Token inválido.');
+      if (!r.ok) throw new Error('Erro ' + r.status);
+      return r.json();
+    })
+    .then(() => {
+      token = t;
+      localStorage.setItem('mvtk_token', t);
+      mostrarApp();
+      carregar();
+    })
+    .catch(e => {
+      document.getElementById('err').textContent = e.message;
+      document.getElementById('entrar-btn').textContent = 'Entrar';
+    });
+}
+
+document.getElementById('entrar-btn').addEventListener('click', tentarLogin);
+document.getElementById('tkn').addEventListener('keydown', e => { if (e.key === 'Enter') tentarLogin(); });
+
+function mostrarApp() {
+  document.getElementById('login').classList.add('out');
+  document.getElementById('app').classList.add('show');
+}
+
+// Auto login
+if (token) { mostrarApp(); carregar(); }
+
+// ── Período ──
+function setPeriodo(d) {
+  dias = d;
+  [7,30,90].forEach(x => document.getElementById('p'+x).classList.remove('on'));
+  document.getElementById('p'+d).classList.add('on');
+  carregar();
+}
+
+// ── Refresh ──
+document.getElementById('refresh-btn').addEventListener('click', () => {
+  const btn = document.getElementById('refresh-btn');
+  btn.style.transform = 'rotate(360deg)';
+  btn.style.transition = 'transform .5s';
+  setTimeout(() => { btn.style.transform = ''; btn.style.transition = ''; }, 500);
+  carregar();
+});
+
+// ── Carregar dados ──
+function carregar() {
+  document.getElementById('scroll').innerHTML = '<div class="state" id="loading"><div class="spin"></div><div class="state-txt">Carregando...</div></div>';
+  fetch(API + '/movatak/app/dashboard?dias=' + dias, { headers: { 'x-app-token': token } })
+    .then(r => {
+      if (r.status === 401) { localStorage.removeItem('mvtk_token'); location.reload(); }
+      if (!r.ok) throw new Error('Erro ' + r.status);
+      return r.json();
+    })
+    .then(d => {
+      dados = d;
+      renderizar(d);
+      const agora = new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+      document.getElementById('hdr-update').textContent = 'Atualizado às ' + agora;
+    })
+    .catch(e => {
+      document.getElementById('scroll').innerHTML =
+        '<div class="state"><div class="state-txt">' + e.message + '</div><button class="retry" onclick="carregar()">Tentar novamente</button></div>';
+    });
+}
+
+// ── Renderizar ──
+function renderizar(d) {
+  const total    = parseInt(d.total_leads || 0);
+  const conv     = parseInt(d.convertidos || 0);
+  const fu       = parseInt(d.em_followup || 0);
+  const hoje_l   = parseInt(d.leads_hoje || 0);
+  const hoje_v   = parseInt(d.vendas_hoje || 0);
+  const taxa     = parseFloat(d.taxa_conversao || 0);
+  const taxaCls  = taxa >= 20 ? 'green' : taxa >= 10 ? 'amber' : 'red';
+  const plano    = d.plano_top;
+  const porDia   = d.leads_por_dia || [];
+
+  // Gráfico
+  const ultimos = porDia.slice(-14);
+  const max = Math.max(...ultimos.map(x => parseInt(x.leads)||0), 1);
+  const barras = ultimos.map((x, i) => {
+    const h = Math.max(4, ((parseInt(x.leads)||0)/max)*76);
+    const hi = i === ultimos.length - 1 ? ' hi' : '';
+    return '<div class="bar-w"><div class="bar-f' + hi + '" style="height:' + h + 'px"></div></div>';
+  }).join('');
+  const primeiroLabel = ultimos.length > 0
+    ? new Date(ultimos[0].dia + 'T12:00:00').toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' })
+    : '';
+
+  // Plano top
+  const planoHtml = plano
+    ? '<div class="section-lbl">Plano mais vendido</div><div class="plano-card"><div class="plano-icon">🏆</div><div><div class="plano-nome">' + plano.nome + '</div><div class="plano-sub">' + plano.total + ' vendas no período</div></div></div>'
+    : '';
+
+  // Funil
+  function step(label, val, color) {
+    const pct = total > 0 ? Math.round((val/total)*100) : 0;
+    return '<div class="funil-item"><div class="funil-top"><span class="funil-name">' + label + '</span><span class="funil-num" style="color:' + color + '">' + val + '</span></div><div class="funil-bg"><div class="funil-fill" style="width:' + pct + '%;background:' + color + '"></div></div><div class="funil-pct">' + pct + '%</div></div>';
+  }
+
+  document.getElementById('scroll').innerHTML =
+    '<div class="section-lbl">Hoje</div>' +
+    '<div class="hoje-row">' +
+      '<div class="card accent"><div class="card-lbl">Leads hoje</div><div class="card-val">' + hoje_l + '</div></div>' +
+      '<div class="card green"><div class="card-lbl">Vendas hoje</div><div class="card-val">' + hoje_v + '</div></div>' +
+    '</div>' +
+
+    '<div class="section-lbl">Últimos ' + dias + ' dias</div>' +
+    '<div class="cards-row">' +
+      '<div class="card accent"><div class="card-lbl">Total leads</div><div class="card-val">' + total + '</div></div>' +
+      '<div class="card green"><div class="card-lbl">Convertidos</div><div class="card-val">' + conv + '</div></div>' +
+    '</div>' +
+    '<div class="cards-row">' +
+      '<div class="card amber"><div class="card-lbl">Follow up</div><div class="card-val">' + fu + '</div></div>' +
+      '<div class="card ' + taxaCls + '"><div class="card-lbl">Fechamento</div><div class="card-val">' + taxa.toFixed(1) + '%</div></div>' +
+    '</div>' +
+
+    planoHtml +
+
+    '<div class="section-lbl">Leads por dia</div>' +
+    '<div class="chart-card">' +
+      '<div class="chart-inner">' + (barras || '<div style="color:var(--text3);font-size:13px;padding:20px">Sem dados</div>') + '</div>' +
+      '<div class="chart-row"><span class="chart-lbl">' + primeiroLabel + '</span><span class="chart-lbl">hoje</span></div>' +
+    '</div>' +
+
+    '<div class="section-lbl">Funil</div>' +
+    '<div class="funil-card">' +
+      step('Leads', total, 'var(--accent)') +
+      step('Follow up', fu, 'var(--amber)') +
+      step('Clientes', conv, 'var(--green)') +
+    '</div>';
+}
+
+// Auto refresh a cada 5 minutos
+setInterval(() => { if (token) carregar(); }, 300000);
+</script>
+</body>
+</html>
