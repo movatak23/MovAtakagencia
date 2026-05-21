@@ -421,7 +421,9 @@ app.get('/movatak/admin/clientes', authMovatak, async (req, res) => {
       `SELECT c.id, c.nome, c.whatsapp, c.ativo, c.criado_em,
               COUNT(l.id) AS total_leads,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS convertidos,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup
+              COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup,
+              COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE) AS leads_hoje,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.criado_em) = CURRENT_DATE) AS vendas_hoje
        FROM movatak_clientes c
        LEFT JOIN movatak_leads l ON l.cliente_id = c.id
        GROUP BY c.id
