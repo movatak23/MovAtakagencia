@@ -300,7 +300,7 @@ tr:hover td{background:var(--bg3)}
               <th>Convertidos</th>
               <th>Follow up</th>
               <th>Taxa</th>
-              <th>Status</th><th>Ações</th>
+              <th>Status</th><th>CPL</th><th>Ações</th>
             </tr>
           </thead>
           <tbody id="clientes-tbody">
@@ -547,6 +547,7 @@ function renderClientes(clientes) {
       <td class="td-amber">${fu}</td>
       <td class="${taxaCls}">${taxa}%</td>
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
+      <td class="td-mono" style="font-size:13px">—</td>
       <td><button onclick="abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button></td>
     </tr>`;
   }).join('');
@@ -638,6 +639,8 @@ async function abrirFU(id) {
     document.getElementById('fu-msg2').value = msgs.msg2 || '';
     document.getElementById('fu-msg3').value = msgs.msg3 || '';
     document.getElementById('fu-msg4').value = msgs.msg4 || '';
+    document.getElementById('fu-boas-vindas').value = msgs.boas_vindas_msg || '';
+    document.getElementById('fu-verba').value = '';
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
@@ -660,9 +663,11 @@ async function salvarFU() {
   document.getElementById('btn-fu-save').textContent = 'Salvando...';
   document.getElementById('fu-err').textContent = '';
   try {
+    const boas_vindas_msg = document.getElementById('fu-boas-vindas').value.trim();
+    const verba_diaria = document.getElementById('fu-verba').value.trim();
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
-      body: JSON.stringify({ msg1, msg2, msg3, msg4 })
+      body: JSON.stringify({ msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria })
     });
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
     setTimeout(fecharFU, 1000);
@@ -692,6 +697,14 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
     <textarea class="fu-textarea" id="fu-msg3" rows="3"></textarea>
     <label class="fu-label">D+14 — Mensagem 4 <span class="fu-tag">14 dias após</span></label>
     <textarea class="fu-textarea" id="fu-msg4" rows="3"></textarea>
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem de boas-vindas <span class="fu-tag">quando vira cliente</span></label>
+    <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
+    <div class="fu-hint">Enviada automaticamente quando a etiqueta "Cliente" é aplicada. Use {nome} para personalizar.</div>
+
+    <label class="fu-label" style="margin-top:16px">Verba diária de mídia (R$)</label>
+    <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
+    <div class="fu-hint">Usada para calcular o CPL real automaticamente.</div>
+
     <div class="login-err" id="fu-err" style="margin-top:12px"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharFU()">Cancelar</button>
