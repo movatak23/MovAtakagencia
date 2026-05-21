@@ -378,11 +378,32 @@ app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
       [clienteId, parseInt(dias)]
     );
 
+    // CPL calculado: verba_diaria x dias / total_leads
+    const clienteData = await query(
+      'SELECT teto_cpl, verba_diaria, criado_em FROM movatak_clientes WHERE id = $1',
+      [clienteId]
+    );
+    const cd = clienteData.rows[0] || {};
+    const totalLeads = parseInt(r.rows[0].total_leads || 0);
+    let cpl_calculado = null;
+    let alerta_cpl = false;
+    if (cd.verba_diaria && totalLeads > 0) {
+      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(cd.criado_em).getTime()) / 86400000));
+      const verbaTotalGasta = parseFloat(cd.verba_diaria) * Math.min(diasRodando, parseInt(dias));
+      cpl_calculado = (verbaTotalGasta / totalLeads).toFixed(2);
+      if (cd.teto_cpl && parseFloat(cpl_calculado) > parseFloat(cd.teto_cpl)) {
+        alerta_cpl = true;
+      }
+    }
+
     res.json({
       periodo_dias: parseInt(dias),
       ...r.rows[0],
       plano_top: planoTop.rows[0] || null,
-      leads_por_dia: leadsPorDia.rows
+      leads_por_dia: leadsPorDia.rows,
+      cpl_calculado,
+      teto_cpl: cd.teto_cpl || null,
+      alerta_cpl
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -475,22 +496,29 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
   try {
     const r = await query('SELECT followup_msgs FROM movatak_clientes WHERE id = $1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-    const msgs = r.rows[0].followup_msgs || {
+    const row = r.rows[0];
+    const msgs = row.followup_msgs || {
       msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
       msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
       msg3: 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
       msg4: 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
     };
-    res.json(msgs);
+    res.json({
+      ...msgs,
+      boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!'
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Atualizar mensagens de follow up de um cliente
 app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
-    const { msg1, msg2, msg3, msg4 } = req.body;
+    const { msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria } = req.body;
     if (!msg1 || !msg2 || !msg3 || !msg4) return res.status(400).json({ error: 'Todas as 4 mensagens sao obrigatorias.' });
-    await query('UPDATE movatak_clientes SET followup_msgs = $1 WHERE id = $2', [JSON.stringify({ msg1, msg2, msg3, msg4 }), req.params.id]);
+    await query(
+      'UPDATE movatak_clientes SET followup_msgs = $1, boas_vindas_msg = $2, verba_diaria = $3 WHERE id = $4',
+      [JSON.stringify({ msg1, msg2, msg3, msg4 }), boas_vindas_msg || null, verba_diaria ? parseFloat(verba_diaria) : null, req.params.id]
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
