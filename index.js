@@ -783,6 +783,52 @@ app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ============================================================
+// ROTA — Agendamento landing page
+// POST /movatak/agendamento
+// ============================================================
+const ZAPI_INSTANCE_LAND = '3F2A60F11BF6A1A743307E1C380F897F';
+const ZAPI_TOKEN_LAND    = 'A7A0656B8E45CD44BB720C89';
+const ZAPI_CT_LAND       = 'F1ec36b389b1a4f54becafad6b57ada4fS';
+const MOVATAK_NUMERO     = '5581976041948';
+const NTFY_TOPIC_LAND    = 'movatak-leads-2026';
+
+app.post('/movatak/agendamento', async (req, res) => {
+  try {
+    const { provedor, cargo, clientes, cidade, email, zap, dia, data, hora } = req.body;
+    if (!provedor || !zap || !hora) return res.status(400).json({ error: 'Dados incompletos.' });
+
+    const zapiBase = `https://api.z-api.io/instances/${ZAPI_INSTANCE_LAND}/token/${ZAPI_TOKEN_LAND}`;
+    const headers  = { 'Content-Type': 'application/json', 'Client-Token': ZAPI_CT_LAND };
+
+    const zapLead = String(zap).replace(/\D/g,'').length === 11
+      ? '55' + String(zap).replace(/\D/g,'')
+      : String(zap).replace(/\D/g,'');
+
+    const msgLead = `Olá, ${provedor}! 🎉\n\nSua reunião com a Movatak foi confirmada!\n\n📅 *${dia}, ${data} às ${hora}*\n\nVamos conversar sobre como fazer sua empresa crescer nos próximos 90 dias sem pagar mensalidade de agência.\n\nQualquer dúvida, estou aqui. Até lá! 🚀\n\n— Ronaldo Valério\nMovatak`;
+    const msgAdmin = `🔔 *Novo agendamento Movatak*\n\n🏢 Provedor: ${provedor}\n👤 Cargo: ${cargo}\n👥 Clientes: ${clientes}\n📍 Cidade: ${cidade}\n📧 Email: ${email}\n📱 WhatsApp: ${zap}\n📅 Reunião: ${dia}, ${data} às ${hora}`;
+
+    const results = await Promise.allSettled([
+      axios.post(`${zapiBase}/send-text`, { phone: zapLead,        message: msgLead  }, { headers }),
+      axios.post(`${zapiBase}/send-text`, { phone: MOVATAK_NUMERO, message: msgAdmin }, { headers }),
+      axios.post(`https://ntfy.sh/${NTFY_TOPIC_LAND}`,
+        `${provedor} | ${cargo} | ${clientes} clientes | ${dia} ${data} ${hora}`,
+        { headers: { Title: '🔔 Novo lead Movatak', Priority: 'high', Tags: 'calendar' } }
+      )
+    ]);
+
+    results.forEach((r, i) => {
+      if (r.status === 'rejected') console.error(`[agendamento] disparo ${i} falhou:`, r.reason?.message);
+    });
+
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[agendamento]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ============================================================
 // Health check
 // ============================================================
