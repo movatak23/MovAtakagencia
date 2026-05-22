@@ -218,6 +218,20 @@ tr:hover td{background:var(--bg3)}
 .fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
 .fu-textarea:focus { border-color: var(--accent); }
 .fu-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+.vendedor-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.vendedor-item { display: flex; justify-content: space-between; align-items: center; background: var(--bg3); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.vendedor-nome { color: var(--text); }
+.vendedor-tag { font-size: 11px; color: var(--text2); font-family: var(--mono); }
+.btn-remove { background: transparent; border: none; color: var(--red); cursor: pointer; font-size: 16px; padding: 0 4px; }
+.add-vendedor-row { display: flex; gap: 8px; margin-top: 8px; }
+.add-vendedor-row input { flex: 1; }
+.btn-add-small { padding: 8px 16px; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-size: 13px; font-family: var(--sans); cursor: pointer; }
+.ranking-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 0.5px solid var(--border); }
+.ranking-item:last-child { border-bottom: none; }
+.ranking-pos { font-size: 18px; width: 28px; }
+.ranking-nome { font-size: 14px; flex: 1; }
+.ranking-num { font-size: 20px; font-weight: 700; color: var(--green); }
 </style>
 </head>
 <body>
@@ -652,7 +666,15 @@ async function abrirFU(id) {
     document.getElementById('fu-msg4').value = msgs.msg4 || '';
     document.getElementById('fu-boas-vindas').value = msgs.boas_vindas_msg || '';
     document.getElementById('fu-verba').value = '';
+    document.getElementById('fu-whatsapp-dono').value = '';
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+    // Carregar vendedores
+    carregarVendedores(id);
+    // Carregar whatsapp_dono
+    api('/movatak/admin/clientes').then(clientes => {
+      const c = clientes.find(x => x.id === id);
+      if (c && c.whatsapp_dono) document.getElementById('fu-whatsapp-dono').value = c.whatsapp_dono;
+    }).catch(() => {});
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
@@ -676,10 +698,17 @@ async function salvarFU() {
   try {
     const boas_vindas_msg = document.getElementById('fu-boas-vindas').value.trim();
     const verba_diaria = document.getElementById('fu-verba').value.trim();
+    const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
       body: JSON.stringify({ msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria })
     });
+    if (whatsapp_dono) {
+      await api('/movatak/admin/clientes/' + fuId + '/dono', {
+        method: 'PATCH',
+        body: JSON.stringify({ whatsapp_dono })
+      }).catch(() => {});
+    }
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
     setTimeout(fecharFU, 1000);
   } catch(e) {
@@ -690,6 +719,52 @@ async function salvarFU() {
 document.getElementById('modal-fu').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-fu')) fecharFU();
 });
+
+
+// ── Vendedores ─────────────────────────────────────────────
+async function carregarVendedores(id) {
+  try {
+    const vendedores = await api('/movatak/admin/clientes/' + id + '/vendedores');
+    const lista = document.getElementById('fu-vendedores-list');
+    if (!vendedores.length) {
+      lista.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhum vendedor cadastrado.</div>';
+      return;
+    }
+    lista.innerHTML = vendedores.map(v => `
+      <div class="vendedor-item">
+        <span class="vendedor-nome">${v.nome}</span>
+        <span class="vendedor-tag">Vendedor - ${v.nome}</span>
+        <button class="btn-remove" onclick="removerVendedor(${v.id})" title="Remover">×</button>
+      </div>
+    `).join('');
+  } catch(e) {
+    document.getElementById('fu-vendedores-list').innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar vendedores.</div>';
+  }
+}
+
+async function adicionarVendedor() {
+  const nome = document.getElementById('fu-novo-vendedor').value.trim();
+  if (!nome) return;
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/vendedores', {
+      method: 'POST',
+      body: JSON.stringify({ nome })
+    });
+    document.getElementById('fu-novo-vendedor').value = '';
+    carregarVendedores(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao adicionar vendedor: ' + e.message;
+  }
+}
+
+async function removerVendedor(vendedorId) {
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/vendedores/' + vendedorId, { method: 'DELETE' });
+    carregarVendedores(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao remover vendedor.';
+  }
+}
 
 // Auto refresh a cada 2 minutos
 setInterval(() => { if (secret) carregarTudo(); }, 120000);
@@ -715,6 +790,18 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
     <label class="fu-label" style="margin-top:16px">Verba diária de mídia (R$)</label>
     <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
     <div class="fu-hint">Usada para calcular o CPL real automaticamente.</div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">WhatsApp do dono para alertas</label>
+    <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
+    <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
+
+    <label class="fu-label" style="margin-top:16px">Vendedores</label>
+    <div class="vendedor-list" id="fu-vendedores-list"></div>
+    <div class="add-vendedor-row">
+      <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
+      <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
+    </div>
+    <div class="fu-hint">Cada vendedor terá uma etiqueta "Vendedor - [Nome]" criada automaticamente no WhatsApp Business.</div>
 
     <div class="login-err" id="fu-err" style="margin-top:12px"></div>
     <div class="modal-btns">

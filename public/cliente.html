@@ -186,6 +186,19 @@ body{font-family:var(--sans);color:var(--text)}
 
 .card.alerta { --c: var(--red); animation: pulsar 2s ease infinite; }
 @keyframes pulsar { 0%,100%{box-shadow:0 0 0 0 rgba(255,90,90,0)} 50%{box-shadow:0 0 0 6px rgba(255,90,90,0.15)} }
+
+.evolucao-wrap { display: flex; align-items: flex-end; gap: 3px; height: 80px; margin-bottom: 8px; }
+.ev-col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.ev-bar { width: 100%; border-radius: 3px 3px 0 0; min-height: 3px; position: relative; }
+.ev-leads { background: var(--border2); }
+.ev-conv { background: var(--green); position: absolute; bottom: 0; left: 0; right: 0; border-radius: 3px 3px 0 0; }
+.ev-lbl { font-size: 9px; color: var(--text3); font-family: var(--mono); }
+.ranking-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 0.5px solid var(--border); }
+.ranking-row:last-child { border-bottom: none; }
+.ranking-pos { font-size: 16px; width: 24px; text-align: center; }
+.ranking-nome { flex: 1; font-size: 14px; color: var(--text); }
+.ranking-num { font-size: 18px; font-weight: 700; color: var(--green); }
+.ranking-sub { font-size: 11px; color: var(--text2); margin-top: 1px; }
 </style>
 </head>
 <body>
@@ -290,26 +303,25 @@ document.getElementById('refresh-btn').addEventListener('click', () => {
 // ── Carregar dados ──
 function carregar() {
   document.getElementById('scroll').innerHTML = '<div class="state" id="loading"><div class="spin"></div><div class="state-txt">Carregando...</div></div>';
-  fetch(API + '/movatak/app/dashboard?dias=' + (dias === 0 ? 1 : dias), { headers: { 'x-app-token': token } })
-    .then(r => {
-      if (r.status === 401) { localStorage.removeItem('mvtk_token'); location.reload(); }
-      if (!r.ok) throw new Error('Erro ' + r.status);
-      return r.json();
-    })
-    .then(d => {
+  Promise.all([
+    fetch(API + '/movatak/app/dashboard?dias=' + (dias === 0 ? 1 : dias), { headers: { 'x-app-token': token } }).then(r => r.ok ? r.json() : Promise.reject('Erro ' + r.status)),
+    fetch(API + '/movatak/app/evolucao', { headers: { 'x-app-token': token } }).then(r => r.ok ? r.json() : []),
+    fetch(API + '/movatak/app/ranking', { headers: { 'x-app-token': token } }).then(r => r.ok ? r.json() : [])
+  ])
+    .then(([d, evolucao, ranking]) => {
       dados = d;
-      renderizar(d);
+      renderizar(d, evolucao, ranking);
       const agora = new Date().toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
       document.getElementById('hdr-update').textContent = 'Atualizado às ' + agora;
     })
     .catch(e => {
       document.getElementById('scroll').innerHTML =
-        '<div class="state"><div class="state-txt">' + e.message + '</div><button class="retry" onclick="carregar()">Tentar novamente</button></div>';
+        '<div class="state"><div class="state-txt">' + e + '</div><button class="retry" onclick="carregar()">Tentar novamente</button></div>';
     });
 }
 
 // ── Renderizar ──
-function renderizar(d) {
+function renderizar(d, evolucao, ranking) {
   const isHoje  = dias === 0;
   const total    = isHoje ? parseInt(d.leads_hoje || 0) : parseInt(d.total_leads || 0);
   const conv     = isHoje ? parseInt(d.vendas_hoje || 0) : parseInt(d.convertidos || 0);
@@ -390,7 +402,58 @@ function renderizar(d) {
       step('Leads', total, 'var(--accent)') +
       step('Follow up', fu, 'var(--amber)') +
       step('Clientes', conv, 'var(--green)') +
+    '</div>' +
+
+    // Evolução 90 dias
+    evolucaoHtml(evolucao) +
+
+    // Ranking de vendedores
+    rankingHtml(ranking);
+}
+
+
+function evolucaoHtml(dados) {
+  if (!dados || !dados.length) return '';
+  const max = Math.max(...dados.map(d => parseInt(d.leads) || 0), 1);
+  const medalhas = ['🥇','🥈','🥉'];
+  const barras = dados.map((d, i) => {
+    const h = Math.max(4, ((parseInt(d.leads)||0)/max)*72);
+    const hc = Math.max(0, ((parseInt(d.convertidos)||0)/max)*72);
+    const sem = new Date(d.semana + 'T12:00:00').toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' });
+    return '<div class="ev-col">' +
+      '<div class="ev-bar ev-leads" style="height:' + h + 'px">' +
+        '<div class="ev-conv" style="height:' + hc + 'px"></div>' +
+      '</div>' +
+      '<div class="ev-lbl">' + sem + '</div>' +
     '</div>';
+  }).join('');
+
+  return '<div class="section-lbl">Evolução — últimas semanas</div>' +
+    '<div class="chart-card">' +
+      '<div style="display:flex;gap:12px;margin-bottom:12px">' +
+        '<div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:12px;border-radius:2px;background:var(--border2)"></div><span style="font-size:11px;color:var(--text2)">Leads</span></div>' +
+        '<div style="display:flex;align-items:center;gap:6px"><div style="width:12px;height:12px;border-radius:2px;background:var(--green)"></div><span style="font-size:11px;color:var(--text2)">Clientes</span></div>' +
+      '</div>' +
+      '<div class="evolucao-wrap">' + barras + '</div>' +
+    '</div>';
+}
+
+function rankingHtml(dados) {
+  if (!dados || !dados.length) return '';
+  const medalhas = ['🥇','🥈','🥉'];
+  const itens = dados.map((v, i) => {
+    const med = medalhas[i] || (i + 1) + 'º';
+    return '<div class="ranking-row">' +
+      '<span class="ranking-pos">' + med + '</span>' +
+      '<div style="flex:1"><div class="ranking-nome">' + v.nome + '</div>' +
+        '<div class="ranking-sub">' + (v.leads_atribuidos || 0) + ' leads atribuídos</div>' +
+      '</div>' +
+      '<span class="ranking-num">' + (v.fechamentos || 0) + '</span>' +
+    '</div>';
+  }).join('');
+
+  return '<div class="section-lbl">Ranking de vendedores</div>' +
+    '<div class="funil-card">' + itens + '</div>';
 }
 
 // Auto refresh a cada 5 minutos
