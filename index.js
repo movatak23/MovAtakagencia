@@ -82,6 +82,37 @@ async function zapiEtiquetar(instance, token, clientToken, telefone, label) {
   });
 }
 
+
+const MOVATAK_ADMIN_WA = '558176041948';
+
+async function zapiCriarEtiqueta(instance, token, clientToken, nome) {
+  try {
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/tags`;
+    const res = await axios.post(url, { name: nome }, { headers: { 'Client-Token': clientToken } });
+    return res.data;
+  } catch(e) {
+    console.error('[zapiCriarEtiqueta]', e.message);
+    return null;
+  }
+}
+
+async function zapiAtribuirEtiqueta(instance, token, clientToken, telefone, tagId) {
+  try {
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/chats/${telefone}/tags/${tagId}/add`;
+    await axios.put(url, {}, { headers: { 'Client-Token': clientToken } });
+  } catch(e) {
+    console.error('[zapiAtribuirEtiqueta]', e.message);
+  }
+}
+
+async function enviarAlerta(instance, token, clientToken, destinatario, msg) {
+  try {
+    await zapiEnviar(instance, token, clientToken, destinatario, msg);
+  } catch(e) {
+    console.error('[enviarAlerta]', e.message);
+  }
+}
+
 // ============================================================
 // Mensagens de follow up por etapa
 // ============================================================
@@ -198,33 +229,80 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
       }
     }
 
+    // ---- Registrar log de etiqueta (auditoria) ----
+    await query(
+      'INSERT INTO movatak_etiqueta_log (lead_id, cliente_id, etiqueta) VALUES ($1, $2, $3)',
+      [lead.id, cliente.id, etiqueta]
+    );
+
+    // ---- Detecção de vendedor ----
+    const vendedores = await query(
+      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
+      [cliente.id]
+    );
+    const vendedorDetectado = vendedores.rows.find(v =>
+      etiqueta.toLowerCase() === ('vendedor - ' + v.nome.toLowerCase())
+    );
+
+    if (vendedorDetectado) {
+      // Verificar troca suspeita — se já tinha outro vendedor
+      const vendedorAnterior = await query(
+        `SELECT el.etiqueta FROM movatak_etiqueta_log el
+         WHERE el.lead_id = $1
+           AND el.etiqueta ILIKE 'vendedor - %'
+           AND el.aplicado_em < NOW() - INTERVAL '10 seconds'
+         ORDER BY el.aplicado_em DESC LIMIT 1`,
+        [lead.id]
+      );
+
+      if (vendedorAnterior.rows.length && vendedorAnterior.rows[0].etiqueta.toLowerCase() !== etiqueta.toLowerCase()) {
+        // TROCA SUSPEITA DETECTADA
+        const alertMsg = `⚠️ *Alerta: Troca de vendedor detectada*\n\n*Cliente:* ${cliente.nome}\n*Lead:* ${lead.telefone}\n*Vendedor anterior:* ${vendedorAnterior.rows[0].etiqueta}\n*Trocado para:* ${etiqueta}\n*Horário:* ${new Date().toLocaleString('pt-BR')}`;
+
+        // Alerta para Movatak (você)
+        await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, MOVATAK_ADMIN_WA, alertMsg);
+
+        // Alerta para dono da empresa
+        if (cliente.whatsapp_dono) {
+          await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, cliente.whatsapp_dono, alertMsg);
+        }
+
+        console.log(`[alerta] Troca de vendedor detectada → lead ${lead.id}`);
+      }
+
+      // Atribuir vendedor ao lead (primeiro a aplicar ganha)
+      if (!lead.vendedor_id) {
+        await query(
+          'UPDATE movatak_leads SET vendedor_id = $1, atualizado_em = NOW() WHERE id = $2',
+          [vendedorDetectado.id, lead.id]
+        );
+      }
+    }
+
     // ---- Cliente (venda fechada) ----
-    if (etiqueta === 'cliente') {
-      await query(
-        `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
-        [lead.id]
-      );
+    if (etiqueta === 'cliente' || vendedorDetectado) {
+      if (etiqueta === 'cliente' || vendedorDetectado) {
+        await query(
+          `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
 
-      // Pausar follow up caso esteja rodando
-      await query(
-        `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-        [lead.id]
-      );
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
 
-      // Mensagem de boas-vindas
-      const msg = `Seja bem-vindo(a)${lead.nome ? ', ' + lead.nome : ''}! Estamos muito felizes em ter você conosco. Em breve entraremos em contato com os próximos passos. Qualquer dúvida, é só chamar aqui!`;
-      await zapiEnviar(
-        cliente.zapi_instance,
-        cliente.zapi_token,
-        cliente.zapi_client_token,
-        telefone,
-        msg
-      );
-
-      await query(
-        `INSERT INTO movatak_mensagens (lead_id, cliente_id, tipo) VALUES ($1, $2, 'boas_vindas')`,
-        [lead.id, cliente.id]
-      );
+        if (etiqueta === 'cliente' || vendedorDetectado) {
+          const boasVindasCustom = cliente.boas_vindas_msg ||
+            `Seja bem-vindo(a)${lead.nome ? ', ' + lead.nome : ''}! Estamos muito felizes em ter você conosco. Em breve entraremos em contato com os próximos passos. Qualquer dúvida, é só chamar aqui!`;
+          const msg = boasVindasCustom.replace('{nome}', lead.nome ? ', ' + lead.nome : '');
+          await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg);
+          await query(
+            `INSERT INTO movatak_mensagens (lead_id, cliente_id, tipo) VALUES ($1, $2, 'boas_vindas')`,
+            [lead.id, cliente.id]
+          );
+        }
+      }
     }
 
     res.json({ ok: true });
@@ -283,6 +361,70 @@ cron.schedule('0 * * * *', async () => {
     }
   } catch (e) {
     console.error('[cron] Erro geral:', e.message);
+  }
+});
+
+
+// ============================================================
+// CRON — Alerta CPL ultrapassou teto (roda a cada hora)
+// ============================================================
+cron.schedule('30 * * * *', async () => {
+  try {
+    const clientes = await query(
+      `SELECT c.*, COUNT(l.id) AS total_leads
+       FROM movatak_clientes c
+       LEFT JOIN movatak_leads l ON l.cliente_id = c.id AND l.etapa != 'descartado'
+       WHERE c.ativo = true AND c.verba_diaria IS NOT NULL AND c.teto_cpl IS NOT NULL
+       GROUP BY c.id`,
+      []
+    );
+
+    for (const c of clientes.rows) {
+      const totalLeads = parseInt(c.total_leads || 0);
+      if (totalLeads === 0) continue;
+      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(c.criado_em).getTime()) / 86400000));
+      const verbaTotalGasta = parseFloat(c.verba_diaria) * Math.min(diasRodando, 90);
+      const cpl = verbaTotalGasta / totalLeads;
+
+      if (cpl > parseFloat(c.teto_cpl)) {
+        const msg = `🚨 *Alerta CPL — ${c.nome}*\n\nCPL atual: *R$ ${cpl.toFixed(2)}*\nTeto acordado: *R$ ${parseFloat(c.teto_cpl).toFixed(2)}*\n\nRevise as campanhas ou aumente a verba.`;
+        await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, MOVATAK_ADMIN_WA, msg);
+        if (c.whatsapp_dono) {
+          await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono, msg);
+        }
+        console.log(`[cron-cpl] Alerta enviado → ${c.nome} CPL R${cpl.toFixed(2)}`);
+      }
+    }
+  } catch(e) {
+    console.error('[cron-cpl]', e.message);
+  }
+});
+
+// ============================================================
+// CRON — Alerta de lead parado sem etiqueta após 24h
+// ============================================================
+cron.schedule('0 9 * * *', async () => {
+  try {
+    const leads = await query(
+      `SELECT l.*, c.nome AS cliente_nome, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono
+       FROM movatak_leads l
+       JOIN movatak_clientes c ON c.id = l.cliente_id
+       WHERE l.etapa = 'lead'
+         AND l.criado_em <= NOW() - INTERVAL '24 hours'
+         AND c.ativo = true`,
+      []
+    );
+
+    for (const lead of leads.rows) {
+      const msg = `⏰ *Lead parado há mais de 24h*\n\n*Cliente:* ${lead.cliente_nome}\n*Lead:* ${lead.telefone}${lead.nome ? ' (' + lead.nome + ')' : ''}\n\nEsse lead ainda não recebeu etiqueta Follow Up ou Cliente. Verifique com a equipe de vendas.`;
+      await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, MOVATAK_ADMIN_WA, msg);
+      if (lead.whatsapp_dono) {
+        await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.whatsapp_dono, msg);
+      }
+      console.log(`[cron-parado] Alerta lead parado → ${lead.id}`);
+    }
+  } catch(e) {
+    console.error('[cron-parado]', e.message);
   }
 });
 
@@ -537,6 +679,117 @@ app.patch('/movatak/admin/leads/:id/plano', authMovatak, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+
+// Listar vendedores de um cliente
+app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 ORDER BY nome',
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cadastrar vendedor e criar etiqueta na Z-API
+app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
+  try {
+    const { nome } = req.body;
+    if (!nome) return res.status(400).json({ error: 'Nome obrigatorio.' });
+
+    const rc = await query('SELECT * FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!rc.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    const cliente = rc.rows[0];
+
+    // Criar etiqueta na Z-API
+    const nomeEtiqueta = 'Vendedor - ' + nome;
+    const tagsRes = await axios.get(
+      `https://api.z-api.io/instances/${cliente.zapi_instance}/token/${cliente.zapi_token}/tags`,
+      { headers: { 'Client-Token': cliente.zapi_client_token } }
+    );
+    let tag = (tagsRes.data || []).find(t => t.name === nomeEtiqueta);
+    if (!tag) {
+      tag = await zapiCriarEtiqueta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, nomeEtiqueta);
+    }
+
+    const r = await query(
+      'INSERT INTO movatak_vendedores (cliente_id, nome, etiqueta_id) VALUES ($1, $2, $3) RETURNING *',
+      [req.params.id, nome, tag ? String(tag.id) : null]
+    );
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Remover vendedor
+app.delete('/movatak/admin/clientes/:clienteId/vendedores/:id', authMovatak, async (req, res) => {
+  try {
+    await query('UPDATE movatak_vendedores SET ativo = false WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ranking de vendedores
+app.get('/movatak/admin/clientes/:id/ranking', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT v.nome, COUNT(l.id) AS vendas, COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos
+       FROM movatak_vendedores v
+       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
+       WHERE v.cliente_id = $1 AND v.ativo = true
+       GROUP BY v.id, v.nome
+       ORDER BY fechamentos DESC`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ranking de vendedores para o app do cliente
+app.get('/movatak/app/ranking', authCliente, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT v.nome,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
+              COUNT(l.id) AS leads_atribuidos
+       FROM movatak_vendedores v
+       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
+       WHERE v.cliente_id = $1 AND v.ativo = true
+       GROUP BY v.id, v.nome
+       ORDER BY fechamentos DESC`,
+      [req.clienteId]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Evolução semanal (últimos 90 dias) para o app do cliente
+app.get('/movatak/app/evolucao', authCliente, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT
+         DATE_TRUNC('week', criado_em) AS semana,
+         COUNT(*) AS leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente') AS convertidos
+       FROM movatak_leads
+       WHERE cliente_id = $1
+         AND criado_em >= NOW() - INTERVAL '90 days'
+       GROUP BY semana
+       ORDER BY semana`,
+      [req.clienteId]
+    );
+    res.json(r.rows);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar whatsapp_dono
+app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
+  try {
+    const { whatsapp_dono } = req.body;
+    await query('UPDATE movatak_clientes SET whatsapp_dono = $1 WHERE id = $2', [whatsapp_dono, req.params.id]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================
