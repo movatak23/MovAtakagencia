@@ -703,20 +703,11 @@ app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res)
     if (!rc.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
     const cliente = rc.rows[0];
 
-    // Criar etiqueta na Z-API
-    const nomeEtiqueta = 'Vendedor - ' + nome;
-    const tagsRes = await axios.get(
-      `https://api.z-api.io/instances/${cliente.zapi_instance}/token/${cliente.zapi_token}/tags`,
-      { headers: { 'Client-Token': cliente.zapi_client_token } }
-    );
-    let tag = (tagsRes.data || []).find(t => t.name === nomeEtiqueta);
-    if (!tag) {
-      tag = await zapiCriarEtiqueta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, nomeEtiqueta);
-    }
-
+    // Salvar vendedor — etiqueta deve ser criada manualmente no WhatsApp Business
+    // com o nome exato: 'Vendedor - ' + nome
     const r = await query(
-      'INSERT INTO movatak_vendedores (cliente_id, nome, etiqueta_id) VALUES ($1, $2, $3) RETURNING *',
-      [req.params.id, nome, tag ? String(tag.id) : null]
+      'INSERT INTO movatak_vendedores (cliente_id, nome) VALUES ($1, $2) RETURNING *',
+      [req.params.id, nome]
     );
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
