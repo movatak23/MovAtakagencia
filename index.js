@@ -811,14 +811,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   const body = req.body || {};
 
-  // DIAGNÓSTICO — payload COMPLETO para mensagens do vendedor (fromMe)
-  if (body.fromMe) {
-    console.log('[zapi] PAYLOAD COMPLETO (fromMe):', JSON.stringify(body));
-  } else {
-    console.log('[zapi] PAYLOAD RECEBIDO:', JSON.stringify({
-      phone: body.phone, instanceId: body.instanceId, fromMe: body.fromMe, text: body.text
-    }));
-  }
+  // DIAGNÓSTICO — payload COMPLETO para ambos os sentidos
+  console.log('[zapi] PAYLOAD COMPLETO (' + (body.fromMe ? 'fromMe' : 'recebida') + '):', JSON.stringify(body));
 
   // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
   try {
