@@ -1,7 +1,7 @@
 'use strict';
 
 // ============================================================
-// VERSÃO — incrementar a cada atualização
+// VERSO  incrementar a cada atualizao
 // ============================================================
 const MOVATAK_VERSION = 'v1.5.0';
 
@@ -41,7 +41,7 @@ async function query(sql, params) {
 }
 
 // ============================================================
-// Autenticação do painel Movatak (suas rotas internas)
+// Autenticao do painel Movatak (suas rotas internas)
 // ============================================================
 function authMovatak(req, res, next) {
   const secret = req.headers['x-movatak-secret'];
@@ -51,7 +51,7 @@ function authMovatak(req, res, next) {
   next();
 }
 
-// Autenticação do app do cliente (acesso somente leitura)
+// Autenticao do app do cliente (acesso somente leitura)
 async function authCliente(req, res, next) {
   const token = req.headers['x-app-token'];
   if (!token) return res.status(401).json({ error: 'Token ausente.' });
@@ -69,7 +69,7 @@ async function authCliente(req, res, next) {
 }
 
 // ============================================================
-// Z-API — helpers
+// Z-API  helpers
 // ============================================================
 const ZAPI_BASE = 'https://api.z-api.io/instances';
 
@@ -122,10 +122,10 @@ async function enviarAlerta(instance, token, clientToken, destinatario, msg) {
 // Mensagens de follow up por etapa
 // ============================================================
 const MSGS_FOLLOWUP = {
-  1: (nome) => `Oi${nome ? ' ' + nome : ''}! Tudo bem? Passei aqui pra saber se ficou alguma dúvida sobre o que conversamos. Estou à disposição!`,
-  2: (nome) => `${nome || 'Olá'}! Só reforçando que ainda temos disponibilidade pra você. Se quiser retomar a conversa, é só chamar aqui.`,
-  3: (_) => `Ei! Não quero ser chato, mas queria dar uma última passada antes de seguir em frente. Tem algo que posso esclarecer pra facilitar sua decisão?`,
-  4: (_) => `Último recado da minha parte! Se em algum momento fizer sentido retomar, estarei aqui. Abraço!`
+  1: (nome) => `Oi${nome ? ' ' + nome : ''}! Tudo bem? Passei aqui pra saber se ficou alguma dvida sobre o que conversamos. Estou  disposio!`,
+  2: (nome) => `${nome || 'Ol'}! S reforando que ainda temos disponibilidade pra voc. Se quiser retomar a conversa,  s chamar aqui.`,
+  3: (_) => `Ei! No quero ser chato, mas queria dar uma ltima passada antes de seguir em frente. Tem algo que posso esclarecer pra facilitar sua deciso?`,
+  4: (_) => `ltimo recado da minha parte! Se em algum momento fizer sentido retomar, estarei aqui. Abrao!`
 };
 
 const DIAS_FOLLOWUP = { 1: 1, 2: 3, 3: 7, 4: 14 };
@@ -136,8 +136,8 @@ const DIAS_FOLLOWUP_V2 = {
 };
 
 // ============================================================
-// ROTA 1 — Webhook de mensagem recebida
-// Z-API → POST /webhook/mensagem
+// ROTA 1  Webhook de mensagem recebida
+// Z-API  POST /webhook/mensagem
 // ============================================================
 app.post('/movatak/webhook/mensagem', async (req, res) => {
   try {
@@ -156,7 +156,7 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
 
     const cliente = r.rows[0];
 
-    // Verificar se lead já existe para evitar duplicata
+    // Verificar se lead j existe para evitar duplicata
     const existe = await query(
       'SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
       [cliente.id, telefone]
@@ -187,8 +187,8 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
 });
 
 // ============================================================
-// ROTA 2 — Webhook de etiqueta aplicada
-// Z-API → POST /webhook/etiqueta
+// ROTA 2  Webhook de etiqueta aplicada
+// Z-API  POST /webhook/etiqueta
 // ============================================================
 app.post('/movatak/webhook/etiqueta', async (req, res) => {
   try {
@@ -199,7 +199,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
     const telefone = phone.replace(/\D/g, '');
     const etiqueta = (label || '').toLowerCase();
 
-    // Buscar cliente pela instância
+    // Buscar cliente pela instncia
     const rc = await query(
       'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
       [instanceId]
@@ -224,7 +224,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
         [lead.id]
       );
 
-      // Limpar fila existente e criar nova sequência
+      // Limpar fila existente e criar nova sequncia
       await query('DELETE FROM movatak_followup WHERE lead_id = $1', [lead.id]);
 
       const agora = new Date();
@@ -245,7 +245,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
       [lead.id, cliente.id, etiqueta]
     );
 
-    // ---- Detecção de vendedor ----
+    // ---- Deteco de vendedor ----
     const vendedores = await query(
       'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
       [cliente.id]
@@ -255,7 +255,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
     );
 
     if (vendedorDetectado) {
-      // Verificar troca suspeita — se já tinha outro vendedor
+      // Verificar troca suspeita  se j tinha outro vendedor
       const vendedorAnterior = await query(
         `SELECT el.etiqueta FROM movatak_etiqueta_log el
          WHERE el.lead_id = $1
@@ -267,9 +267,9 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 
       if (vendedorAnterior.rows.length && vendedorAnterior.rows[0].etiqueta.toLowerCase() !== etiqueta.toLowerCase()) {
         // TROCA SUSPEITA DETECTADA
-        const alertMsg = `⚠️ *Alerta: Troca de vendedor detectada*\n\n*Cliente:* ${cliente.nome}\n*Lead:* ${lead.telefone}\n*Vendedor anterior:* ${vendedorAnterior.rows[0].etiqueta}\n*Trocado para:* ${etiqueta}\n*Horário:* ${new Date().toLocaleString('pt-BR')}`;
+        const alertMsg = ` *Alerta: Troca de vendedor detectada*\n\n*Cliente:* ${cliente.nome}\n*Lead:* ${lead.telefone}\n*Vendedor anterior:* ${vendedorAnterior.rows[0].etiqueta}\n*Trocado para:* ${etiqueta}\n*Horrio:* ${new Date().toLocaleString('pt-BR')}`;
 
-        // Alerta para Movatak (você)
+        // Alerta para Movatak (voc)
         await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, MOVATAK_ADMIN_WA, alertMsg);
 
         // Alerta para dono da empresa
@@ -277,7 +277,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
           await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, cliente.whatsapp_dono, alertMsg);
         }
 
-        console.log(`[alerta] Troca de vendedor detectada → lead ${lead.id}`);
+        console.log(`[alerta] Troca de vendedor detectada  lead ${lead.id}`);
       }
 
       // Atribuir vendedor ao lead (primeiro a aplicar ganha)
@@ -304,7 +304,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 
         if (etiqueta === 'cliente' || vendedorDetectado) {
           const boasVindasCustom = cliente.boas_vindas_msg ||
-            `Seja bem-vindo(a)${lead.nome ? ', ' + lead.nome : ''}! Estamos muito felizes em ter você conosco. Em breve entraremos em contato com os próximos passos. Qualquer dúvida, é só chamar aqui!`;
+            `Seja bem-vindo(a)${lead.nome ? ', ' + lead.nome : ''}! Estamos muito felizes em ter voc conosco. Em breve entraremos em contato com os prximos passos. Qualquer dvida,  s chamar aqui!`;
           const msg = boasVindasCustom.replace('{nome}', lead.nome ? ', ' + lead.nome : '');
           await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg);
           await query(
@@ -323,15 +323,15 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 });
 
 // ============================================================
-// CRON — Disparador de follow up (roda a cada hora)
+// CRON  Disparador de follow up (roda a cada hora)
 // ============================================================
 // ============================================================
-// CRON — Follow up: envio + migração FU1→FU2 (a cada 10 min)
+// CRON  Follow up: envio + migrao FU1FU2 (a cada 10 min)
 // ============================================================
 cron.schedule('*/10 * * * *', async () => {
-  console.log('[cron] Verificando fila de follow up e migrações...');
+  console.log('[cron] Verificando fila de follow up e migraes...');
   try {
-    // 1. ENVIO: buscar mensagens pendentes de ambas sequências
+    // 1. ENVIO: buscar mensagens pendentes de ambas sequncias
     const r = await query(
       `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
        FROM movatak_followup f
@@ -344,17 +344,17 @@ cron.schedule('*/10 * * * *', async () => {
 
     for (const row of r.rows) {
       try {
-        // Só envia se lead está em follow up
+        // S envia se lead est em follow up
         if (row.etapa !== 'followup') { continue; }
 
-        // Buscar mensagem da sequência correta
+        // Buscar mensagem da sequncia correta
         const fu_data = row.followup_msgs_v2 || {};
         const seq_key = 'fu' + row.sequencia_fu;
         const msgs = fu_data[seq_key] || {};
         const msg_text = msgs['msg' + row.etapa_seq];
         
         if (!msg_text || !msg_text.trim()) {
-          // Campo vazio, marca como enviado mas não manda nada
+          // Campo vazio, marca como enviado mas no manda nada
           await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
           continue;
         }
@@ -373,13 +373,13 @@ cron.schedule('*/10 * * * *', async () => {
           [row.id]
         );
 
-        console.log(`[cron] FU${row.sequencia_fu} msg${row.etapa_seq} enviado → lead ${row.lead_id}`);
+        console.log(`[cron] FU${row.sequencia_fu} msg${row.etapa_seq} enviado  lead ${row.lead_id}`);
       } catch (e) {
         console.error(`[cron] Erro envio lead ${row.lead_id}:`, e.message);
       }
     }
 
-    // 2. MIGRAÇÃO: FU1 → FU2 (leads que não responderam em 1h)
+    // 2. MIGRAO: FU1  FU2 (leads que no responderam em 1h)
     const migracao = await query(
       `SELECT f.*, l.id as lead_id, c.followup_msgs_v2
        FROM movatak_followup f
@@ -395,14 +395,14 @@ cron.schedule('*/10 * * * *', async () => {
 
     for (const row of migracao.rows) {
       try {
-        // Verificar se ainda não respondeu (contar mensagens do lead)
+        // Verificar se ainda no respondeu (contar mensagens do lead)
         const check = await query(
           `SELECT COUNT(*) FROM movatak_leads l
            JOIN movatak_mensagens m ON m.lead_id = l.id
            WHERE l.id = $1 AND m.tipo = 'recebido'`,
           [row.lead_id]
         );
-        if (parseInt(check.rows[0].count) > 0) continue; // lead respondeu, não migra
+        if (parseInt(check.rows[0].count) > 0) continue; // lead respondeu, no migra
 
         // Deletar mensagens pendentes do FU1
         await query(
@@ -432,7 +432,7 @@ cron.schedule('*/10 * * * *', async () => {
 
         console.log(`[cron] Lead ${row.lead_id} migrado para FU2`);
       } catch (e) {
-        console.error(`[cron] Erro migração lead ${row.lead_id}:`, e.message);
+        console.error(`[cron] Erro migrao lead ${row.lead_id}:`, e.message);
       }
     }
   } catch (e) {
@@ -442,7 +442,7 @@ cron.schedule('*/10 * * * *', async () => {
 
 
 // ============================================================
-// CRON — Alerta CPL ultrapassou teto (roda a cada hora)
+// CRON  Alerta CPL ultrapassou teto (roda a cada hora)
 // ============================================================
 cron.schedule('30 * * * *', async () => {
   try {
@@ -463,12 +463,12 @@ cron.schedule('30 * * * *', async () => {
       const cpl = verbaTotalGasta / totalLeads;
 
       if (cpl > parseFloat(c.teto_cpl)) {
-        const msg = `🚨 *Alerta CPL — ${c.nome}*\n\nCPL atual: *R$ ${cpl.toFixed(2)}*\nTeto acordado: *R$ ${parseFloat(c.teto_cpl).toFixed(2)}*\n\nRevise as campanhas ou aumente a verba.`;
+        const msg = ` *Alerta CPL  ${c.nome}*\n\nCPL atual: *R$ ${cpl.toFixed(2)}*\nTeto acordado: *R$ ${parseFloat(c.teto_cpl).toFixed(2)}*\n\nRevise as campanhas ou aumente a verba.`;
         await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, MOVATAK_ADMIN_WA, msg);
         if (c.whatsapp_dono) {
           await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono, msg);
         }
-        console.log(`[cron-cpl] Alerta enviado → ${c.nome} CPL R${cpl.toFixed(2)}`);
+        console.log(`[cron-cpl] Alerta enviado  ${c.nome} CPL R${cpl.toFixed(2)}`);
       }
     }
   } catch(e) {
@@ -477,7 +477,7 @@ cron.schedule('30 * * * *', async () => {
 });
 
 // ============================================================
-// CRON — Alerta de lead parado sem etiqueta após 24h
+// CRON  Alerta de lead parado sem etiqueta aps 24h
 // ============================================================
 cron.schedule('0 9 * * *', async () => {
   try {
@@ -492,12 +492,12 @@ cron.schedule('0 9 * * *', async () => {
     );
 
     for (const lead of leads.rows) {
-      const msg = `⏰ *Lead parado há mais de 24h*\n\n*Cliente:* ${lead.cliente_nome}\n*Lead:* ${lead.telefone}${lead.nome ? ' (' + lead.nome + ')' : ''}\n\nEsse lead ainda não recebeu etiqueta Follow Up ou Cliente. Verifique com a equipe de vendas.`;
+      const msg = ` *Lead parado h mais de 24h*\n\n*Cliente:* ${lead.cliente_nome}\n*Lead:* ${lead.telefone}${lead.nome ? ' (' + lead.nome + ')' : ''}\n\nEsse lead ainda no recebeu etiqueta Follow Up ou Cliente. Verifique com a equipe de vendas.`;
       await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, MOVATAK_ADMIN_WA, msg);
       if (lead.whatsapp_dono) {
         await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.whatsapp_dono, msg);
       }
-      console.log(`[cron-parado] Alerta lead parado → ${lead.id}`);
+      console.log(`[cron-parado] Alerta lead parado  ${lead.id}`);
     }
   } catch(e) {
     console.error('[cron-parado]', e.message);
@@ -505,9 +505,9 @@ cron.schedule('0 9 * * *', async () => {
 });
 
 // ============================================================
-// WEBHOOK — Lead respondeu (parar sequência)
+// WEBHOOK  Lead respondeu (parar sequncia)
 // Z-API dispara quando lead envia qualquer mensagem
-// Verificar se está em followup e pausar
+// Verificar se est em followup e pausar
 // ============================================================
 app.post('/movatak/webhook/resposta', async (req, res) => {
   try {
@@ -538,7 +538,7 @@ app.post('/movatak/webhook/resposta', async (req, res) => {
       [leadId]
     );
 
-    console.log(`[resposta] Follow up pausado → lead ${leadId}`);
+    console.log(`[resposta] Follow up pausado  lead ${leadId}`);
     res.json({ ok: true });
   } catch (e) {
     console.error('[webhook/resposta]', e.message);
@@ -547,10 +547,10 @@ app.post('/movatak/webhook/resposta', async (req, res) => {
 });
 
 // ============================================================
-// API — App do cliente (somente leitura)
+// API  App do cliente (somente leitura)
 // ============================================================
 
-// Dashboard — métricas do período
+// Dashboard  mtricas do perodo
 app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
   try {
     const { dias = 30 } = req.query;
@@ -629,7 +629,7 @@ app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
 });
 
 // ============================================================
-// API — Painel Movatak (seus dados internos)
+// API  Painel Movatak (seus dados internos)
 // ============================================================
 
 // Listar todos os clientes com resumo
@@ -693,7 +693,7 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
   }
 });
 
-// Buscar dados de um cliente para edição (sem expor token/client-token)
+// Buscar dados de um cliente para edio (sem expor token/client-token)
 app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     const r = await query(
@@ -708,7 +708,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   }
 });
 
-// Editar dados de um cliente. Token e client-token só são alterados se enviados.
+// Editar dados de um cliente. Token e client-token s so alterados se enviados.
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl } = req.body;
@@ -717,7 +717,7 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
       return res.status(400).json({ error: 'Nome, WhatsApp, Instance ID e frase-gatilho sao obrigatorios.' });
     }
 
-    // Monta o UPDATE dinamicamente — token/client-token só entram se preenchidos
+    // Monta o UPDATE dinamicamente  token/client-token s entram se preenchidos
     const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
     const valores = [nome, whatsapp, zapi_instance, trigger_msg, teto_cpl ? parseFloat(teto_cpl) : null];
     let idx = 6;
@@ -744,7 +744,7 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
   }
 });
 
-// Leads de um cliente específico
+// Leads de um cliente especfico
 app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
   try {
     const r = await query(
@@ -854,7 +854,7 @@ app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res)
     if (!rc.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
     const cliente = rc.rows[0];
 
-    // Salvar vendedor — etiqueta deve ser criada manualmente no WhatsApp Business
+    // Salvar vendedor  etiqueta deve ser criada manualmente no WhatsApp Business
     // com o nome exato: 'Vendedor - ' + nome
     const r = await query(
       'INSERT INTO movatak_vendedores (cliente_id, nome) VALUES ($1, $2) RETURNING *',
@@ -906,7 +906,7 @@ app.get('/movatak/app/ranking', authCliente, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-// Evolução semanal (últimos 90 dias) para o app do cliente
+// Evoluo semanal (ltimos 90 dias) para o app do cliente
 app.get('/movatak/app/evolucao', authCliente, async (req, res) => {
   try {
     const r = await query(
@@ -935,7 +935,7 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
       ? "AND DATE(criado_em) = CURRENT_DATE"
       : `AND criado_em >= NOW() - INTERVAL '${dias} days'`;
 
-    // Métricas do período
+    // Mtricas do perodo
     const m = await query(
       `SELECT
          COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
@@ -961,7 +961,7 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
       return { hora: i, leads: found ? parseInt(found.leads) : 0 };
     });
 
-    // Vendas por vendedor no período
+    // Vendas por vendedor no perodo
     const v = await query(
       `SELECT vd.nome,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
@@ -1014,19 +1014,19 @@ app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
 });
 
 // ============================================================
-// ROTA UNIFICADA — Webhook Z-API (substitui /webhook/mensagem,
+// ROTA UNIFICADA  Webhook Z-API (substitui /webhook/mensagem,
 // /webhook/etiqueta e /webhook/resposta)
 // Trata: novo lead, comandos #followup/#convertido/#vendedor,
 // pausa de followup ao responder. Repassa payload ao rastreiobot.
 // ============================================================
 const RASTREIOBOT_URL = process.env.RASTREIOBOT_URL || 'https://rastreiobot-production-e904.up.railway.app';
 
-// Normaliza texto para comparar comandos (remove acentos, minúsculo)
+// Normaliza texto para comparar comandos (remove acentos, minsculo)
 function normalizarTexto(t) {
   return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
-// Verifica se o texto contém algum dos comandos da lista
+// Verifica se o texto contm algum dos comandos da lista
 function contemComando(texto, comandos) {
   if (!Array.isArray(comandos) || !comandos.length) return false;
   const t = normalizarTexto(texto);
@@ -1041,7 +1041,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   const body = req.body || {};
 
-  // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
+  // ---- Repasse para o rastreiobot (mantm DTF funcionando) ----
   try {
     await axios.post(`${RASTREIOBOT_URL}/webhook/zapi`, body, { timeout: 8000 });
   } catch (e) {
@@ -1055,13 +1055,13 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const instanceId = body.instanceId || body.instance || '';
     const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
-    // Telefone real: só quando vem como número (mensagem recebida do lead)
+    // Telefone real: s quando vem como nmero (mensagem recebida do lead)
     const telefone   = phoneRaw.includes('@') ? null : phoneRaw.replace(/\D/g, '');
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
     if (!instanceId) return;
 
-    // Buscar cliente pela instância
+    // Buscar cliente pela instncia
     const rc = await query(
       'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
       [instanceId]
@@ -1071,7 +1071,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const comandos = cliente.comandos || {};
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
-    // Vem com chatLid mas sem telefone real — busca o lead pelo chat_lid
+    // Vem com chatLid mas sem telefone real  busca o lead pelo chat_lid
     if (body.fromMe) {
       if (!chatLid) return;
       const rl = await query(
@@ -1079,7 +1079,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id, chatLid]
       );
       if (!rl.rows.length) {
-        console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + chatLid);
+        console.log('[zapi] comando ignorado  lead nao encontrado para chatLid ' + chatLid);
         return;
       }
       const lead = rl.rows[0];
@@ -1142,7 +1142,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           );
           console.log(`[zapi] Venda desfeita -> lead ${lead.id}`);
         } else {
-          console.log(`[zapi] Desfazer ignorado — lead ${lead.id} nao estava convertido`);
+          console.log(`[zapi] Desfazer ignorado  lead ${lead.id} nao estava convertido`);
         }
         return;
       }
@@ -1238,7 +1238,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 });
 
 // ============================================================
-// API — Comandos de automação por cliente
+// API  Comandos de automao por cliente
 // ============================================================
 
 // Buscar comandos de um cliente
@@ -1265,7 +1265,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
       desfazer:   norm(desfazer)
     };
 
-    // Validação: nenhum comando pode se repetir entre os campos
+    // Validao: nenhum comando pode se repetir entre os campos
     const todos = [
       ...comandos.followup, ...comandos.convertido,
       ...comandos.descartar, ...comandos.desfazer
@@ -1275,7 +1275,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
       return res.status(400).json({ error: 'O comando "' + duplicado + '" esta repetido. Cada comando deve ser unico.' });
     }
 
-    // Validação: não pode colidir com comando de vendedor já cadastrado
+    // Validao: no pode colidir com comando de vendedor j cadastrado
     const rv = await query(
       'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true AND comando IS NOT NULL',
       [req.params.id]
@@ -1305,7 +1305,7 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
       if (!rv.rows.length) return res.status(404).json({ error: 'Vendedor nao encontrado.' });
       const clienteId = rv.rows[0].cliente_id;
 
-      // Não pode colidir com comandos do cliente
+      // No pode colidir com comandos do cliente
       const rc = await query('SELECT comandos FROM movatak_clientes WHERE id = $1', [clienteId]);
       const cmds = rc.rows[0] && rc.rows[0].comandos ? rc.rows[0].comandos : {};
       const todosCliente = [
@@ -1316,7 +1316,7 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
         return res.status(400).json({ error: 'Esse comando ja esta em uso na automacao do cliente.' });
       }
 
-      // Não pode colidir com outro vendedor
+      // No pode colidir com outro vendedor
       const ro = await query(
         'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND id != $2 AND ativo = true AND comando IS NOT NULL',
         [clienteId, req.params.id]
@@ -1335,21 +1335,21 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
 });
 
 // ============================================================
-// API — Resumo de um cliente (cards do topo do dashboard)
+// API  Resumo de um cliente (cards do topo do dashboard)
 // ============================================================
 app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
   try {
     const id = req.params.id;
-    // Período em dias: 0 = hoje, 7, 30, 90. Default 30.
+    // Perodo em dias: 0 = hoje, 7, 30, 90. Default 30.
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
       ? parseInt(req.query.dias) : 30;
 
-    // Cláusula de período reutilizável
+    // Clusula de perodo reutilizvel
     const periodoSQL = dias === 0
       ? "AND DATE(criado_em) = CURRENT_DATE"
       : `AND criado_em >= NOW() - INTERVAL '${dias} days'`;
 
-    // Métricas do cliente no período
+    // Mtricas do cliente no perodo
     const m = await query(
       `SELECT
          COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
@@ -1362,7 +1362,7 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
       [id]
     );
 
-    // Leads por hora do dia de hoje (0-23) — sempre do dia atual
+    // Leads por hora do dia de hoje (0-23)  sempre do dia atual
     const h = await query(
       `SELECT EXTRACT(HOUR FROM criado_em)::int AS hora, COUNT(*) AS leads
        FROM movatak_leads
@@ -1375,7 +1375,7 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
       return { hora: i, leads: found ? parseInt(found.leads) : 0 };
     });
 
-    // Vendas por vendedor no período
+    // Vendas por vendedor no perodo
     const v = await query(
       `SELECT vd.nome,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
@@ -1400,7 +1400,7 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
 });
 
 // ============================================================
-// Health check + Versão
+// Health check + Verso
 // ============================================================
 app.get('/movatak/health', (req, res) => {
   res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
