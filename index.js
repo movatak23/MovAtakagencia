@@ -1000,6 +1000,61 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
 });
 
 // ============================================================
+// API — Resumo de um cliente (cards do topo do dashboard)
+// ============================================================
+app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    // Métricas do cliente
+    const m = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE etapa != 'descartado')                              AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente')                                  AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')                                 AS em_followup,
+         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                     AS leads_hoje,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje
+       FROM movatak_leads WHERE cliente_id = $1`,
+      [id]
+    );
+
+    // Leads por hora do dia de hoje (0-23)
+    const h = await query(
+      `SELECT EXTRACT(HOUR FROM criado_em)::int AS hora, COUNT(*) AS leads
+       FROM movatak_leads
+       WHERE cliente_id = $1 AND DATE(criado_em) = CURRENT_DATE
+       GROUP BY hora ORDER BY hora`,
+      [id]
+    );
+    const leadsPorHora = Array.from({ length: 24 }, (_, i) => {
+      const found = h.rows.find(r => r.hora === i);
+      return { hora: i, leads: found ? parseInt(found.leads) : 0 };
+    });
+
+    // Vendas por vendedor
+    const v = await query(
+      `SELECT vd.nome,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
+              COUNT(l.id) AS leads_atribuidos
+       FROM movatak_vendedores vd
+       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id
+       WHERE vd.cliente_id = $1 AND vd.ativo = true
+       GROUP BY vd.id, vd.nome
+       ORDER BY fechamentos DESC`,
+      [id]
+    );
+
+    res.json({
+      ...m.rows[0],
+      leads_por_hora: leadsPorHora,
+      vendedores: v.rows
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
 // Health check
 // ============================================================
 app.get('/movatak/health', (req, res) => {
