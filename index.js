@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.1';
+const MOVATAK_VERSION = 'v1.6.2-debug';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1054,8 +1054,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   // ---- Processamento Movatak ----
   try {
-    if (body.isGroup || body.isNewsletter) return; // ignora grupos e canais
-
     const instanceId = body.instanceId || body.instance || '';
     const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
@@ -1063,21 +1061,48 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const telefone   = extrairTelefonePayload(body);
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
-    if (!instanceId) return;
+
+    console.log('[zapi][entrada]', JSON.stringify({
+      fromMe: !!body.fromMe,
+      isGroup: !!body.isGroup,
+      isNewsletter: !!body.isNewsletter,
+      instanceId,
+      chatLid,
+      phone: body.phone || null,
+      telefoneExtraido: telefone,
+      senderName: body.senderName || null,
+      texto: texto || null,
+      keys: Object.keys(body).slice(0, 30)
+    }));
+
+    if (body.isGroup || body.isNewsletter) {
+      console.log('[zapi][ignorado] grupo ou newsletter');
+      return;
+    }
+
+    if (!instanceId) {
+      console.log('[zapi][ignorado] payload sem instanceId/instance');
+      return;
+    }
 
     // Buscar cliente pela instância
     const rc = await query(
       'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
       [instanceId]
     );
-    if (!rc.rows.length) return;
+    if (!rc.rows.length) {
+      console.log('[zapi][ignorado] nenhum cliente ativo encontrado para instanceId ' + instanceId);
+      return;
+    }
     const cliente = rc.rows[0];
     const comandos = cliente.comandos || {};
+    console.log('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
     // Busca o lead primeiro pelo chat_lid. Se não encontrar, usa telefone como fallback.
     // Isso corrige casos em que leads antigos ainda não tinham chat_lid salvo.
     if (body.fromMe) {
+      console.log('[zapi][fromMe] comando recebido', JSON.stringify({ texto, chatLid, telefone }));
       let rl;
 
       if (chatLid) {
@@ -1182,11 +1207,15 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
+      console.log('[zapi][fromMe] mensagem do vendedor sem comando reconhecido:', texto || '(sem texto)');
       return; // mensagem do vendedor sem comando reconhecido
     }
 
     // ===== MENSAGEM RECEBIDA DO LEAD =====
-    if (!telefone) return;
+    if (!telefone) {
+      console.log('[zapi][lead] ignorado: nao consegui extrair telefone real do payload');
+      return;
+    }
 
     // Buscar lead pelo telefone
     const rl = await query(
@@ -1218,6 +1247,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // -- Novo lead: mensagem bate com o trigger do trafego --
     const msg = normalizarTexto(texto);
     const trigger = normalizarTexto(cliente.trigger_msg);
+    console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({ msg, trigger }));
     if (trigger && msg.includes(trigger)) {
       const novoLead = await query(
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
