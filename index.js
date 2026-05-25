@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.0';
+const MOVATAK_VERSION = 'v1.6.1';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1016,6 +1016,30 @@ function contemComando(texto, comandos) {
   });
 }
 
+
+// Extrai telefone numérico de vários formatos possíveis do payload Z-API.
+// Em alguns eventos fromMe, o phone pode vir como @lid; por isso testamos campos alternativos.
+function extrairTelefonePayload(body) {
+  const candidatos = [
+    body.phone,
+    body.senderPhone,
+    body.connectedPhone,
+    body.participantPhone,
+    body.from,
+    body.to
+  ];
+
+  for (const valor of candidatos) {
+    if (!valor) continue;
+    const raw = String(valor);
+    if (raw.includes('@lid') || raw.includes('@g.us') || raw.includes('@newsletter')) continue;
+    const digitos = raw.replace(/\D/g, '');
+    if (digitos.length >= 10 && digitos.length <= 15) return digitos;
+  }
+
+  return null;
+}
+
 app.post('/movatak/webhook/zapi', async (req, res) => {
   res.json({ ok: true }); // responde imediato
 
@@ -1035,8 +1059,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const instanceId = body.instanceId || body.instance || '';
     const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
-    // Telefone real: só quando vem como número (mensagem recebida do lead)
-    const telefone   = phoneRaw.includes('@') ? null : phoneRaw.replace(/\D/g, '');
+    // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
+    const telefone   = extrairTelefonePayload(body);
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
     if (!instanceId) return;
@@ -1051,18 +1075,37 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const comandos = cliente.comandos || {};
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
-    // Vem com chatLid mas sem telefone real — busca o lead pelo chat_lid
+    // Busca o lead primeiro pelo chat_lid. Se não encontrar, usa telefone como fallback.
+    // Isso corrige casos em que leads antigos ainda não tinham chat_lid salvo.
     if (body.fromMe) {
-      if (!chatLid) return;
-      const rl = await query(
-        'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND chat_lid = $2',
-        [cliente.id, chatLid]
-      );
-      if (!rl.rows.length) {
-        console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + chatLid);
+      let rl;
+
+      if (chatLid) {
+        rl = await query(
+          'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND chat_lid = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
+          [cliente.id, chatLid]
+        );
+      }
+
+      if ((!rl || !rl.rows.length) && telefone) {
+        rl = await query(
+          'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
+          [cliente.id, telefone]
+        );
+      }
+
+      if (!rl || !rl.rows.length) {
+        console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + (chatLid || 'sem-chatLid') + ' telefone ' + (telefone || 'sem-telefone'));
         return;
       }
+
       const lead = rl.rows[0];
+
+      // Se encontrou pelo telefone, já grava o chat_lid para os próximos comandos funcionarem direto.
+      if (chatLid && lead.chat_lid !== chatLid) {
+        await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, lead.id]);
+        lead.chat_lid = chatLid;
+      }
 
       // -- Comando: vendedor especifico (conversao atribuida) --
       const rv = await query(
