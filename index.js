@@ -811,6 +811,16 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   const body = req.body || {};
 
+  // DIAGNÓSTICO — mostra o payload cru recebido da Z-API
+  console.log('[zapi] PAYLOAD RECEBIDO:', JSON.stringify({
+    phone: body.phone,
+    instanceId: body.instanceId,
+    instance: body.instance,
+    fromMe: body.fromMe,
+    type: body.type,
+    text: body.text
+  }));
+
   // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
   try {
     await axios.post(`${RASTREIOBOT_URL}/webhook/zapi`, body, { timeout: 8000 });
