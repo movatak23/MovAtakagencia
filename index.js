@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.4-followup-save-fix';
+const MOVATAK_VERSION = 'v1.6.5-trigger-flex';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -202,13 +202,13 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
     const telefone = phone.replace(/\D/g, '');
 
     // Buscar cliente com trigger que bate com a mensagem
+    // Não usa ILIKE direto porque pequenas diferenças como "PROV>>" vs "PROV >>" quebravam o disparo.
     const r = await query(
-      `SELECT * FROM movatak_clientes WHERE ativo = true AND $1 ILIKE '%' || trigger_msg || '%'`,
-      [mensagem]
+      `SELECT * FROM movatak_clientes WHERE ativo = true AND trigger_msg IS NOT NULL`,
+      []
     );
-    if (!r.rows.length) return res.json({ ok: true });
-
-    const cliente = r.rows[0];
+    const cliente = r.rows.find(c => textoBateGatilho(mensagem, c.trigger_msg));
+    if (!cliente) return res.json({ ok: true });
 
     // Verificar se lead já existe para evitar duplicata
     const existe = await query(
@@ -1066,9 +1066,41 @@ app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
 // ============================================================
 const RASTREIOBOT_URL = process.env.RASTREIOBOT_URL || 'https://rastreiobot-production-e904.up.railway.app';
 
-// Normaliza texto para comparar comandos (remove acentos, minúsculo)
+// Normaliza texto para comparar comandos e gatilhos
 function normalizarTexto(t) {
-  return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  return (t || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Normalização mais agressiva para frase-gatilho de tráfego.
+// Corrige diferenças comuns como "PROV>>" vs "PROV >>", acentos e espaços duplicados.
+function normalizarGatilho(t) {
+  return normalizarTexto(t)
+    .replace(/\s*>>\s*/g, '>>')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201c\u201d]/g, '"')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function textoBateGatilho(texto, gatilho) {
+  const msg = normalizarGatilho(texto);
+  const trigger = normalizarGatilho(gatilho);
+  if (!trigger || !msg) return false;
+
+  // Comparação principal: mensagem contém gatilho ou gatilho contém mensagem.
+  // A segunda condição ajuda quando o anúncio/WhatsApp corta parte do texto.
+  if (msg.includes(trigger) || trigger.includes(msg)) return true;
+
+  // Fallback seguro: ignora o prefixo antes de >> e compara o corpo da frase.
+  // Ex.: "PROV>> Olá!..." e "PROV >> Olá!..."
+  const corpoMsg = msg.includes('>>') ? msg.split('>>').slice(1).join('>>').trim() : msg;
+  const corpoTrigger = trigger.includes('>>') ? trigger.split('>>').slice(1).join('>>').trim() : trigger;
+  return !!corpoTrigger && !!corpoMsg && (corpoMsg.includes(corpoTrigger) || corpoTrigger.includes(corpoMsg));
 }
 
 // Verifica se o texto contém algum dos comandos da lista
@@ -1352,10 +1384,17 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // -- Novo lead: mensagem bate com o trigger do trafego --
-    const msg = normalizarTexto(texto);
-    const trigger = normalizarTexto(cliente.trigger_msg);
-    console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({ msg, trigger }));
-    if (trigger && msg.includes(trigger)) {
+    const msg = normalizarGatilho(texto);
+    const trigger = normalizarGatilho(cliente.trigger_msg);
+    const triggerOk = textoBateGatilho(texto, cliente.trigger_msg);
+    console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({
+      msg_original: texto,
+      trigger_original: cliente.trigger_msg,
+      msg,
+      trigger,
+      triggerOk
+    }));
+    if (triggerOk) {
       const novoLead = await query(
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
          VALUES ($1, $2, $3, 'followup', $4)
