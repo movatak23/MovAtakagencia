@@ -361,7 +361,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v1.5.0</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v1.6.8-html-comandos-fix</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -421,7 +421,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.5.0';
+const PAINEL_VERSION = 'v1.6.8-html-comandos-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 
 let secret = '';
@@ -967,13 +967,20 @@ async function salvarFU() {
       })
     });
     
-    // Salvar comandos de automação (sem followup agora)
-    const parseCmds = (id) => (document.getElementById(id).value || '')
-      .split(',').map(s => s.trim()).filter(Boolean);
+    // Salvar comandos de automação
+    // Aceita comandos separados por vírgula, ponto e vírgula ou quebra de linha.
+    const parseCmds = (id) => {
+      const el = document.getElementById(id);
+      return (el?.value || '')
+        .split(/[,;\n]+/)
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean);
+    };
     const resCmd = await fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/comandos', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-movatak-secret': secret },
       body: JSON.stringify({
+        followup: [],
         convertido: parseCmds('fu-cmd-convertido'),
         descartar:  parseCmds('fu-cmd-descartar'),
         desfazer:   parseCmds('fu-cmd-desfazer')
@@ -1049,17 +1056,26 @@ async function removerVendedor(vendedorId) {
 
 // ── Comandos de automação ──────────────────────────────────
 async function carregarComandos(id) {
+  const setCampo = (campoId, valor) => {
+    const el = document.getElementById(campoId);
+    if (!el) return;
+    el.value = Array.isArray(valor) ? valor.join(', ') : (valor || '');
+  };
+
   try {
     const c = await api('/movatak/admin/clientes/' + id + '/comandos');
-    document.getElementById('fu-cmd-followup').value   = (c.followup   || []).join(', ');
-    document.getElementById('fu-cmd-convertido').value = (c.convertido || []).join(', ');
-    document.getElementById('fu-cmd-descartar').value  = (c.descartar  || []).join(', ');
-    document.getElementById('fu-cmd-desfazer').value   = (c.desfazer   || []).join(', ');
+
+    // O HTML atual não possui campo visível para comando de followup.
+    // Por isso NÃO devemos tentar preencher fu-cmd-followup, pois esse elemento não existe
+    // e quebrava o carregamento dos demais comandos.
+    setCampo('fu-cmd-convertido', c.convertido || []);
+    setCampo('fu-cmd-descartar',  c.descartar  || []);
+    setCampo('fu-cmd-desfazer',   c.desfazer   || []);
   } catch(e) {
-    document.getElementById('fu-cmd-followup').value = '';
-    document.getElementById('fu-cmd-convertido').value = '';
-    document.getElementById('fu-cmd-descartar').value = '';
-    document.getElementById('fu-cmd-desfazer').value = '';
+    setCampo('fu-cmd-convertido', []);
+    setCampo('fu-cmd-descartar', []);
+    setCampo('fu-cmd-desfazer', []);
+    document.getElementById('fu-err').textContent = 'Erro ao carregar comandos: ' + e.message;
   }
 }
 
