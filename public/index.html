@@ -873,9 +873,12 @@ async function salvarFU() {
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
   }
 }
-document.getElementById('modal-fu').addEventListener('click', e => {
-  if (e.target === document.getElementById('modal-fu')) fecharFU();
-});
+const _modalFu = document.getElementById('modal-fu');
+if (_modalFu) {
+  _modalFu.addEventListener('click', e => {
+    if (e.target === _modalFu) fecharFU();
+  });
+}
 
 
 // ── Vendedores ─────────────────────────────────────────────
