@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.6-trigger-existing-lead';
+const MOVATAK_VERSION = 'v1.6.7-fu1-disparo-imediato';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -164,6 +164,74 @@ async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = tr
   }
 }
 
+// Envia imediatamente as mensagens pendentes de um lead.
+// Usado principalmente no FU1, para não depender do cron de 10 minutos.
+// Se a Z-API falhar, mantém a mensagem como pendente para o cron tentar de novo.
+async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) {
+  const params = [leadId];
+  let filtroSequencia = '';
+
+  if (apenasSequenciaFu !== null && apenasSequenciaFu !== undefined) {
+    params.push(apenasSequenciaFu);
+    filtroSequencia = ` AND COALESCE(f.sequencia_fu, 1) = $2`;
+  }
+
+  const r = await query(
+    `SELECT f.*, l.telefone, l.nome, l.etapa,
+            c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
+       FROM movatak_followup f
+       JOIN movatak_leads l ON l.id = f.lead_id
+       JOIN movatak_clientes c ON c.id = f.cliente_id
+      WHERE f.lead_id = $1
+        AND f.status = 'pendente'
+        AND f.proximo_envio <= NOW()
+        ${filtroSequencia}
+      ORDER BY COALESCE(f.sequencia_fu, 1), f.etapa_seq`,
+    params
+  );
+
+  if (!r.rows.length) {
+    console.log(`[followup][imediato] nenhuma mensagem pendente para lead ${leadId}`);
+    return;
+  }
+
+  for (const row of r.rows) {
+    try {
+      if (row.etapa !== 'followup') {
+        console.log(`[followup][imediato] lead ${leadId} ignorado porque etapa=${row.etapa}`);
+        continue;
+      }
+
+      const fuData = row.followup_msgs_v2 || {};
+      const seqKey = 'fu' + (row.sequencia_fu || 1);
+      const msgs = fuData[seqKey] || {};
+      const msgText = msgs['msg' + row.etapa_seq];
+
+      if (!msgText || !String(msgText).trim()) {
+        await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
+        console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} vazia; marcada como enviada -> lead ${leadId}`);
+        continue;
+      }
+
+      const msg = String(msgText).replace(/{nome}/g, row.nome || 'Lead');
+
+      await zapiEnviar(
+        row.zapi_instance,
+        row.zapi_token,
+        row.zapi_client_token,
+        row.telefone,
+        msg
+      );
+
+      await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
+      console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada -> lead ${leadId}`);
+    } catch (e) {
+      console.error(`[followup][imediato] erro ao enviar lead ${leadId} fila ${row.id}:`, e.message);
+      // Não marca como enviado. O cron tentará reenviar depois.
+    }
+  }
+}
+
 // Se o lead ficou 1h sem responder ao FU1, entra no FU2.
 async function migrarFU1ParaFU2() {
   const r = await query(
@@ -226,6 +294,7 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
     );
 
     await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
+    await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
 
     // Etiquetar no WhatsApp
     await zapiEtiquetar(
@@ -1392,6 +1461,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           [body.senderName || null, lead.id]
         );
         await agendarFollowupV2(lead.id, cliente.id, 1, true);
+        await enviarFollowupsPendentesDoLead(lead.id, 1);
         console.log(`[zapi] Lead existente reativado em FU1 -> lead ${lead.id} telefone ${telefone}`);
         return;
       }
@@ -1426,6 +1496,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id, telefone, body.senderName || null, chatLid]
       );
       await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
+      await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
       console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
