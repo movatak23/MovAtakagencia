@@ -901,15 +901,26 @@ async function abrirFU(id) {
   document.getElementById('modal-fu').classList.add('open');
   try {
     const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
-    document.getElementById('fu-msg1').value = msgs.msg1 || '';
-    document.getElementById('fu-msg2').value = msgs.msg2 || '';
-    document.getElementById('fu-msg3').value = msgs.msg3 || '';
-    document.getElementById('fu-msg4').value = msgs.msg4 || '';
+    // Carregar novo formato (2 blocos) se existir
+    if (msgs.followup_v2) {
+      document.getElementById('fu1-msg1').value = msgs.followup_v2.fu1?.msg1 || '';
+      document.getElementById('fu1-msg2').value = msgs.followup_v2.fu1?.msg2 || '';
+      document.getElementById('fu2-msg1').value = msgs.followup_v2.fu2?.msg1 || '';
+      document.getElementById('fu2-msg2').value = msgs.followup_v2.fu2?.msg2 || '';
+      document.getElementById('fu2-msg3').value = msgs.followup_v2.fu2?.msg3 || '';
+    } else {
+      // Compatibilidade com formato antigo (4 mensagens) — preenche FU1 e deixa FU2 vazio
+      document.getElementById('fu1-msg1').value = msgs.msg1 || '';
+      document.getElementById('fu1-msg2').value = msgs.msg2 || '';
+      document.getElementById('fu2-msg1').value = '';
+      document.getElementById('fu2-msg2').value = '';
+      document.getElementById('fu2-msg3').value = '';
+    }
     document.getElementById('fu-boas-vindas').value = msgs.boas_vindas_msg || '';
     document.getElementById('fu-verba').value = msgs.verba_diaria || '';
     document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
     document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
-    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
     // Carregar vendedores
     carregarVendedores(id);
     // Carregar comandos de automação
@@ -918,7 +929,7 @@ async function abrirFU(id) {
     carregarRanking(id);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
-    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
   }
 }
 function fecharFU() {
@@ -926,12 +937,14 @@ function fecharFU() {
   fuId = null;
 }
 async function salvarFU() {
-  const msg1 = document.getElementById('fu-msg1').value.trim();
-  const msg2 = document.getElementById('fu-msg2').value.trim();
-  const msg3 = document.getElementById('fu-msg3').value.trim();
-  const msg4 = document.getElementById('fu-msg4').value.trim();
-  if (!msg1 || !msg2 || !msg3 || !msg4) {
-    document.getElementById('fu-err').textContent = 'Preencha todas as 4 mensagens.';
+  const fu1_msg1 = document.getElementById('fu1-msg1').value.trim();
+  const fu1_msg2 = document.getElementById('fu1-msg2').value.trim();
+  const fu2_msg1 = document.getElementById('fu2-msg1').value.trim();
+  const fu2_msg2 = document.getElementById('fu2-msg2').value.trim();
+  const fu2_msg3 = document.getElementById('fu2-msg3').value.trim();
+  // Validação: pelo menos uma mensagem do FU1
+  if (!fu1_msg1 && !fu1_msg2) {
+    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem no Follow up 1.';
     return;
   }
   document.getElementById('btn-fu-save').textContent = 'Salvando...';
@@ -941,18 +954,26 @@ async function salvarFU() {
     const verba_diaria = document.getElementById('fu-verba').value.trim();
     const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
     const trigger_msg = document.getElementById('fu-trigger').value.trim();
+    
+    // Salvar follow up com estrutura dos 2 blocos
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
-      body: JSON.stringify({ msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg })
+      body: JSON.stringify({
+        followup_v2: {
+          fu1: { msg1: fu1_msg1, msg2: fu1_msg2 },
+          fu2: { msg1: fu2_msg1, msg2: fu2_msg2, msg3: fu2_msg3 }
+        },
+        boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg
+      })
     });
-    // Salvar comandos de automação
+    
+    // Salvar comandos de automação (sem followup agora)
     const parseCmds = (id) => (document.getElementById(id).value || '')
       .split(',').map(s => s.trim()).filter(Boolean);
     const resCmd = await fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/comandos', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-movatak-secret': secret },
       body: JSON.stringify({
-        followup:   parseCmds('fu-cmd-followup'),
         convertido: parseCmds('fu-cmd-convertido'),
         descartar:  parseCmds('fu-cmd-descartar'),
         desfazer:   parseCmds('fu-cmd-desfazer')
@@ -961,14 +982,14 @@ async function salvarFU() {
     if (!resCmd.ok) {
       const err = await resCmd.json().catch(() => ({}));
       document.getElementById('fu-err').textContent = err.error || 'Erro ao salvar comandos.';
-      document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+      document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
       return;
     }
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
     setTimeout(fecharFU, 1000);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
-    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
   }
 }
 const _modalFu = document.getElementById('modal-fu');
@@ -1089,65 +1110,90 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
 <div class="modal-overlay" id="modal-fu">
   <div class="modal modal-fu">
-    <h3 id="fu-titulo">Mensagens de Follow Up</h3>
-    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
+    <h3 id="fu-titulo">Configuração de Follow Up</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:20px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
 
-    <label class="fu-label" style="margin-top:0">Frase-gatilho do tráfego <span class="fu-tag">cria o lead</span></label>
-    <input type="text" class="fu-textarea" id="fu-trigger" style="min-height:auto;padding:12px 14px;resize:none" placeholder="vim pelo anuncio">
-    <div class="fu-hint">Quando o lead manda uma mensagem contendo esse texto, ele é registrado automaticamente.</div>
-
-    <label class="fu-label">D+1 — Mensagem 1 <span class="fu-tag">1 dia após</span></label>
-    <textarea class="fu-textarea" id="fu-msg1" rows="3"></textarea>
-    <div class="fu-hint">Enviada 1 dia após a etiqueta Follow Up ser aplicada.</div>
-    <label class="fu-label">D+3 — Mensagem 2 <span class="fu-tag">3 dias após</span></label>
-    <textarea class="fu-textarea" id="fu-msg2" rows="3"></textarea>
-    <label class="fu-label">D+7 — Mensagem 3 <span class="fu-tag">7 dias após</span></label>
-    <textarea class="fu-textarea" id="fu-msg3" rows="3"></textarea>
-    <label class="fu-label">D+14 — Mensagem 4 <span class="fu-tag">14 dias após</span></label>
-    <textarea class="fu-textarea" id="fu-msg4" rows="3"></textarea>
-    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem de boas-vindas <span class="fu-tag">quando vira cliente</span></label>
-    <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
-    <div class="fu-hint">Enviada automaticamente quando a etiqueta "Cliente" é aplicada. Use {nome} para personalizar.</div>
-
-    <label class="fu-label" style="margin-top:16px">Verba diária de mídia (R$)</label>
-    <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
-    <div class="fu-hint">Usada para calcular o CPL real automaticamente.</div>
-
-    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">WhatsApp do dono para alertas</label>
-    <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
-    <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
-
-    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comandos de automação</label>
-    <div class="fu-hint" style="margin-bottom:10px">Texto que, embutido numa mensagem enviada pela equipe, dispara a ação. Separe múltiplos comandos por vírgula.</div>
-
-    <label class="fu-label">Comando — Follow Up <span class="fu-tag">ativa a sequência</span></label>
-    <input type="text" class="fu-textarea" id="fu-cmd-followup" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#followup, #aguardando">
-
-    <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
-    <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
-
-    <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
-    <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
-
-    <label class="fu-label">Comando — Desfazer venda <span class="fu-tag">reverte conversão</span></label>
-    <input type="text" class="fu-textarea" id="fu-cmd-desfazer" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#estornar, #desfazer">
-    <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
-
-    <label class="fu-label" style="margin-top:16px">Vendedores</label>
-    <div class="fu-hint" style="margin-bottom:8px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
-    <div class="vendedor-list" id="fu-vendedores-list"></div>
-    <div class="add-vendedor-row">
-      <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
-      <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
+    <!-- BLOCO 1: GATILHO -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Frase-gatilho do tráfego</div>
+      <input type="text" class="fu-textarea" id="fu-trigger" style="min-height:auto;padding:12px 14px;resize:none" placeholder="vim pelo anuncio">
+      <div class="fu-hint">Quando o lead manda uma mensagem contendo esse texto, ele é registrado automaticamente.</div>
     </div>
 
-    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Performance dos vendedores</label>
-    <div id="fu-ranking-chart" style="margin-top:10px"></div>
+    <!-- BLOCO 2: FOLLOW UP 1 -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Follow up 1 — Boas-vindas imediata</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Enviadas imediatamente quando o lead chega. Se não responder em 1 hora, vai para o Follow up 2.</div>
+      <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
+      <textarea class="fu-textarea" id="fu1-msg1" rows="3" placeholder="Ex: Olá {nome}! Bem-vindo(a). Você está disponível para prosseguirmos?"></textarea>
+      <label class="fu-label">Mensagem 2 <span class="fu-tag">imediata</span></label>
+      <textarea class="fu-textarea" id="fu1-msg2" rows="3" placeholder="Deixe em branco se não quiser enviar uma segunda mensagem"></textarea>
+    </div>
 
-    <div class="login-err" id="fu-err" style="margin-top:12px"></div>
+    <!-- BLOCO 3: FOLLOW UP 2 -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Follow up 2 — Reativação</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Ativado automaticamente se o lead não responder em 1 hora. Mensagens: imediata, D+1, D+3. Campos em branco não são enviados.</div>
+      <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
+      <textarea class="fu-textarea" id="fu2-msg1" rows="3" placeholder="Deixe em branco se não quiser usar este follow up"></textarea>
+      <label class="fu-label">Mensagem 2 <span class="fu-tag">D+1</span></label>
+      <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
+      <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
+      <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
+    </div>
+
+    <!-- BLOCO 4: BOAS-VINDAS AO CLIENTE -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">4. Mensagem de boas-vindas ao virar cliente</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Enviada automaticamente quando o lead responde ou você marca como cliente.</div>
+      <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
+    </div>
+
+    <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">5. Dados da campanha</div>
+      <label class="fu-label">Verba diária de mídia (R$)</label>
+      <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
+      <div class="fu-hint">Usada para calcular o CPL real automaticamente.</div>
+      <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
+      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
+      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
+    </div>
+
+    <!-- BLOCO 6: COMANDOS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Comandos de automação</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Texto embutido numa mensagem enviada pela equipe que dispara a ação. Separe múltiplos comandos por vírgula.</div>
+      <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
+      <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
+      <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
+      <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
+      <label class="fu-label">Comando — Desfazer venda <span class="fu-tag">reverte conversão</span></label>
+      <input type="text" class="fu-textarea" id="fu-cmd-desfazer" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#estornar, #desfazer">
+      <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
+    </div>
+
+    <!-- BLOCO 7: VENDEDORES -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Vendedores</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
+      <div class="vendedor-list" id="fu-vendedores-list"></div>
+      <div class="add-vendedor-row">
+        <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
+        <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
+      </div>
+    </div>
+
+    <!-- BLOCO 8: PERFORMANCE -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Performance dos vendedores</div>
+      <div id="fu-ranking-chart" style="margin-top:10px"></div>
+    </div>
+
+    <div class="login-err" id="fu-err" style="margin-bottom:12px"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharFU()">Cancelar</button>
-      <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar mensagens</button>
+      <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar alterações</button>
     </div>
   </div>
 </div>
