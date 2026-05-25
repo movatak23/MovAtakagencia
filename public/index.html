@@ -421,7 +421,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.7.0-estavel';
+const PAINEL_VERSION = 'v1.8.0-produto-assistido';
 const SENHA_KEY  = 'mvtk_painel_secret';
 
 let secret = '';
@@ -1163,7 +1163,10 @@ async function carregarOperacao(id) {
       <div style="font-size:12px;color:var(--text2);line-height:1.6">
         <strong>Último lead:</strong> ${r.ultimo_lead ? `${r.ultimo_lead.nome || 'Sem nome'} · ${r.ultimo_lead.telefone} · ${fmtData(r.ultimo_lead.criado_em)}` : '—'}<br>
         <strong>Próxima mensagem:</strong> ${r.proxima_mensagem ? `FU${r.proxima_mensagem.sequencia_fu} msg${r.proxima_mensagem.etapa_seq} · ${r.proxima_mensagem.telefone} · ${fmtData(r.proxima_mensagem.proximo_envio)}` : '—'}<br>
-        <strong>Último envio:</strong> ${fmtData(fila.ultimo_envio_em)}
+        <strong>Último envio:</strong> ${fmtData(fila.ultimo_envio_em)}<br>
+        <strong>Último webhook:</strong> ${fmtData((r.cliente || {}).ultimo_webhook_em)}<br>
+        <strong>Último erro Z-API:</strong> ${(r.cliente || {}).ultimo_erro_zapi ? `${(r.cliente || {}).ultimo_erro_zapi} · ${fmtData((r.cliente || {}).ultimo_erro_zapi_em)}` : '—'}<br>
+        <strong>Relatório diário:</strong> ${r.relatorio_diario_ativo ? 'ativo' : 'desativado no Railway'}
       </div>`;
   } catch(e) {
     wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar operação: ' + e.message + '</div>';
@@ -1199,6 +1202,7 @@ async function carregarFilaFollowup(id) {
                   ${r.status === 'pendente'
                     ? `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${r.lead_id})">Pausar</button>`
                     : `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="reativarLeadFU(${r.lead_id})">Reativar FU2</button>`}
+                  <button class="btn-cancel" style="padding:6px 8px;font-size:11px;margin-top:4px" onclick="carregarHistoricoLead(${r.lead_id})">Histórico</button>
                 </td>
               </tr>
             `).join('')}
@@ -1208,6 +1212,63 @@ async function carregarFilaFollowup(id) {
   } catch(e) {
     wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar fila: ' + e.message + '</div>';
   }
+}
+
+async function carregarHistoricoLead(leadId) {
+  const box = document.getElementById('fu-historico-box');
+  if (!box) return;
+  box.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando histórico...</div>';
+  try {
+    const r = await api('/movatak/admin/leads/' + leadId + '/historico');
+    const lead = r.lead || {};
+    const eventos = r.eventos || [];
+    box.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg2);margin-top:12px">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${lead.nome || 'Sem nome'} · ${lead.telefone || ''}</div>
+            <div style="font-size:12px;color:var(--text2)">Etapa: ${lead.etapa || '—'} · Vendedor: ${lead.vendedor_nome || '—'}</div>
+          </div>
+          <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="document.getElementById('fu-historico-box').innerHTML=''">Fechar</button>
+        </div>
+        <div style="max-height:260px;overflow:auto">
+          ${eventos.length ? eventos.map(ev => `
+            <div style="border-left:2px solid var(--accent);padding:0 0 12px 10px;margin-left:4px">
+              <div style="font-size:12px;color:var(--text);font-weight:700">${ev.tipo}</div>
+              <div style="font-size:12px;color:var(--text2);line-height:1.4">${ev.descricao || ''}</div>
+              <div style="font-size:11px;color:var(--text3);font-family:var(--mono)">${fmtData(ev.criado_em)}</div>
+            </div>
+          `).join('') : '<div style="font-size:13px;color:var(--text3)">Sem eventos registrados ainda. Eventos novos aparecerão após aplicar a migração v1.8.0.</div>'}
+        </div>
+      </div>`;
+  } catch(e) {
+    box.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar histórico: ' + e.message + '</div>';
+  }
+}
+
+async function enviarRelatorioDiarioAgora() {
+  try {
+    const r = await api('/movatak/admin/clientes/' + fuId + '/relatorio-diario/enviar', {
+      method: 'POST', body: JSON.stringify({})
+    });
+    document.getElementById('fu-err').textContent = 'Relatório enviado para o WhatsApp do dono.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao enviar relatório: ' + e.message;
+  }
+}
+
+function exportarLeadsCSV() {
+  if (!fuId) return;
+  const url = API_BASE + '/movatak/admin/clientes/' + fuId + '/leads.csv';
+  fetch(url, { headers: { 'x-movatak-secret': secret } })
+    .then(r => { if (!r.ok) throw new Error('Erro ' + r.status); return r.blob(); })
+    .then(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'leads-movatak.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+    })
+    .catch(e => { document.getElementById('fu-err').textContent = 'Erro ao exportar CSV: ' + e.message; });
 }
 
 async function pausarLeadFU(leadId) {
@@ -1316,6 +1377,11 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
         <button class="btn-add-small" onclick="testarGatilhoAtual()">Testar</button>
       </div>
       <div class="fu-hint" id="fu-trigger-resultado"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
+        <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
+      </div>
+      <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
     </div>
 
     <!-- BLOCO 7: FILA DE FOLLOW-UP -->
@@ -1323,6 +1389,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Fila de follow-up</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Mostra mensagens pendentes, enviadas e pausadas. Use para auditar se o fluxo realmente entrou na fila.</div>
       <div id="fu-fila-box"></div>
+      <div id="fu-historico-box"></div>
     </div>
 
     <!-- BLOCO 8: COMANDOS -->
