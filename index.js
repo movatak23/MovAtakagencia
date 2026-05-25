@@ -617,6 +617,57 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
   }
 });
 
+// Buscar dados de um cliente para edição (sem expor token/client-token)
+app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl
+       FROM movatak_clientes WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    res.json(r.rows[0]);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Editar dados de um cliente. Token e client-token só são alterados se enviados.
+app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
+  try {
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl } = req.body;
+
+    if (!nome || !whatsapp || !zapi_instance || !trigger_msg) {
+      return res.status(400).json({ error: 'Nome, WhatsApp, Instance ID e frase-gatilho sao obrigatorios.' });
+    }
+
+    // Monta o UPDATE dinamicamente — token/client-token só entram se preenchidos
+    const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
+    const valores = [nome, whatsapp, zapi_instance, trigger_msg, teto_cpl ? parseFloat(teto_cpl) : null];
+    let idx = 6;
+
+    if (zapi_token && zapi_token.trim()) {
+      campos.push('zapi_token = $' + idx);
+      valores.push(zapi_token.trim());
+      idx++;
+    }
+    if (zapi_client_token && zapi_client_token.trim()) {
+      campos.push('zapi_client_token = $' + idx);
+      valores.push(zapi_client_token.trim());
+      idx++;
+    }
+
+    valores.push(req.params.id);
+    await query(
+      `UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx}`,
+      valores
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Leads de um cliente específico
 app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
   try {
@@ -638,7 +689,10 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 // Buscar mensagens de follow up de um cliente
 app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
-    const r = await query('SELECT followup_msgs FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    const r = await query(
+      'SELECT followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg FROM movatak_clientes WHERE id = $1',
+      [req.params.id]
+    );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
     const row = r.rows[0];
     const msgs = row.followup_msgs || {
@@ -649,7 +703,10 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
     };
     res.json({
       ...msgs,
-      boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!'
+      boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!',
+      verba_diaria: row.verba_diaria || null,
+      whatsapp_dono: row.whatsapp_dono || null,
+      trigger_msg: row.trigger_msg || ''
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -657,11 +714,21 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
 // Atualizar mensagens de follow up de um cliente
 app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
-    const { msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria } = req.body;
+    const { msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
     if (!msg1 || !msg2 || !msg3 || !msg4) return res.status(400).json({ error: 'Todas as 4 mensagens sao obrigatorias.' });
     await query(
-      'UPDATE movatak_clientes SET followup_msgs = $1, boas_vindas_msg = $2, verba_diaria = $3 WHERE id = $4',
-      [JSON.stringify({ msg1, msg2, msg3, msg4 }), boas_vindas_msg || null, verba_diaria ? parseFloat(verba_diaria) : null, req.params.id]
+      `UPDATE movatak_clientes
+         SET followup_msgs = $1, boas_vindas_msg = $2, verba_diaria = $3,
+             whatsapp_dono = $4, trigger_msg = COALESCE($5, trigger_msg)
+       WHERE id = $6`,
+      [
+        JSON.stringify({ msg1, msg2, msg3, msg4 }),
+        boas_vindas_msg || null,
+        verba_diaria ? parseFloat(verba_diaria) : null,
+        whatsapp_dono ? String(whatsapp_dono).replace(/\D/g, '') : null,
+        (trigger_msg && trigger_msg.trim()) ? trigger_msg.trim() : null,
+        req.params.id
+      ]
     );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -903,6 +970,20 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
+      // -- Comando: desfazer venda (so reverte se o lead estiver convertido) --
+      if (contemComando(texto, comandos.desfazer)) {
+        if (lead.etapa === 'cliente') {
+          await query(
+            `UPDATE movatak_leads SET etapa = 'lead', vendedor_id = NULL, atualizado_em = NOW() WHERE id = $1`,
+            [lead.id]
+          );
+          console.log(`[zapi] Venda desfeita -> lead ${lead.id}`);
+        } else {
+          console.log(`[zapi] Desfazer ignorado — lead ${lead.id} nao estava convertido`);
+        }
+        return;
+      }
+
       // -- Comando: followup --
       if (contemComando(texto, comandos.followup)) {
         await query(
@@ -987,12 +1068,37 @@ app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) =>
 // Atualizar comandos de um cliente
 app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
   try {
-    const { followup, convertido, descartar } = req.body;
+    const { followup, convertido, descartar, desfazer } = req.body;
+    const norm = (arr) => (Array.isArray(arr) ? arr : [])
+      .map(s => String(s).trim().toLowerCase()).filter(Boolean);
     const comandos = {
-      followup:   Array.isArray(followup)   ? followup   : [],
-      convertido: Array.isArray(convertido) ? convertido : [],
-      descartar:  Array.isArray(descartar)  ? descartar  : []
+      followup:   norm(followup),
+      convertido: norm(convertido),
+      descartar:  norm(descartar),
+      desfazer:   norm(desfazer)
     };
+
+    // Validação: nenhum comando pode se repetir entre os campos
+    const todos = [
+      ...comandos.followup, ...comandos.convertido,
+      ...comandos.descartar, ...comandos.desfazer
+    ];
+    const duplicado = todos.find((c, i) => todos.indexOf(c) !== i);
+    if (duplicado) {
+      return res.status(400).json({ error: 'O comando "' + duplicado + '" esta repetido. Cada comando deve ser unico.' });
+    }
+
+    // Validação: não pode colidir com comando de vendedor já cadastrado
+    const rv = await query(
+      'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true AND comando IS NOT NULL',
+      [req.params.id]
+    );
+    const cmdsVendedores = rv.rows.map(r => String(r.comando).trim().toLowerCase());
+    const colisao = todos.find(c => cmdsVendedores.includes(c));
+    if (colisao) {
+      return res.status(400).json({ error: 'O comando "' + colisao + '" ja pertence a um vendedor.' });
+    }
+
     await query(
       'UPDATE movatak_clientes SET comandos = $1 WHERE id = $2',
       [JSON.stringify(comandos), req.params.id]
@@ -1004,10 +1110,38 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
 // Atualizar comando de um vendedor
 app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res) => {
   try {
-    const { comando } = req.body;
+    const comando = req.body.comando ? String(req.body.comando).trim().toLowerCase() : null;
+
+    if (comando) {
+      // Descobrir o cliente deste vendedor
+      const rv = await query('SELECT cliente_id FROM movatak_vendedores WHERE id = $1', [req.params.id]);
+      if (!rv.rows.length) return res.status(404).json({ error: 'Vendedor nao encontrado.' });
+      const clienteId = rv.rows[0].cliente_id;
+
+      // Não pode colidir com comandos do cliente
+      const rc = await query('SELECT comandos FROM movatak_clientes WHERE id = $1', [clienteId]);
+      const cmds = rc.rows[0] && rc.rows[0].comandos ? rc.rows[0].comandos : {};
+      const todosCliente = [
+        ...(cmds.followup || []), ...(cmds.convertido || []),
+        ...(cmds.descartar || []), ...(cmds.desfazer || [])
+      ].map(c => String(c).trim().toLowerCase());
+      if (todosCliente.includes(comando)) {
+        return res.status(400).json({ error: 'Esse comando ja esta em uso na automacao do cliente.' });
+      }
+
+      // Não pode colidir com outro vendedor
+      const ro = await query(
+        'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND id != $2 AND ativo = true AND comando IS NOT NULL',
+        [clienteId, req.params.id]
+      );
+      if (ro.rows.some(r => String(r.comando).trim().toLowerCase() === comando)) {
+        return res.status(400).json({ error: 'Esse comando ja pertence a outro vendedor.' });
+      }
+    }
+
     await query(
       'UPDATE movatak_vendedores SET comando = $1 WHERE id = $2',
-      [comando || null, req.params.id]
+      [comando, req.params.id]
     );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -1019,20 +1153,29 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
 app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
   try {
     const id = req.params.id;
+    // Período em dias: 0 = hoje, 7, 30, 90. Default 30.
+    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
+      ? parseInt(req.query.dias) : 30;
 
-    // Métricas do cliente
+    // Cláusula de período reutilizável
+    const periodoSQL = dias === 0
+      ? "AND DATE(criado_em) = CURRENT_DATE"
+      : `AND criado_em >= NOW() - INTERVAL '${dias} days'`;
+
+    // Métricas do cliente no período
     const m = await query(
       `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado')                              AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente')                                  AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')                                 AS em_followup,
-         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                     AS leads_hoje,
+         COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente')      AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')     AS em_followup,
+         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                      AS leads_hoje,
          COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje
-       FROM movatak_leads WHERE cliente_id = $1`,
+       FROM movatak_leads
+       WHERE cliente_id = $1 ${periodoSQL}`,
       [id]
     );
 
-    // Leads por hora do dia de hoje (0-23)
+    // Leads por hora do dia de hoje (0-23) — sempre do dia atual
     const h = await query(
       `SELECT EXTRACT(HOUR FROM criado_em)::int AS hora, COUNT(*) AS leads
        FROM movatak_leads
@@ -1045,13 +1188,13 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
       return { hora: i, leads: found ? parseInt(found.leads) : 0 };
     });
 
-    // Vendas por vendedor
+    // Vendas por vendedor no período
     const v = await query(
       `SELECT vd.nome,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
               COUNT(l.id) AS leads_atribuidos
        FROM movatak_vendedores vd
-       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id
+       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id ${periodoSQL.replace('criado_em', 'l.criado_em')}
        WHERE vd.cliente_id = $1 AND vd.ativo = true
        GROUP BY vd.id, vd.nome
        ORDER BY fechamentos DESC`,
@@ -1059,6 +1202,7 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
     );
 
     res.json({
+      periodo_dias: dias,
       ...m.rows[0],
       leads_por_hora: leadsPorHora,
       vendedores: v.rows
