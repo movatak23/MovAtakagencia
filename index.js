@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.7.0-estavel';
+const MOVATAK_VERSION = 'v1.8.0-produto-assistido';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -126,6 +126,54 @@ async function enviarAlerta(instance, token, clientToken, destinatario, msg) {
 }
 
 // ============================================================
+// Auditoria operacional — histórico do lead e saúde da integração
+// ============================================================
+async function registrarEventoLead(leadId, clienteId, tipo, descricao, dados = {}) {
+  try {
+    if (!leadId || !clienteId || !tipo) return;
+    await query(
+      `INSERT INTO movatak_lead_eventos (lead_id, cliente_id, tipo, descricao, dados)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [leadId, clienteId, tipo, descricao || null, JSON.stringify(dados || {})]
+    );
+  } catch (e) {
+    // Não deixa auditoria derrubar o CRM se a migração ainda não foi aplicada.
+    console.error('[evento-lead]', e.message);
+  }
+}
+
+async function registrarWebhookCliente(clienteId, resumo = {}) {
+  try {
+    await query(
+      `UPDATE movatak_clientes
+          SET ultimo_webhook_em = NOW(), ultimo_webhook_payload = $1::jsonb
+        WHERE id = $2`,
+      [JSON.stringify(resumo || {}), clienteId]
+    );
+  } catch (e) {
+    console.error('[webhook-status]', e.message);
+  }
+}
+
+async function registrarErroZapi(clienteId, mensagem, detalhes = {}) {
+  try {
+    await query(
+      `UPDATE movatak_clientes
+          SET ultimo_erro_zapi_em = NOW(), ultimo_erro_zapi = $1
+        WHERE id = $2`,
+      [String(mensagem || '').slice(0, 500), clienteId]
+    );
+  } catch (e) {
+    console.error('[zapi-status]', e.message);
+  }
+}
+
+function csvEscape(v) {
+  const s = v == null ? '' : String(v);
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
+// ============================================================
 // Mensagens de follow up por etapa
 // ============================================================
 const MSGS_FOLLOWUP = {
@@ -169,6 +217,14 @@ async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = tr
       [leadId, clienteId, parseInt(etapa), proximo.toISOString(), sequenciaFu, agora.toISOString()]
     );
   }
+
+  await registrarEventoLead(
+    leadId,
+    clienteId,
+    'followup_agendado',
+    `FU${sequenciaFu} agendado`,
+    { sequencia_fu: sequenciaFu, limpar_fila: limparFila }
+  );
 }
 
 // Envia imediatamente as mensagens pendentes de um lead.
@@ -215,7 +271,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       const msgText = msgs['msg' + row.etapa_seq];
 
       if (!msgText || !String(msgText).trim()) {
-        await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
+        await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
         console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} vazia; marcada como enviada -> lead ${leadId}`);
         continue;
       }
@@ -230,9 +286,29 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
         msg
       );
 
-      await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
+      await query(
+        `UPDATE movatak_followup
+            SET status = 'enviado', enviado_em = NOW(), erro_envio = NULL, tentativas_envio = COALESCE(tentativas_envio, 0) + 1
+          WHERE id = $1`,
+        [row.id]
+      );
+      await registrarEventoLead(
+        leadId,
+        row.cliente_id,
+        'mensagem_enviada',
+        `FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada`,
+        { followup_id: row.id, sequencia_fu: row.sequencia_fu || 1, etapa_seq: row.etapa_seq }
+      );
       console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada -> lead ${leadId}`);
     } catch (e) {
+      await query(
+        `UPDATE movatak_followup
+            SET erro_envio = $1, tentativas_envio = COALESCE(tentativas_envio, 0) + 1
+          WHERE id = $2`,
+        [String(e.message || e).slice(0, 500), row.id]
+      ).catch(() => null);
+      await registrarErroZapi(row.cliente_id, e.message, { lead_id: leadId, followup_id: row.id });
+      await registrarEventoLead(leadId, row.cliente_id, 'erro_envio', 'Erro ao enviar mensagem de follow-up', { erro: e.message, followup_id: row.id });
       console.error(`[followup][imediato] erro ao enviar lead ${leadId} fila ${row.id}:`, e.message);
       // Não marca como enviado. O cron tentará reenviar depois.
     }
@@ -260,6 +336,7 @@ async function migrarFU1ParaFU2() {
   for (const row of r.rows) {
     await query('DELETE FROM movatak_followup WHERE lead_id = $1 AND COALESCE(sequencia_fu, 1) = 1', [row.lead_id]);
     await agendarFollowupV2(row.lead_id, row.cliente_id, 2, false);
+    await registrarEventoLead(row.lead_id, row.cliente_id, 'migrado_fu2', 'Lead migrou automaticamente do FU1 para o FU2 após 1h sem resposta');
     console.log(`[cron] FU1 -> FU2 migrado -> lead ${row.lead_id}`);
   }
 }
@@ -300,6 +377,7 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
       [cliente.id, telefone, senderName || null]
     );
 
+    await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota /webhook/mensagem', { telefone, origem: 'webhook/mensagem' });
     await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
     await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
 
@@ -472,7 +550,7 @@ cron.schedule('*/10 * * * *', async () => {
         const msg_text = msgs['msg' + row.etapa_seq];
         
         if (!msg_text || !msg_text.trim()) {
-          await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
+          await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
           continue;
         }
 
@@ -486,12 +564,21 @@ cron.schedule('*/10 * * * *', async () => {
         );
 
         await query(
-          `UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`,
+          `UPDATE movatak_followup
+              SET status = 'enviado', enviado_em = NOW(), erro_envio = NULL, tentativas_envio = COALESCE(tentativas_envio, 0) + 1
+            WHERE id = $1`,
           [row.id]
         );
+        await registrarEventoLead(row.lead_id, row.cliente_id, 'mensagem_enviada', `FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada pelo cron`, { followup_id: row.id });
 
         console.log(`[cron] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviado → lead ${row.lead_id}`);
       } catch (e) {
+        await query(
+          `UPDATE movatak_followup SET erro_envio = $1, tentativas_envio = COALESCE(tentativas_envio, 0) + 1 WHERE id = $2`,
+          [String(e.message || e).slice(0, 500), row.id]
+        ).catch(() => null);
+        await registrarErroZapi(row.cliente_id, e.message, { lead_id: row.lead_id, followup_id: row.id });
+        await registrarEventoLead(row.lead_id, row.cliente_id, 'erro_envio', 'Erro ao enviar mensagem pelo cron', { erro: e.message, followup_id: row.id });
         console.error(`[cron] Erro lead ${row.lead_id}:`, e.message);
       }
     }
@@ -563,6 +650,79 @@ cron.schedule('0 9 * * *', async () => {
     console.error('[cron-parado]', e.message);
   }
 });
+
+// ============================================================
+// CRON — Relatório diário para o dono do cliente
+// Ative com MOVATAK_RELATORIO_DIARIO=true
+// ============================================================
+async function montarRelatorioDiarioCliente(clienteId) {
+  const r = await query(
+    `SELECT c.nome, c.whatsapp_dono, c.zapi_instance, c.zapi_token, c.zapi_client_token,
+            COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE - INTERVAL '1 day') AS leads_ontem,
+            COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day') AS vendas_ontem,
+            COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup,
+            COUNT(l.id) FILTER (WHERE l.etapa = 'descartado' AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day') AS descartados_ontem
+       FROM movatak_clientes c
+       LEFT JOIN movatak_leads l ON l.cliente_id = c.id
+      WHERE c.id = $1
+      GROUP BY c.id`,
+    [clienteId]
+  );
+  if (!r.rows.length) return null;
+  const c = r.rows[0];
+  const vend = await query(
+    `SELECT v.nome, COUNT(l.id) AS vendas
+       FROM movatak_vendedores v
+       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
+        AND l.etapa = 'cliente'
+        AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day'
+      WHERE v.cliente_id = $1 AND v.ativo = true
+      GROUP BY v.id, v.nome
+      ORDER BY vendas DESC
+      LIMIT 1`,
+    [clienteId]
+  );
+  const top = vend.rows[0];
+  return {
+    cliente: c,
+    mensagem: `📊 *Resumo de ontem — ${c.nome}*
+
+` +
+      `Leads recebidos: *${c.leads_ontem || 0}*
+` +
+      `Vendas marcadas: *${c.vendas_ontem || 0}*
+` +
+      `Em follow-up agora: *${c.em_followup || 0}*
+` +
+      `Descartados ontem: *${c.descartados_ontem || 0}*
+` +
+      `Melhor vendedor: *${top && parseInt(top.vendas || 0) > 0 ? `${top.nome} — ${top.vendas}` : 'sem vendas registradas'}*
+
+` +
+      `_Relatório automático Movatak FollowUp CRM_`
+  };
+}
+
+async function enviarRelatorioDiarioClientes() {
+  const enabled = String(process.env.MOVATAK_RELATORIO_DIARIO || '').toLowerCase() === 'true';
+  if (!enabled) return;
+  const clientes = await query(
+    `SELECT id FROM movatak_clientes WHERE ativo = true AND whatsapp_dono IS NOT NULL AND whatsapp_dono <> ''`,
+    []
+  );
+  for (const row of clientes.rows) {
+    try {
+      const rel = await montarRelatorioDiarioCliente(row.id);
+      if (!rel || !rel.cliente.whatsapp_dono) continue;
+      await zapiEnviar(rel.cliente.zapi_instance, rel.cliente.zapi_token, rel.cliente.zapi_client_token, rel.cliente.whatsapp_dono, rel.mensagem);
+      console.log(`[relatorio-diario] enviado -> cliente ${row.id}`);
+    } catch (e) {
+      console.error('[relatorio-diario]', e.message);
+    }
+  }
+}
+
+cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/Sao_Paulo' });
 
 // ============================================================
 // WEBHOOK — Lead respondeu (parar sequência)
@@ -1339,6 +1499,14 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
     const cliente = rc.rows[0];
     const comandos = cliente.comandos || {};
+    await registrarWebhookCliente(cliente.id, {
+      fromMe: !!body.fromMe,
+      isGroup: !!body.isGroup,
+      telefone,
+      chatLid,
+      tipo: body.type || null,
+      texto_preview: texto ? String(texto).slice(0, 120) : null
+    });
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
@@ -1403,6 +1571,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
+        await registrarEventoLead(lead.id, cliente.id, 'convertido_vendedor', `Lead convertido por ${vendedorDetectado.nome}`, { vendedor_id: vendedorDetectado.id, comando: texto });
         console.log(`[zapi] Convertido por ${vendedorDetectado.nome} -> lead ${lead.id}`);
         return;
       }
@@ -1417,6 +1586,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
+        await registrarEventoLead(lead.id, cliente.id, 'convertido', 'Lead marcado como cliente por comando geral', { comando: texto });
         console.log(`[zapi] Convertido -> lead ${lead.id}`);
         return;
       }
@@ -1431,6 +1601,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
+        await registrarEventoLead(lead.id, cliente.id, 'descartado', 'Lead descartado por comando', { comando: texto });
         console.log(`[zapi] Descartado -> lead ${lead.id}`);
         return;
       }
@@ -1442,6 +1613,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
             `UPDATE movatak_leads SET etapa = 'lead', vendedor_id = NULL, atualizado_em = NOW() WHERE id = $1`,
             [lead.id]
           );
+          await registrarEventoLead(lead.id, cliente.id, 'venda_desfeita', 'Conversão revertida por comando', { comando: texto });
           console.log(`[zapi] Venda desfeita -> lead ${lead.id}`);
         } else {
           console.log(`[zapi] Desfazer ignorado — lead ${lead.id} nao estava convertido`);
@@ -1457,6 +1629,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         );
         // Follow-up manual entra no FU2 (reativacao)
         await agendarFollowupV2(lead.id, cliente.id, 2, true);
+        await registrarEventoLead(lead.id, cliente.id, 'followup_manual', 'Follow-up FU2 ativado manualmente por comando', { comando: texto });
         console.log(`[zapi] Follow up FU2 ativado -> lead ${lead.id}`);
         return;
       }
@@ -1508,6 +1681,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         );
         await agendarFollowupV2(lead.id, cliente.id, 1, true);
         await enviarFollowupsPendentesDoLead(lead.id, 1);
+        await registrarEventoLead(lead.id, cliente.id, 'reativado_gatilho', 'Lead existente reativado no FU1 por nova frase-gatilho', { telefone, texto });
         console.log(`[zapi] Lead existente reativado em FU1 -> lead ${lead.id} telefone ${telefone}`);
         return;
       }
@@ -1521,6 +1695,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
+        await registrarEventoLead(lead.id, cliente.id, 'lead_respondeu', 'Lead respondeu e saiu do follow-up', { texto_preview: texto ? String(texto).slice(0, 160) : null });
         console.log(`[zapi] Follow up pausado e lead voltou para atendimento -> lead ${lead.id}`);
       }
       return;
@@ -1541,6 +1716,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
          RETURNING id`,
         [cliente.id, telefone, body.senderName || null, chatLid]
       );
+      await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto });
       await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
       await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
       console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
@@ -1738,7 +1914,7 @@ app.get('/movatak/admin/clientes/:id/operacao', authMovatak, async (req, res) =>
     const clienteId = req.params.id;
 
     const cliente = await query(
-      `SELECT id, nome, ativo, zapi_instance, trigger_msg, criado_em
+      `SELECT id, nome, ativo, zapi_instance, trigger_msg, criado_em, ultimo_webhook_em, ultimo_erro_zapi_em, ultimo_erro_zapi
          FROM movatak_clientes
         WHERE id = $1`,
       [clienteId]
@@ -1767,7 +1943,7 @@ app.get('/movatak/admin/clientes/:id/operacao', authMovatak, async (req, res) =>
          COUNT(*) FILTER (WHERE status = 'pendente' AND proximo_envio <= NOW()) AS pendentes_atrasadas,
          COUNT(*) FILTER (WHERE status = 'enviado') AS enviadas,
          COUNT(*) FILTER (WHERE status = 'pausado') AS pausadas,
-         MAX(proximo_envio) FILTER (WHERE status = 'enviado') AS ultimo_envio_em,
+         MAX(COALESCE(enviado_em, proximo_envio)) FILTER (WHERE status = 'enviado') AS ultimo_envio_em,
          MIN(proximo_envio) FILTER (WHERE status = 'pendente') AS proximo_envio_em
        FROM movatak_followup
        WHERE cliente_id = $1`,
@@ -1801,6 +1977,7 @@ app.get('/movatak/admin/clientes/:id/operacao', authMovatak, async (req, res) =>
       ultimo_lead: ultimoLead.rows[0] || null,
       proxima_mensagem: proximo.rows[0] || null,
       debug_ativo: MOVATAK_DEBUG,
+      relatorio_diario_ativo: String(process.env.MOVATAK_RELATORIO_DIARIO || '').toLowerCase() === 'true',
       version: MOVATAK_VERSION
     });
   } catch (e) {
@@ -1843,8 +2020,10 @@ app.get('/movatak/admin/clientes/:id/fila-followup', authMovatak, async (req, re
 app.patch('/movatak/admin/leads/:id/followup/pausar', authMovatak, async (req, res) => {
   try {
     const leadId = req.params.id;
+    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [leadId]);
     await query(`UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`, [leadId]);
     await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [leadId]);
+    if (lead.rows.length) await registrarEventoLead(leadId, lead.rows[0].cliente_id, 'followup_pausado_manual', 'Follow-up pausado manualmente pelo painel');
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1863,6 +2042,7 @@ app.patch('/movatak/admin/leads/:id/followup/reativar', authMovatak, async (req,
 
     await query(`UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`, [leadId]);
     await agendarFollowupV2(leadId, lead.rows[0].cliente_id, sequencia, true);
+    await registrarEventoLead(leadId, lead.rows[0].cliente_id, 'followup_reativado_manual', `Follow-up FU${sequencia} reativado pelo painel`, { enviar_imediato: enviarImediato });
     if (enviarImediato) await enviarFollowupsPendentesDoLead(leadId, sequencia);
     res.json({ ok: true, sequencia_fu: sequencia });
   } catch (e) {
@@ -1882,6 +2062,112 @@ app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, 
       trigger_normalizado: normalizarGatilho(r.rows[0].trigger_msg),
       bateu: textoBateGatilho(texto, r.rows[0].trigger_msg)
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+
+// Histórico completo de um lead
+app.get('/movatak/admin/leads/:id/historico', authMovatak, async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const lead = await query(
+      `SELECT l.*, c.nome AS cliente_nome, v.nome AS vendedor_nome
+         FROM movatak_leads l
+         JOIN movatak_clientes c ON c.id = l.cliente_id
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+        WHERE l.id = $1`,
+      [leadId]
+    );
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead nao encontrado.' });
+
+    const eventos = await query(
+      `SELECT id, tipo, descricao, dados, criado_em
+         FROM movatak_lead_eventos
+        WHERE lead_id = $1
+        ORDER BY criado_em DESC
+        LIMIT 100`,
+      [leadId]
+    );
+
+    const fila = await query(
+      `SELECT id, etapa_seq, COALESCE(sequencia_fu, 1) AS sequencia_fu, proximo_envio,
+              status, data_entrada, enviado_em, tentativas_envio, erro_envio
+         FROM movatak_followup
+        WHERE lead_id = $1
+        ORDER BY proximo_envio DESC
+        LIMIT 100`,
+      [leadId]
+    );
+
+    res.json({ lead: lead.rows[0], eventos: eventos.rows, fila: fila.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Lista operacional de leads do cliente
+app.get('/movatak/admin/clientes/:id/leads-operacao', authMovatak, async (req, res) => {
+  try {
+    const limit = Math.min(Math.max(parseInt(req.query.limit || '80'), 1), 200);
+    const etapa = String(req.query.etapa || '').trim();
+    const busca = String(req.query.busca || '').trim();
+    const params = [req.params.id, limit];
+    let where = 'WHERE l.cliente_id = $1';
+    if (etapa) { params.push(etapa); where += ` AND l.etapa = $${params.length}`; }
+    if (busca) { params.push('%' + busca + '%'); where += ` AND (l.telefone ILIKE $${params.length} OR l.nome ILIKE $${params.length})`; }
+
+    const r = await query(
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em,
+              v.nome AS vendedor_nome,
+              COUNT(f.id) FILTER (WHERE f.status = 'pendente') AS pendentes
+         FROM movatak_leads l
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+         LEFT JOIN movatak_followup f ON f.lead_id = l.id
+        ${where}
+        GROUP BY l.id, v.nome
+        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
+        LIMIT $2`,
+      params
+    );
+    res.json(r.rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Exportação CSV simples para reunião/prestação de contas
+app.get('/movatak/admin/clientes/:id/leads.csv', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT l.id, l.nome, l.telefone, l.etapa, v.nome AS vendedor_nome, l.criado_em, l.atualizado_em
+         FROM movatak_leads l
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+        WHERE l.cliente_id = $1
+        ORDER BY l.criado_em DESC`,
+      [req.params.id]
+    );
+    const header = ['id','nome','telefone','etapa','vendedor','criado_em','atualizado_em'];
+    const linhas = [header.map(csvEscape).join(',')].concat(r.rows.map(row => [
+      row.id, row.nome, row.telefone, row.etapa, row.vendedor_nome, row.criado_em, row.atualizado_em
+    ].map(csvEscape).join(',')));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="leads-movatak.csv"');
+    res.send('\ufeff' + linhas.join('\n'));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Envio manual do relatório diário para teste/implantação
+app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', authMovatak, async (req, res) => {
+  try {
+    const rel = await montarRelatorioDiarioCliente(req.params.id);
+    if (!rel) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    if (!rel.cliente.whatsapp_dono) return res.status(400).json({ error: 'WhatsApp do dono nao configurado.' });
+    await zapiEnviar(rel.cliente.zapi_instance, rel.cliente.zapi_token, rel.cliente.zapi_client_token, rel.cliente.whatsapp_dono, rel.mensagem);
+    res.json({ ok: true, mensagem: rel.mensagem });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
