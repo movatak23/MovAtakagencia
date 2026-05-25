@@ -232,6 +232,32 @@ tr:hover td{background:var(--bg3)}
 .ranking-pos { font-size: 18px; width: 28px; }
 .ranking-nome { font-size: 14px; flex: 1; }
 .ranking-num { font-size: 20px; font-weight: 700; color: var(--green); }
+
+/* Gráfico dividido */
+.chart-split{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:700px){.chart-split{grid-template-columns:1fr}}
+.chart-half{min-width:0}
+.chart-half-right{border-left:1px solid var(--border);padding-left:24px}
+@media(max-width:700px){.chart-half-right{border-left:none;padding-left:0;border-top:1px solid var(--border);padding-top:20px}}
+.half-title{font-size:12px;color:var(--text2);letter-spacing:.4px;text-transform:uppercase;margin-bottom:16px}
+/* Gráfico por hora */
+.chart-hours{display:flex;align-items:flex-end;gap:2px;height:140px}
+.hour-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.hour-bar{width:100%;border-radius:2px 2px 0 0;background:var(--bg4);min-height:3px;transition:height .4s ease}
+.hour-bar.has-leads{background:var(--accent)}
+.hour-lbl{font-size:8px;color:var(--text3);font-family:var(--mono)}
+.hour-val{font-size:9px;color:var(--text2);font-family:var(--mono);font-weight:600}
+/* Vendas por vendedor no dashboard */
+.vv-item{margin-bottom:14px}
+.vv-row{display:flex;justify-content:space-between;margin-bottom:5px}
+.vv-nome{font-size:13px;color:var(--text)}
+.vv-num{font-size:13px;font-weight:700}
+.vv-bar-bg{height:8px;background:var(--bg4);border-radius:4px;overflow:hidden}
+.vv-bar-fill{height:100%;border-radius:4px;transition:width .5s ease}
+/* Linha de cliente selecionada */
+tr.cliente-row{cursor:pointer}
+tr.cliente-row.selecionado td{background:var(--bg4)}
+tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 </style>
 </head>
 <body>
@@ -284,12 +310,22 @@ tr:hover td{background:var(--bg3)}
       <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando...</div>
     </div>
 
-    <!-- Painéis: gráfico + funil -->
+    <!-- Painéis: gráfico por hora dividido + vendedores -->
     <div class="panels">
       <div class="panel">
-        <div class="panel-title">Leads por dia (últimos 14 dias)</div>
-        <div class="chart-wrap" id="chart-wrap">
-          <div class="state-row" style="width:100%"><div class="spinner"></div></div>
+        <div class="panel-title" id="chart-title">Leads por hora — hoje</div>
+        <div class="chart-split">
+          <div class="chart-half">
+            <div class="chart-hours" id="chart-hours">
+              <div class="state-row" style="width:100%"><div class="spinner"></div></div>
+            </div>
+          </div>
+          <div class="chart-half chart-half-right">
+            <div class="half-title">Vendas por vendedor</div>
+            <div id="vendedores-vendas">
+              <div class="state-row" style="font-size:13px">Selecione um cliente abaixo</div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="panel">
@@ -446,13 +482,18 @@ function setPeriodo(d) {
 async function carregarTudo() {
   atualizarStatus('Atualizando...');
   try {
-    const [clientes] = await Promise.all([
-      api('/movatak/admin/clientes')
-    ]);
+    const clientes = await api('/movatak/admin/clientes');
     renderClientes(clientes);
-    renderMetricas(clientes, periodoAtual);
-    renderGrafico(clientes);
-    renderFunil(clientes, periodoAtual);
+    // Mantém o cliente selecionado, ou seleciona o primeiro
+    if (clientes.length) {
+      const alvo = clienteSelecionado
+        ? clientes.find(c => c.id === clienteSelecionado)
+        : clientes[0];
+      if (alvo) selecionarCliente(alvo.id, alvo.nome);
+    } else {
+      renderMetricas(clientes, periodoAtual);
+      renderFunil(clientes, periodoAtual);
+    }
     atualizarStatus('Atualizado agora');
   } catch(e) {
     atualizarStatus('Erro: ' + e.message);
@@ -505,21 +546,122 @@ function renderMetricas(clientes, periodo) {
   `;
 }
 
-// ── Gráfico (barras por cliente) ───────────────────────────
-function renderGrafico(clientes) {
-  const wrap = document.getElementById('chart-wrap');
-  if (!clientes.length) { wrap.innerHTML = '<div class="state-row" style="width:100%">Sem dados</div>'; return; }
-
-  const max = Math.max(...clientes.map(c => parseInt(c.total_leads || 0)), 1);
-  wrap.innerHTML = clientes.map((c, i) => {
-    const h = Math.max(6, (parseInt(c.total_leads || 0) / max) * 110);
-    const isLast = i === clientes.length - 1;
-    const nome = c.nome.split(' ')[0].slice(0, 8);
-    return `<div class="bar-col">
-      <div class="bar${isLast ? ' today' : ''}" style="height:${h}px"></div>
-      <div class="bar-lbl">${nome}</div>
+// ── Gráfico de leads por hora do dia ───────────────────────
+function renderGraficoHoras(leadsPorHora) {
+  const wrap = document.getElementById('chart-hours');
+  if (!leadsPorHora || !leadsPorHora.length) {
+    wrap.innerHTML = '<div class="state-row" style="width:100%;font-size:13px">Sem leads hoje</div>';
+    return;
+  }
+  const max = Math.max(...leadsPorHora.map(h => h.leads), 1);
+  // Mostra apenas horas pares no rótulo para não poluir
+  wrap.innerHTML = leadsPorHora.map(h => {
+    const altura = h.leads > 0 ? Math.max(6, (h.leads / max) * 110) : 3;
+    const lbl = h.hora % 3 === 0 ? String(h.hora).padStart(2,'0') : '';
+    return `<div class="hour-col">
+      <div class="hour-val">${h.leads > 0 ? h.leads : ''}</div>
+      <div class="hour-bar${h.leads > 0 ? ' has-leads' : ''}" style="height:${altura}px"></div>
+      <div class="hour-lbl">${lbl}</div>
     </div>`;
   }).join('');
+}
+
+// ── Vendas por vendedor (painel do dashboard) ──────────────
+function renderVendedoresVendas(vendedores) {
+  const wrap = document.getElementById('vendedores-vendas');
+  if (!vendedores || !vendedores.length) {
+    wrap.innerHTML = '<div class="state-row" style="font-size:13px">Nenhum vendedor cadastrado</div>';
+    return;
+  }
+  const max = Math.max(...vendedores.map(v => parseInt(v.fechamentos || 0)), 1);
+  wrap.innerHTML = vendedores.map((v, i) => {
+    const fech = parseInt(v.fechamentos || 0);
+    const pct  = Math.round((fech / max) * 100);
+    const cor  = i === 0 ? 'var(--green)' : i === 1 ? 'var(--accent)' : 'var(--amber)';
+    return `<div class="vv-item">
+      <div class="vv-row">
+        <span class="vv-nome">${v.nome}</span>
+        <span class="vv-num" style="color:${cor}">${fech} ${fech === 1 ? 'venda' : 'vendas'}</span>
+      </div>
+      <div class="vv-bar-bg"><div class="vv-bar-fill" style="width:${pct}%;background:${cor}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Selecionar cliente — atualiza cards e painéis ──────────
+let clienteSelecionado = null;
+async function selecionarCliente(id, nome) {
+  clienteSelecionado = id;
+  document.querySelectorAll('tr.cliente-row').forEach(tr => {
+    tr.classList.toggle('selecionado', parseInt(tr.dataset.id) === id);
+  });
+  document.querySelector('.periodo-bar h2').textContent = nome;
+  document.getElementById('chart-title').textContent = 'Leads por hora — hoje · ' + nome;
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/resumo');
+    renderMetricasCliente(r);
+    renderGraficoHoras(r.leads_por_hora);
+    renderVendedoresVendas(r.vendedores);
+    renderFunilCliente(r);
+  } catch(e) {
+    atualizarStatus('Erro ao carregar cliente: ' + e.message);
+  }
+}
+
+// Cards do topo com dados de um cliente específico
+function renderMetricasCliente(r) {
+  const total = parseInt(r.total_leads || 0);
+  const conv  = parseInt(r.convertidos || 0);
+  const taxa  = total > 0 ? ((conv / total) * 100).toFixed(1) : '0.0';
+  const taxaColor = parseFloat(taxa) >= 20 ? 'green' : parseFloat(taxa) >= 10 ? 'amber' : 'red-val';
+  document.getElementById('metrics-grid').innerHTML = `
+    <div class="metric-card accent">
+      <div class="metric-label">Total de leads</div>
+      <div class="metric-value">${total}</div>
+      <div class="metric-sub">leads hoje: ${r.leads_hoje || 0}</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-label">Convertidos</div>
+      <div class="metric-value">${conv}</div>
+      <div class="metric-sub">vendas hoje: ${r.vendas_hoje || 0}</div>
+    </div>
+    <div class="metric-card amber">
+      <div class="metric-label">Em follow up</div>
+      <div class="metric-value">${r.em_followup || 0}</div>
+      <div class="metric-sub">sequência ativa</div>
+    </div>
+    <div class="metric-card ${taxaColor}">
+      <div class="metric-label">Taxa de conversão</div>
+      <div class="metric-value">${taxa}%</div>
+      <div class="metric-sub">fechamento</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Vendedores</div>
+      <div class="metric-value">${(r.vendedores || []).length}</div>
+      <div class="metric-sub">cadastrados</div>
+    </div>
+  `;
+}
+
+function renderFunilCliente(r) {
+  const total = parseInt(r.total_leads || 0);
+  const fu    = parseInt(r.em_followup || 0);
+  const conv  = parseInt(r.convertidos || 0);
+  function step(label, valor, color) {
+    const pct = total > 0 ? Math.round((valor / total) * 100) : 0;
+    return `<div class="funil-step">
+      <div class="funil-row">
+        <span class="funil-name">${label}</span>
+        <span class="funil-num" style="color:${color}">${valor}</span>
+      </div>
+      <div class="funil-bar-bg"><div class="funil-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <div class="funil-pct">${pct}%</div>
+    </div>`;
+  }
+  document.getElementById('funil-wrap').innerHTML =
+    step('Leads', total, 'var(--accent)') +
+    step('Follow up', fu, 'var(--amber)') +
+    step('Clientes', conv, 'var(--green)');
 }
 
 // ── Funil consolidado ──────────────────────────────────────
@@ -565,7 +707,7 @@ function renderClientes(clientes) {
     const fu     = parseInt(c.em_followup || 0);
     const taxa   = total > 0 ? ((conv / total) * 100).toFixed(1) : '0.0';
     const taxaCls = parseFloat(taxa) >= 20 ? 'td-green' : parseFloat(taxa) >= 10 ? 'td-amber' : '';
-    return `<tr>
+    return `<tr class="cliente-row" data-id="${c.id}" onclick="selecionarCliente(${c.id}, '${c.nome.replace(/'/g, "")}')">
       <td><strong>${c.nome}</strong></td>
       <td class="td-mono">${total}</td>
       <td class="td-green">${conv}</td>
@@ -573,7 +715,7 @@ function renderClientes(clientes) {
       <td class="${taxaCls}">${taxa}%</td>
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
       <td class="td-mono" style="font-size:13px">—</td>
-      <td><button onclick="abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button></td>
+      <td><button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button></td>
     </tr>`;
   }).join('');
 }
