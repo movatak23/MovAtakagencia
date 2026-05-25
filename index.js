@@ -846,6 +846,85 @@ app.get('/movatak/app/evolucao', authCliente, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Resumo completo para o app do cliente (somente leitura, via app_token)
+app.get('/movatak/app/resumo', authCliente, async (req, res) => {
+  try {
+    const id = req.clienteId;
+    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
+      ? parseInt(req.query.dias) : 30;
+    const periodoSQL = dias === 0
+      ? "AND DATE(criado_em) = CURRENT_DATE"
+      : `AND criado_em >= NOW() - INTERVAL '${dias} days'`;
+
+    // Métricas do período
+    const m = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente')      AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')     AS em_followup,
+         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                      AS leads_hoje,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje
+       FROM movatak_leads
+       WHERE cliente_id = $1 ${periodoSQL}`,
+      [id]
+    );
+
+    // Leads por hora do dia atual
+    const h = await query(
+      `SELECT EXTRACT(HOUR FROM criado_em)::int AS hora, COUNT(*) AS leads
+       FROM movatak_leads
+       WHERE cliente_id = $1 AND DATE(criado_em) = CURRENT_DATE
+       GROUP BY hora ORDER BY hora`,
+      [id]
+    );
+    const leadsPorHora = Array.from({ length: 24 }, (_, i) => {
+      const found = h.rows.find(r => r.hora === i);
+      return { hora: i, leads: found ? parseInt(found.leads) : 0 };
+    });
+
+    // Vendas por vendedor no período
+    const v = await query(
+      `SELECT vd.nome,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
+              COUNT(l.id) AS leads_atribuidos
+       FROM movatak_vendedores vd
+       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id ${periodoSQL.replace('criado_em', 'l.criado_em')}
+       WHERE vd.cliente_id = $1 AND vd.ativo = true
+       GROUP BY vd.id, vd.nome
+       ORDER BY fechamentos DESC`,
+      [id]
+    );
+
+    // CPL calculado
+    const cd = await query(
+      'SELECT teto_cpl, verba_diaria, criado_em FROM movatak_clientes WHERE id = $1',
+      [id]
+    );
+    const dados = cd.rows[0] || {};
+    const totalLeads = parseInt(m.rows[0].total_leads || 0);
+    let cpl_calculado = null, alerta_cpl = false;
+    if (dados.verba_diaria && totalLeads > 0) {
+      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(dados.criado_em).getTime()) / 86400000));
+      const base = dias === 0 ? 1 : dias;
+      const verbaGasta = parseFloat(dados.verba_diaria) * Math.min(diasRodando, base);
+      cpl_calculado = (verbaGasta / totalLeads).toFixed(2);
+      if (dados.teto_cpl && parseFloat(cpl_calculado) > parseFloat(dados.teto_cpl)) alerta_cpl = true;
+    }
+
+    res.json({
+      periodo_dias: dias,
+      ...m.rows[0],
+      leads_por_hora: leadsPorHora,
+      vendedores: v.rows,
+      cpl_calculado,
+      teto_cpl: dados.teto_cpl || null,
+      alerta_cpl
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Atualizar whatsapp_dono
 app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
   try {
