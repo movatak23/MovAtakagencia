@@ -361,7 +361,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v1.6.8-html-comandos-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v1.8.1-painel-corrigido</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -421,8 +421,9 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.8.0-produto-assistido';
+const PAINEL_VERSION = 'v1.8.1-painel-corrigido';
 const SENHA_KEY  = 'mvtk_painel_secret';
+try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
 let secret = '';
 let periodoAtual = 30;
