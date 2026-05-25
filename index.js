@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.5.0';
+const MOVATAK_VERSION = 'v1.6.0';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -135,6 +135,60 @@ const DIAS_FOLLOWUP_V2 = {
   fu2: { 1: 0, 2: 1, 3: 3 }
 };
 
+// Agenda follow-up no novo formato FU1/FU2.
+// sequenciaFu: 1 = boas-vindas imediatas; 2 = reativação.
+async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = true) {
+  const chave = 'fu' + sequenciaFu;
+  const diasPorMensagem = DIAS_FOLLOWUP_V2[chave];
+
+  if (!diasPorMensagem) {
+    throw new Error('Sequencia de follow-up invalida: ' + sequenciaFu);
+  }
+
+  if (limparFila) {
+    await query('DELETE FROM movatak_followup WHERE lead_id = $1', [leadId]);
+  }
+
+  const agora = new Date();
+
+  for (const [etapa, dias] of Object.entries(diasPorMensagem)) {
+    const proximo = new Date(agora);
+    proximo.setDate(proximo.getDate() + dias);
+
+    await query(
+      `INSERT INTO movatak_followup
+         (lead_id, cliente_id, etapa_seq, proximo_envio, status, sequencia_fu, data_entrada)
+       VALUES ($1, $2, $3, $4, 'pendente', $5, $6)`,
+      [leadId, clienteId, parseInt(etapa), proximo.toISOString(), sequenciaFu, agora.toISOString()]
+    );
+  }
+}
+
+// Se o lead ficou 1h sem responder ao FU1, entra no FU2.
+async function migrarFU1ParaFU2() {
+  const r = await query(
+    `SELECT DISTINCT l.id AS lead_id, l.cliente_id
+     FROM movatak_leads l
+     JOIN movatak_followup f ON f.lead_id = l.id
+     WHERE l.etapa = 'followup'
+       AND COALESCE(f.sequencia_fu, 1) = 1
+       AND COALESCE(f.data_entrada, l.atualizado_em, l.criado_em) <= NOW() - INTERVAL '1 hour'
+       AND NOT EXISTS (
+         SELECT 1 FROM movatak_followup f2
+         WHERE f2.lead_id = l.id
+           AND f2.sequencia_fu = 2
+           AND f2.status = 'pendente'
+       )`,
+    []
+  );
+
+  for (const row of r.rows) {
+    await query('DELETE FROM movatak_followup WHERE lead_id = $1 AND COALESCE(sequencia_fu, 1) = 1', [row.lead_id]);
+    await agendarFollowupV2(row.lead_id, row.cliente_id, 2, false);
+    console.log(`[cron] FU1 -> FU2 migrado -> lead ${row.lead_id}`);
+  }
+}
+
 // ============================================================
 // ROTA 1 — Webhook de mensagem recebida
 // Z-API → POST /webhook/mensagem
@@ -163,12 +217,15 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
     );
     if (existe.rows.length) return res.json({ ok: true });
 
-    // Criar lead
-    await query(
+    // Criar lead direto em FU1
+    const novoLead = await query(
       `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa)
-       VALUES ($1, $2, $3, 'lead')`,
+       VALUES ($1, $2, $3, 'followup')
+       RETURNING id`,
       [cliente.id, telefone, senderName || null]
     );
+
+    await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
 
     // Etiquetar no WhatsApp
     await zapiEtiquetar(
@@ -224,19 +281,8 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
         [lead.id]
       );
 
-      // Limpar fila existente e criar nova sequência
-      await query('DELETE FROM movatak_followup WHERE lead_id = $1', [lead.id]);
-
-      const agora = new Date();
-      for (const [etapa, dias] of Object.entries(DIAS_FOLLOWUP)) {
-        const proximo = new Date(agora);
-        proximo.setDate(proximo.getDate() + dias);
-        await query(
-          `INSERT INTO movatak_followup (lead_id, cliente_id, etapa_seq, proximo_envio, status)
-           VALUES ($1, $2, $3, $4, 'pendente')`,
-          [lead.id, cliente.id, parseInt(etapa), proximo.toISOString()]
-        );
-      }
+      // Follow-up manual entra no FU2 (reativacao)
+      await agendarFollowupV2(lead.id, cliente.id, 2, true);
     }
 
     // ---- Registrar log de etiqueta (auditoria) ----
@@ -328,6 +374,8 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 cron.schedule('*/10 * * * *', async () => {
   console.log('[cron] Verificando fila de follow up (10 min)...');
   try {
+    await migrarFU1ParaFU2();
+
     const r = await query(
       `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
        FROM movatak_followup f
@@ -469,12 +517,17 @@ app.post('/movatak/webhook/resposta', async (req, res) => {
     const leadId = rl.rows[0].id;
 
     await query(
+      `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
+      [leadId]
+    );
+
+    await query(
       `UPDATE movatak_followup SET status = 'pausado'
        WHERE lead_id = $1 AND status = 'pendente'`,
       [leadId]
     );
 
-    console.log(`[resposta] Follow up pausado → lead ${leadId}`);
+    console.log(`[resposta] Follow up pausado e lead voltou para atendimento → lead ${leadId}`);
     res.json({ ok: true });
   } catch (e) {
     console.error('[webhook/resposta]', e.message);
@@ -1080,18 +1133,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           `UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
           [lead.id]
         );
-        await query('DELETE FROM movatak_followup WHERE lead_id = $1', [lead.id]);
-        const agora = new Date();
-        for (const [etapa, dias] of Object.entries(DIAS_FOLLOWUP)) {
-          const proximo = new Date(agora);
-          proximo.setDate(proximo.getDate() + dias);
-          await query(
-            `INSERT INTO movatak_followup (lead_id, cliente_id, etapa_seq, proximo_envio, status)
-             VALUES ($1, $2, $3, $4, 'pendente')`,
-            [lead.id, cliente.id, parseInt(etapa), proximo.toISOString()]
-          );
-        }
-        console.log(`[zapi] Follow up ativado -> lead ${lead.id}`);
+        // Follow-up manual entra no FU2 (reativacao)
+        await agendarFollowupV2(lead.id, cliente.id, 2, true);
+        console.log(`[zapi] Follow up FU2 ativado -> lead ${lead.id}`);
         return;
       }
 
@@ -1116,10 +1160,14 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       }
       if (lead.etapa === 'followup') {
         await query(
+          `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+        await query(
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
-        console.log(`[zapi] Follow up pausado (lead respondeu) -> lead ${lead.id}`);
+        console.log(`[zapi] Follow up pausado e lead voltou para atendimento -> lead ${lead.id}`);
       }
       return;
     }
@@ -1128,12 +1176,14 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const msg = normalizarTexto(texto);
     const trigger = normalizarTexto(cliente.trigger_msg);
     if (trigger && msg.includes(trigger)) {
-      await query(
+      const novoLead = await query(
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
-         VALUES ($1, $2, $3, 'lead', $4)`,
+         VALUES ($1, $2, $3, 'followup', $4)
+         RETURNING id`,
         [cliente.id, telefone, body.senderName || null, chatLid]
       );
-      console.log(`[zapi] Novo lead criado -> ${telefone} (${cliente.nome})`);
+      await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
+      console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
     console.error('[zapi] erro processamento:', e.message);
