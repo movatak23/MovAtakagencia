@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.3-vendedor-comando';
+const MOVATAK_VERSION = 'v1.6.4-followup-save-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -755,19 +755,63 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      'SELECT followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg FROM movatak_clientes WHERE id = $1',
+      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg
+       FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+
     const row = r.rows[0];
-    const msgs = row.followup_msgs || {
-      msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
-      msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
-      msg3: 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
-      msg4: 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
+
+    // Garante compatibilidade com bancos que ainda tenham mensagens no formato antigo.
+    const legado = row.followup_msgs || {};
+    const padrao = {
+      fu1: {
+        msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
+        msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!'
+      },
+      fu2: {
+        msg1: '',
+        msg2: '',
+        msg3: ''
+      }
     };
+
+    const v2 = row.followup_msgs_v2 || {
+      fu1: {
+        msg1: legado.msg1 || padrao.fu1.msg1,
+        msg2: legado.msg2 || padrao.fu1.msg2
+      },
+      fu2: {
+        msg1: legado.msg3 || padrao.fu2.msg1,
+        msg2: legado.msg4 || padrao.fu2.msg2,
+        msg3: legado.msg5 || padrao.fu2.msg3
+      }
+    };
+
+    const followup_v2 = {
+      fu1: {
+        msg1: (v2.fu1 && v2.fu1.msg1) || padrao.fu1.msg1,
+        msg2: (v2.fu1 && v2.fu1.msg2) || padrao.fu1.msg2
+      },
+      fu2: {
+        msg1: (v2.fu2 && v2.fu2.msg1) || '',
+        msg2: (v2.fu2 && v2.fu2.msg2) || '',
+        msg3: (v2.fu2 && v2.fu2.msg3) || ''
+      }
+    };
+
+    // Retorna em formatos diferentes para não quebrar o admin.html, mesmo que ele esteja lendo nomes antigos.
     res.json({
-      ...msgs,
+      followup_v2,
+      followup_msgs_v2: followup_v2,
+      fu1: followup_v2.fu1,
+      fu2: followup_v2.fu2,
+      msg1: followup_v2.fu1.msg1,
+      msg2: followup_v2.fu1.msg2,
+      msg3: followup_v2.fu2.msg1,
+      msg4: followup_v2.fu2.msg2,
+      msg5: followup_v2.fu2.msg3,
       boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!',
       verba_diaria: row.verba_diaria || null,
       whatsapp_dono: row.whatsapp_dono || null,
@@ -779,22 +823,43 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
 // Atualizar mensagens de follow up de um cliente (novo formato: 2 blocos)
 app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
-    const { followup_v2, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
+    const { boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
+
+    // O painel pode enviar como followup_v2, followup_msgs_v2, fu1/fu2 ou campos soltos.
+    // Esta normalização evita o problema de "aparece na tela, mas não grava".
+    const recebido = req.body.followup_v2 || req.body.followup_msgs_v2 || {};
+    const followup_v2 = {
+      fu1: {
+        msg1: String((recebido.fu1 && recebido.fu1.msg1) || (req.body.fu1 && req.body.fu1.msg1) || req.body.fu1_msg1 || req.body.msg1 || '').trim(),
+        msg2: String((recebido.fu1 && recebido.fu1.msg2) || (req.body.fu1 && req.body.fu1.msg2) || req.body.fu1_msg2 || req.body.msg2 || '').trim()
+      },
+      fu2: {
+        msg1: String((recebido.fu2 && recebido.fu2.msg1) || (req.body.fu2 && req.body.fu2.msg1) || req.body.fu2_msg1 || req.body.msg3 || '').trim(),
+        msg2: String((recebido.fu2 && recebido.fu2.msg2) || (req.body.fu2 && req.body.fu2.msg2) || req.body.fu2_msg2 || req.body.msg4 || '').trim(),
+        msg3: String((recebido.fu2 && recebido.fu2.msg3) || (req.body.fu2 && req.body.fu2.msg3) || req.body.fu2_msg3 || req.body.msg5 || '').trim()
+      }
+    };
+
     await query(
       `UPDATE movatak_clientes
-         SET followup_msgs_v2 = $1, boas_vindas_msg = $2, verba_diaria = $3,
-             whatsapp_dono = $4, trigger_msg = COALESCE($5, trigger_msg)
+         SET followup_msgs_v2 = $1::jsonb,
+             boas_vindas_msg = $2,
+             verba_diaria = $3,
+             whatsapp_dono = $4,
+             trigger_msg = COALESCE($5, trigger_msg)
        WHERE id = $6`,
       [
-        JSON.stringify(followup_v2 || {}),
+        JSON.stringify(followup_v2),
         boas_vindas_msg || null,
-        verba_diaria ? parseFloat(verba_diaria) : null,
+        verba_diaria ? parseFloat(String(verba_diaria).replace(',', '.')) : null,
         whatsapp_dono ? String(whatsapp_dono).replace(/\D/g, '') : null,
-        (trigger_msg && trigger_msg.trim()) ? trigger_msg.trim() : null,
+        (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : null,
         req.params.id
       ]
     );
-    res.json({ ok: true });
+
+    console.log('[followup][salvo]', JSON.stringify({ clienteId: req.params.id, followup_v2 }));
+    res.json({ ok: true, followup_v2 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
