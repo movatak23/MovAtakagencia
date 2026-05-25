@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.7-fu1-disparo-imediato';
+const MOVATAK_VERSION = 'v1.6.8-comandos-save-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -824,7 +824,7 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg
+      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg, comandos
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -884,7 +884,12 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
       boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!',
       verba_diaria: row.verba_diaria || null,
       whatsapp_dono: row.whatsapp_dono || null,
-      trigger_msg: row.trigger_msg || ''
+      trigger_msg: row.trigger_msg || '',
+      comandos: row.comandos || { followup: [], convertido: [], descartar: [], desfazer: [] },
+      comando_followup: ((row.comandos || {}).followup || []).join(', '),
+      comando_convertido: ((row.comandos || {}).convertido || []).join(', '),
+      comando_descartar: ((row.comandos || {}).descartar || []).join(', '),
+      comando_desfazer: ((row.comandos || {}).desfazer || []).join(', ')
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -927,8 +932,22 @@ app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) 
       ]
     );
 
+    // Alguns admin.html salvam todos os blocos pela própria rota /followup.
+    // Se vierem comandos no mesmo payload, salva também para não perder o bloco 6 da tela.
+    const temComandosNoPayload = req.body.comandos || req.body.followup || req.body.convertido || req.body.descartar || req.body.desfazer ||
+      req.body.comando_followup || req.body.comando_convertido || req.body.comando_vendido || req.body.comando_descartar || req.body.comando_desfazer || req.body.comando_estornar;
+    let comandosSalvos = null;
+    if (temComandosNoPayload) {
+      comandosSalvos = extrairComandosDoBody(req.body);
+      await query(
+        'UPDATE movatak_clientes SET comandos = $1::jsonb WHERE id = $2',
+        [JSON.stringify(comandosSalvos), req.params.id]
+      );
+      console.log('[comandos][salvo-via-followup]', JSON.stringify({ clienteId: req.params.id, comandos: comandosSalvos }));
+    }
+
     console.log('[followup][salvo]', JSON.stringify({ clienteId: req.params.id, followup_v2 }));
-    res.json({ ok: true, followup_v2 });
+    res.json({ ok: true, followup_v2, comandos: comandosSalvos });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1508,6 +1527,26 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 // API — Comandos de automação por cliente
 // ============================================================
 
+function normalizarListaComandos(input) {
+  if (input == null) return [];
+  const bruto = Array.isArray(input) ? input.join(',') : String(input);
+  return bruto
+    .split(/[\n,;]+/)
+    .map(s => String(s).trim().toLowerCase())
+    .filter(Boolean)
+    .filter((v, i, arr) => arr.indexOf(v) === i);
+}
+
+function extrairComandosDoBody(body) {
+  const src = body.comandos && typeof body.comandos === 'object' ? body.comandos : body;
+  return {
+    followup: normalizarListaComandos(src.followup || src.comando_followup || src.comandos_followup),
+    convertido: normalizarListaComandos(src.convertido || src.comando_convertido || src.comando_convertido_venda || src.vendido || src.comando_vendido),
+    descartar: normalizarListaComandos(src.descartar || src.comando_descartar || src.descartado || src.comando_descartado),
+    desfazer: normalizarListaComandos(src.desfazer || src.comando_desfazer || src.estornar || src.comando_estornar)
+  };
+}
+
 // Buscar comandos de um cliente
 app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
   try {
@@ -1522,15 +1561,9 @@ app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) =>
 // Atualizar comandos de um cliente
 app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
   try {
-    const { followup, convertido, descartar, desfazer } = req.body;
-    const norm = (arr) => (Array.isArray(arr) ? arr : [])
-      .map(s => String(s).trim().toLowerCase()).filter(Boolean);
-    const comandos = {
-      followup:   norm(followup),
-      convertido: norm(convertido),
-      descartar:  norm(descartar),
-      desfazer:   norm(desfazer)
-    };
+    // O painel envia os comandos como texto: "#vendido, #fechou".
+    // A versão anterior só aceitava arrays, por isso a tela parecia salvar, mas voltava ao padrão.
+    const comandos = extrairComandosDoBody(req.body);
 
     // Validação: nenhum comando pode se repetir entre os campos
     const todos = [
@@ -1547,17 +1580,20 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
       'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true AND comando IS NOT NULL',
       [req.params.id]
     );
-    const cmdsVendedores = rv.rows.map(r => String(r.comando).trim().toLowerCase());
+    const cmdsVendedores = rv.rows
+      .flatMap(r => normalizarListaComandos(r.comando))
+      .map(c => String(c).trim().toLowerCase());
     const colisao = todos.find(c => cmdsVendedores.includes(c));
     if (colisao) {
       return res.status(400).json({ error: 'O comando "' + colisao + '" ja pertence a um vendedor.' });
     }
 
     await query(
-      'UPDATE movatak_clientes SET comandos = $1 WHERE id = $2',
+      'UPDATE movatak_clientes SET comandos = $1::jsonb WHERE id = $2',
       [JSON.stringify(comandos), req.params.id]
     );
-    res.json({ ok: true });
+    console.log('[comandos][salvo]', JSON.stringify({ clienteId: req.params.id, comandos }));
+    res.json({ ok: true, comandos });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
