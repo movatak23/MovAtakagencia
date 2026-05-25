@@ -811,9 +811,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   const body = req.body || {};
 
-  // DIAGNÓSTICO — payload COMPLETO para ambos os sentidos
-  console.log('[zapi] PAYLOAD COMPLETO (' + (body.fromMe ? 'fromMe' : 'recebida') + '):', JSON.stringify(body));
-
   // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
   try {
     await axios.post(`${RASTREIOBOT_URL}/webhook/zapi`, body, { timeout: 8000 });
@@ -823,11 +820,16 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   // ---- Processamento Movatak ----
   try {
-    const telefone   = String(body.phone || '').replace(/\D/g, '');
+    if (body.isGroup || body.isNewsletter) return; // ignora grupos e canais
+
     const instanceId = body.instanceId || body.instance || '';
+    const chatLid    = body.chatLid || null;
+    const phoneRaw   = String(body.phone || '');
+    // Telefone real: só quando vem como número (mensagem recebida do lead)
+    const telefone   = phoneRaw.includes('@') ? null : phoneRaw.replace(/\D/g, '');
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
-    if (!telefone || !instanceId) return;
+    if (!instanceId) return;
 
     // Buscar cliente pela instância
     const rc = await query(
@@ -838,19 +840,21 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const cliente = rc.rows[0];
     const comandos = cliente.comandos || {};
 
-    // Buscar lead existente
-    const rl = await query(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
-      [cliente.id, telefone]
-    );
-    const lead = rl.rows[0] || null;
-
     // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
-    // Comandos só valem em mensagens enviadas pela equipe
+    // Vem com chatLid mas sem telefone real — busca o lead pelo chat_lid
     if (body.fromMe) {
-      if (!lead) return; // sem lead, comando não tem alvo
+      if (!chatLid) return;
+      const rl = await query(
+        'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND chat_lid = $2',
+        [cliente.id, chatLid]
+      );
+      if (!rl.rows.length) {
+        console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + chatLid);
+        return;
+      }
+      const lead = rl.rows[0];
 
-      // -- Comando: marcar vendedor (conversão atribuída) --
+      // -- Comando: vendedor especifico (conversao atribuida) --
       const rv = await query(
         'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
         [cliente.id]
@@ -858,7 +862,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const vendedorDetectado = rv.rows.find(v =>
         v.comando && contemComando(texto, [v.comando])
       );
-
       if (vendedorDetectado) {
         await query(
           `UPDATE movatak_leads SET etapa = 'cliente', vendedor_id = $1, atualizado_em = NOW() WHERE id = $2`,
@@ -868,15 +871,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
-        await query(
-          'INSERT INTO movatak_etiqueta_log (lead_id, cliente_id, etiqueta) VALUES ($1, $2, $3)',
-          [lead.id, cliente.id, 'vendedor:' + vendedorDetectado.nome]
-        );
         console.log(`[zapi] Convertido por ${vendedorDetectado.nome} -> lead ${lead.id}`);
         return;
       }
 
-      // -- Comando: convertido (sem vendedor especifico) --
+      // -- Comando: convertido --
       if (contemComando(texto, comandos.convertido)) {
         await query(
           `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
@@ -929,29 +928,41 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // ===== MENSAGEM RECEBIDA DO LEAD =====
+    if (!telefone) return;
 
-    // -- Lead em followup respondeu -> pausa a sequencia --
-    if (lead && lead.etapa === 'followup') {
-      await query(
-        `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-        [lead.id]
-      );
-      console.log(`[zapi] Follow up pausado (lead respondeu) -> lead ${lead.id}`);
+    // Buscar lead pelo telefone
+    const rl = await query(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
+      [cliente.id, telefone]
+    );
+    const lead = rl.rows[0] || null;
+
+    // -- Lead existe: garantir chat_lid salvo + pausar followup se respondeu --
+    if (lead) {
+      // Salva o chat_lid se ainda nao tiver (essencial para os comandos)
+      if (chatLid && lead.chat_lid !== chatLid) {
+        await query('UPDATE movatak_leads SET chat_lid = $1 WHERE id = $2', [chatLid, lead.id]);
+      }
+      if (lead.etapa === 'followup') {
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
+        console.log(`[zapi] Follow up pausado (lead respondeu) -> lead ${lead.id}`);
+      }
       return;
     }
 
-    // -- Novo lead: mensagem bate com trigger do trafego --
-    if (!lead) {
-      const msg = normalizarTexto(texto);
-      const trigger = normalizarTexto(cliente.trigger_msg);
-      if (trigger && msg.includes(trigger)) {
-        await query(
-          `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa)
-           VALUES ($1, $2, $3, 'lead')`,
-          [cliente.id, telefone, body.senderName || null]
-        );
-        console.log(`[zapi] Novo lead criado -> ${telefone} (${cliente.nome})`);
-      }
+    // -- Novo lead: mensagem bate com o trigger do trafego --
+    const msg = normalizarTexto(texto);
+    const trigger = normalizarTexto(cliente.trigger_msg);
+    if (trigger && msg.includes(trigger)) {
+      await query(
+        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
+         VALUES ($1, $2, $3, 'lead', $4)`,
+        [cliente.id, telefone, body.senderName || null, chatLid]
+      );
+      console.log(`[zapi] Novo lead criado -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
     console.error('[zapi] erro processamento:', e.message);
