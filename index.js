@@ -783,50 +783,220 @@ app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-
 // ============================================================
-// ROTA — Agendamento landing page
-// POST /movatak/agendamento
+// ROTA UNIFICADA — Webhook Z-API (substitui /webhook/mensagem,
+// /webhook/etiqueta e /webhook/resposta)
+// Trata: novo lead, comandos #followup/#convertido/#vendedor,
+// pausa de followup ao responder. Repassa payload ao rastreiobot.
 // ============================================================
-const ZAPI_INSTANCE_LAND = '3F2A60F11BF6A1A743307E1C380F897F';
-const ZAPI_TOKEN_LAND    = 'A7A0656B8E45CD44BB720C89';
-const ZAPI_CT_LAND       = 'F1ec36b389b1a4f54becafad6b57ada4fS';
-const MOVATAK_NUMERO     = '5581976041948';
-const NTFY_TOPIC_LAND    = 'movatak-leads-2026';
+const RASTREIOBOT_URL = process.env.RASTREIOBOT_URL || 'https://rastreiobot-production-e904.up.railway.app';
 
-app.post('/movatak/agendamento', async (req, res) => {
+// Normaliza texto para comparar comandos (remove acentos, minúsculo)
+function normalizarTexto(t) {
+  return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+// Verifica se o texto contém algum dos comandos da lista
+function contemComando(texto, comandos) {
+  if (!Array.isArray(comandos) || !comandos.length) return false;
+  const t = normalizarTexto(texto);
+  return comandos.some(cmd => {
+    const c = normalizarTexto(cmd);
+    return c && t.includes(c);
+  });
+}
+
+app.post('/movatak/webhook/zapi', async (req, res) => {
+  res.json({ ok: true }); // responde imediato
+
+  const body = req.body || {};
+
+  // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
   try {
-    const { provedor, cargo, clientes, cidade, email, zap, dia, data, hora } = req.body;
-    if (!provedor || !zap || !hora) return res.status(400).json({ error: 'Dados incompletos.' });
-
-    const zapiBase = `https://api.z-api.io/instances/${ZAPI_INSTANCE_LAND}/token/${ZAPI_TOKEN_LAND}`;
-    const headers  = { 'Content-Type': 'application/json', 'Client-Token': ZAPI_CT_LAND };
-
-    const zapLead = String(zap).replace(/\D/g,'').length === 11
-      ? '55' + String(zap).replace(/\D/g,'')
-      : String(zap).replace(/\D/g,'');
-
-    const msgLead = `Olá, ${provedor}! 🎉\n\nSua reunião com a Movatak foi confirmada!\n\n📅 *${dia}, ${data} às ${hora}*\n\nVamos conversar sobre como fazer sua empresa crescer nos próximos 90 dias sem pagar mensalidade de agência.\n\nQualquer dúvida, estou aqui. Até lá! 🚀\n\n— Ronaldo Valério\nMovatak`;
-    const msgAdmin = `🔔 *Novo agendamento Movatak*\n\n🏢 Provedor: ${provedor}\n👤 Cargo: ${cargo}\n👥 Clientes: ${clientes}\n📍 Cidade: ${cidade}\n📧 Email: ${email}\n📱 WhatsApp: ${zap}\n📅 Reunião: ${dia}, ${data} às ${hora}`;
-
-    const results = await Promise.allSettled([
-      axios.post(`${zapiBase}/send-text`, { phone: zapLead,        message: msgLead  }, { headers }),
-      axios.post(`${zapiBase}/send-text`, { phone: MOVATAK_NUMERO, message: msgAdmin }, { headers }),
-      axios.post(`https://ntfy.sh/${NTFY_TOPIC_LAND}`,
-        `${provedor} | ${cargo} | ${clientes} clientes | ${dia} ${data} ${hora}`,
-        { headers: { Title: '🔔 Novo lead Movatak', Priority: 'high', Tags: 'calendar' } }
-      )
-    ]);
-
-    results.forEach((r, i) => {
-      if (r.status === 'rejected') console.error(`[agendamento] disparo ${i} falhou:`, r.reason?.message);
-    });
-
-    res.json({ ok: true });
-  } catch(e) {
-    console.error('[agendamento]', e.message);
-    res.status(500).json({ error: e.message });
+    await axios.post(`${RASTREIOBOT_URL}/webhook/zapi`, body, { timeout: 8000 });
+  } catch (e) {
+    console.error('[zapi] repasse rastreiobot falhou:', e.message);
   }
+
+  // ---- Processamento Movatak ----
+  try {
+    const telefone   = String(body.phone || '').replace(/\D/g, '');
+    const instanceId = body.instanceId || body.instance || '';
+    const texto      = (body.text && body.text.message) ? body.text.message
+                       : (typeof body.text === 'string' ? body.text : '');
+    if (!telefone || !instanceId) return;
+
+    // Buscar cliente pela instância
+    const rc = await query(
+      'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
+      [instanceId]
+    );
+    if (!rc.rows.length) return;
+    const cliente = rc.rows[0];
+    const comandos = cliente.comandos || {};
+
+    // Buscar lead existente
+    const rl = await query(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
+      [cliente.id, telefone]
+    );
+    const lead = rl.rows[0] || null;
+
+    // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
+    // Comandos só valem em mensagens enviadas pela equipe
+    if (body.fromMe) {
+      if (!lead) return; // sem lead, comando não tem alvo
+
+      // -- Comando: marcar vendedor (conversão atribuída) --
+      const rv = await query(
+        'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
+        [cliente.id]
+      );
+      const vendedorDetectado = rv.rows.find(v =>
+        v.comando && contemComando(texto, [v.comando])
+      );
+
+      if (vendedorDetectado) {
+        await query(
+          `UPDATE movatak_leads SET etapa = 'cliente', vendedor_id = $1, atualizado_em = NOW() WHERE id = $2`,
+          [vendedorDetectado.id, lead.id]
+        );
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
+        await query(
+          'INSERT INTO movatak_etiqueta_log (lead_id, cliente_id, etiqueta) VALUES ($1, $2, $3)',
+          [lead.id, cliente.id, 'vendedor:' + vendedorDetectado.nome]
+        );
+        console.log(`[zapi] Convertido por ${vendedorDetectado.nome} -> lead ${lead.id}`);
+        return;
+      }
+
+      // -- Comando: convertido (sem vendedor especifico) --
+      if (contemComando(texto, comandos.convertido)) {
+        await query(
+          `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
+        console.log(`[zapi] Convertido -> lead ${lead.id}`);
+        return;
+      }
+
+      // -- Comando: descartar --
+      if (contemComando(texto, comandos.descartar)) {
+        await query(
+          `UPDATE movatak_leads SET etapa = 'descartado', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
+        console.log(`[zapi] Descartado -> lead ${lead.id}`);
+        return;
+      }
+
+      // -- Comando: followup --
+      if (contemComando(texto, comandos.followup)) {
+        await query(
+          `UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+        await query('DELETE FROM movatak_followup WHERE lead_id = $1', [lead.id]);
+        const agora = new Date();
+        for (const [etapa, dias] of Object.entries(DIAS_FOLLOWUP)) {
+          const proximo = new Date(agora);
+          proximo.setDate(proximo.getDate() + dias);
+          await query(
+            `INSERT INTO movatak_followup (lead_id, cliente_id, etapa_seq, proximo_envio, status)
+             VALUES ($1, $2, $3, $4, 'pendente')`,
+            [lead.id, cliente.id, parseInt(etapa), proximo.toISOString()]
+          );
+        }
+        console.log(`[zapi] Follow up ativado -> lead ${lead.id}`);
+        return;
+      }
+
+      return; // mensagem do vendedor sem comando reconhecido
+    }
+
+    // ===== MENSAGEM RECEBIDA DO LEAD =====
+
+    // -- Lead em followup respondeu -> pausa a sequencia --
+    if (lead && lead.etapa === 'followup') {
+      await query(
+        `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+        [lead.id]
+      );
+      console.log(`[zapi] Follow up pausado (lead respondeu) -> lead ${lead.id}`);
+      return;
+    }
+
+    // -- Novo lead: mensagem bate com trigger do trafego --
+    if (!lead) {
+      const msg = normalizarTexto(texto);
+      const trigger = normalizarTexto(cliente.trigger_msg);
+      if (trigger && msg.includes(trigger)) {
+        await query(
+          `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa)
+           VALUES ($1, $2, $3, 'lead')`,
+          [cliente.id, telefone, body.senderName || null]
+        );
+        console.log(`[zapi] Novo lead criado -> ${telefone} (${cliente.nome})`);
+      }
+    }
+  } catch (e) {
+    console.error('[zapi] erro processamento:', e.message);
+  }
+});
+
+// ============================================================
+// API — Comandos de automação por cliente
+// ============================================================
+
+// Buscar comandos de um cliente
+app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      'SELECT comandos FROM movatak_clientes WHERE id = $1', [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    res.json(r.rows[0].comandos || {});
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar comandos de um cliente
+app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
+  try {
+    const { followup, convertido, descartar } = req.body;
+    const comandos = {
+      followup:   Array.isArray(followup)   ? followup   : [],
+      convertido: Array.isArray(convertido) ? convertido : [],
+      descartar:  Array.isArray(descartar)  ? descartar  : []
+    };
+    await query(
+      'UPDATE movatak_clientes SET comandos = $1 WHERE id = $2',
+      [JSON.stringify(comandos), req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Atualizar comando de um vendedor
+app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res) => {
+  try {
+    const { comando } = req.body;
+    await query(
+      'UPDATE movatak_vendedores SET comando = $1 WHERE id = $2',
+      [comando || null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================
