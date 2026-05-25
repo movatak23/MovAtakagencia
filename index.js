@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.5-trigger-flex';
+const MOVATAK_VERSION = 'v1.6.6-trigger-existing-lead';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1346,7 +1346,13 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
-      console.log('[zapi][fromMe] mensagem do vendedor sem comando reconhecido:', texto || '(sem texto)');
+      // Evita poluir o log com mensagens normais enviadas pelo próprio WhatsApp
+      // conectado, como avisos de rastreio, pós-venda e respostas manuais.
+      if (texto && texto.trim().startsWith('#')) {
+        console.log('[zapi][fromMe] mensagem do vendedor sem comando reconhecido:', texto || '(sem texto)');
+      } else {
+        console.log('[zapi][fromMe] mensagem enviada sem comando interno — ignorada pelo CRM');
+      }
       return; // mensagem do vendedor sem comando reconhecido
     }
 
@@ -1363,12 +1369,33 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     );
     const lead = rl.rows[0] || null;
 
+    // Calcula o gatilho antes de tratar lead existente.
+    // Assim, se a mesma pessoa clicar no anúncio novamente, conseguimos reativar o FU1.
+    const msg = normalizarGatilho(texto);
+    const trigger = normalizarGatilho(cliente.trigger_msg);
+    const triggerOk = textoBateGatilho(texto, cliente.trigger_msg);
+
     // -- Lead existe: garantir chat_lid salvo + pausar followup se respondeu --
     if (lead) {
       // Salva o chat_lid se ainda nao tiver (essencial para os comandos)
       if (chatLid && lead.chat_lid !== chatLid) {
-        await query('UPDATE movatak_leads SET chat_lid = $1 WHERE id = $2', [chatLid, lead.id]);
+        await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, lead.id]);
       }
+
+      // Se o lead ja existia e clicou no anuncio/frase-gatilho de novo,
+      // reabre o atendimento e agenda novamente o FU1, exceto se ja estiver convertido.
+      if (triggerOk && lead.etapa !== 'cliente') {
+        await query(
+          `UPDATE movatak_leads
+             SET etapa = 'followup', nome = COALESCE($1, nome), atualizado_em = NOW()
+           WHERE id = $2`,
+          [body.senderName || null, lead.id]
+        );
+        await agendarFollowupV2(lead.id, cliente.id, 1, true);
+        console.log(`[zapi] Lead existente reativado em FU1 -> lead ${lead.id} telefone ${telefone}`);
+        return;
+      }
+
       if (lead.etapa === 'followup') {
         await query(
           `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
@@ -1384,9 +1411,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // -- Novo lead: mensagem bate com o trigger do trafego --
-    const msg = normalizarGatilho(texto);
-    const trigger = normalizarGatilho(cliente.trigger_msg);
-    const triggerOk = textoBateGatilho(texto, cliente.trigger_msg);
     console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({
       msg_original: texto,
       trigger_original: cliente.trigger_msg,
