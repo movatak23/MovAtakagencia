@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.8-comandos-save-fix';
+const MOVATAK_VERSION = 'v1.6.3-vendedor-comando';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -164,74 +164,6 @@ async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = tr
   }
 }
 
-// Envia imediatamente as mensagens pendentes de um lead.
-// Usado principalmente no FU1, para não depender do cron de 10 minutos.
-// Se a Z-API falhar, mantém a mensagem como pendente para o cron tentar de novo.
-async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) {
-  const params = [leadId];
-  let filtroSequencia = '';
-
-  if (apenasSequenciaFu !== null && apenasSequenciaFu !== undefined) {
-    params.push(apenasSequenciaFu);
-    filtroSequencia = ` AND COALESCE(f.sequencia_fu, 1) = $2`;
-  }
-
-  const r = await query(
-    `SELECT f.*, l.telefone, l.nome, l.etapa,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
-       FROM movatak_followup f
-       JOIN movatak_leads l ON l.id = f.lead_id
-       JOIN movatak_clientes c ON c.id = f.cliente_id
-      WHERE f.lead_id = $1
-        AND f.status = 'pendente'
-        AND f.proximo_envio <= NOW()
-        ${filtroSequencia}
-      ORDER BY COALESCE(f.sequencia_fu, 1), f.etapa_seq`,
-    params
-  );
-
-  if (!r.rows.length) {
-    console.log(`[followup][imediato] nenhuma mensagem pendente para lead ${leadId}`);
-    return;
-  }
-
-  for (const row of r.rows) {
-    try {
-      if (row.etapa !== 'followup') {
-        console.log(`[followup][imediato] lead ${leadId} ignorado porque etapa=${row.etapa}`);
-        continue;
-      }
-
-      const fuData = row.followup_msgs_v2 || {};
-      const seqKey = 'fu' + (row.sequencia_fu || 1);
-      const msgs = fuData[seqKey] || {};
-      const msgText = msgs['msg' + row.etapa_seq];
-
-      if (!msgText || !String(msgText).trim()) {
-        await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
-        console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} vazia; marcada como enviada -> lead ${leadId}`);
-        continue;
-      }
-
-      const msg = String(msgText).replace(/{nome}/g, row.nome || 'Lead');
-
-      await zapiEnviar(
-        row.zapi_instance,
-        row.zapi_token,
-        row.zapi_client_token,
-        row.telefone,
-        msg
-      );
-
-      await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
-      console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada -> lead ${leadId}`);
-    } catch (e) {
-      console.error(`[followup][imediato] erro ao enviar lead ${leadId} fila ${row.id}:`, e.message);
-      // Não marca como enviado. O cron tentará reenviar depois.
-    }
-  }
-}
-
 // Se o lead ficou 1h sem responder ao FU1, entra no FU2.
 async function migrarFU1ParaFU2() {
   const r = await query(
@@ -270,13 +202,13 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
     const telefone = phone.replace(/\D/g, '');
 
     // Buscar cliente com trigger que bate com a mensagem
-    // Não usa ILIKE direto porque pequenas diferenças como "PROV>>" vs "PROV >>" quebravam o disparo.
     const r = await query(
-      `SELECT * FROM movatak_clientes WHERE ativo = true AND trigger_msg IS NOT NULL`,
-      []
+      `SELECT * FROM movatak_clientes WHERE ativo = true AND $1 ILIKE '%' || trigger_msg || '%'`,
+      [mensagem]
     );
-    const cliente = r.rows.find(c => textoBateGatilho(mensagem, c.trigger_msg));
-    if (!cliente) return res.json({ ok: true });
+    if (!r.rows.length) return res.json({ ok: true });
+
+    const cliente = r.rows[0];
 
     // Verificar se lead já existe para evitar duplicata
     const existe = await query(
@@ -294,7 +226,6 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
     );
 
     await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
-    await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
 
     // Etiquetar no WhatsApp
     await zapiEtiquetar(
@@ -824,72 +755,23 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg, comandos
-       FROM movatak_clientes WHERE id = $1`,
+      'SELECT followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg FROM movatak_clientes WHERE id = $1',
       [req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-
     const row = r.rows[0];
-
-    // Garante compatibilidade com bancos que ainda tenham mensagens no formato antigo.
-    const legado = row.followup_msgs || {};
-    const padrao = {
-      fu1: {
-        msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
-        msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!'
-      },
-      fu2: {
-        msg1: '',
-        msg2: '',
-        msg3: ''
-      }
+    const msgs = row.followup_msgs || {
+      msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
+      msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
+      msg3: 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
+      msg4: 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
     };
-
-    const v2 = row.followup_msgs_v2 || {
-      fu1: {
-        msg1: legado.msg1 || padrao.fu1.msg1,
-        msg2: legado.msg2 || padrao.fu1.msg2
-      },
-      fu2: {
-        msg1: legado.msg3 || padrao.fu2.msg1,
-        msg2: legado.msg4 || padrao.fu2.msg2,
-        msg3: legado.msg5 || padrao.fu2.msg3
-      }
-    };
-
-    const followup_v2 = {
-      fu1: {
-        msg1: (v2.fu1 && v2.fu1.msg1) || padrao.fu1.msg1,
-        msg2: (v2.fu1 && v2.fu1.msg2) || padrao.fu1.msg2
-      },
-      fu2: {
-        msg1: (v2.fu2 && v2.fu2.msg1) || '',
-        msg2: (v2.fu2 && v2.fu2.msg2) || '',
-        msg3: (v2.fu2 && v2.fu2.msg3) || ''
-      }
-    };
-
-    // Retorna em formatos diferentes para não quebrar o admin.html, mesmo que ele esteja lendo nomes antigos.
     res.json({
-      followup_v2,
-      followup_msgs_v2: followup_v2,
-      fu1: followup_v2.fu1,
-      fu2: followup_v2.fu2,
-      msg1: followup_v2.fu1.msg1,
-      msg2: followup_v2.fu1.msg2,
-      msg3: followup_v2.fu2.msg1,
-      msg4: followup_v2.fu2.msg2,
-      msg5: followup_v2.fu2.msg3,
+      ...msgs,
       boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!',
       verba_diaria: row.verba_diaria || null,
       whatsapp_dono: row.whatsapp_dono || null,
-      trigger_msg: row.trigger_msg || '',
-      comandos: row.comandos || { followup: [], convertido: [], descartar: [], desfazer: [] },
-      comando_followup: ((row.comandos || {}).followup || []).join(', '),
-      comando_convertido: ((row.comandos || {}).convertido || []).join(', '),
-      comando_descartar: ((row.comandos || {}).descartar || []).join(', '),
-      comando_desfazer: ((row.comandos || {}).desfazer || []).join(', ')
+      trigger_msg: row.trigger_msg || ''
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -897,57 +779,22 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
 // Atualizar mensagens de follow up de um cliente (novo formato: 2 blocos)
 app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
-    const { boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
-
-    // O painel pode enviar como followup_v2, followup_msgs_v2, fu1/fu2 ou campos soltos.
-    // Esta normalização evita o problema de "aparece na tela, mas não grava".
-    const recebido = req.body.followup_v2 || req.body.followup_msgs_v2 || {};
-    const followup_v2 = {
-      fu1: {
-        msg1: String((recebido.fu1 && recebido.fu1.msg1) || (req.body.fu1 && req.body.fu1.msg1) || req.body.fu1_msg1 || req.body.msg1 || '').trim(),
-        msg2: String((recebido.fu1 && recebido.fu1.msg2) || (req.body.fu1 && req.body.fu1.msg2) || req.body.fu1_msg2 || req.body.msg2 || '').trim()
-      },
-      fu2: {
-        msg1: String((recebido.fu2 && recebido.fu2.msg1) || (req.body.fu2 && req.body.fu2.msg1) || req.body.fu2_msg1 || req.body.msg3 || '').trim(),
-        msg2: String((recebido.fu2 && recebido.fu2.msg2) || (req.body.fu2 && req.body.fu2.msg2) || req.body.fu2_msg2 || req.body.msg4 || '').trim(),
-        msg3: String((recebido.fu2 && recebido.fu2.msg3) || (req.body.fu2 && req.body.fu2.msg3) || req.body.fu2_msg3 || req.body.msg5 || '').trim()
-      }
-    };
-
+    const { followup_v2, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
     await query(
       `UPDATE movatak_clientes
-         SET followup_msgs_v2 = $1::jsonb,
-             boas_vindas_msg = $2,
-             verba_diaria = $3,
-             whatsapp_dono = $4,
-             trigger_msg = COALESCE($5, trigger_msg)
+         SET followup_msgs_v2 = $1, boas_vindas_msg = $2, verba_diaria = $3,
+             whatsapp_dono = $4, trigger_msg = COALESCE($5, trigger_msg)
        WHERE id = $6`,
       [
-        JSON.stringify(followup_v2),
+        JSON.stringify(followup_v2 || {}),
         boas_vindas_msg || null,
-        verba_diaria ? parseFloat(String(verba_diaria).replace(',', '.')) : null,
+        verba_diaria ? parseFloat(verba_diaria) : null,
         whatsapp_dono ? String(whatsapp_dono).replace(/\D/g, '') : null,
-        (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : null,
+        (trigger_msg && trigger_msg.trim()) ? trigger_msg.trim() : null,
         req.params.id
       ]
     );
-
-    // Alguns admin.html salvam todos os blocos pela própria rota /followup.
-    // Se vierem comandos no mesmo payload, salva também para não perder o bloco 6 da tela.
-    const temComandosNoPayload = req.body.comandos || req.body.followup || req.body.convertido || req.body.descartar || req.body.desfazer ||
-      req.body.comando_followup || req.body.comando_convertido || req.body.comando_vendido || req.body.comando_descartar || req.body.comando_desfazer || req.body.comando_estornar;
-    let comandosSalvos = null;
-    if (temComandosNoPayload) {
-      comandosSalvos = extrairComandosDoBody(req.body);
-      await query(
-        'UPDATE movatak_clientes SET comandos = $1::jsonb WHERE id = $2',
-        [JSON.stringify(comandosSalvos), req.params.id]
-      );
-      console.log('[comandos][salvo-via-followup]', JSON.stringify({ clienteId: req.params.id, comandos: comandosSalvos }));
-    }
-
-    console.log('[followup][salvo]', JSON.stringify({ clienteId: req.params.id, followup_v2 }));
-    res.json({ ok: true, followup_v2, comandos: comandosSalvos });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1154,41 +1001,9 @@ app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
 // ============================================================
 const RASTREIOBOT_URL = process.env.RASTREIOBOT_URL || 'https://rastreiobot-production-e904.up.railway.app';
 
-// Normaliza texto para comparar comandos e gatilhos
+// Normaliza texto para comparar comandos (remove acentos, minúsculo)
 function normalizarTexto(t) {
-  return (t || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// Normalização mais agressiva para frase-gatilho de tráfego.
-// Corrige diferenças comuns como "PROV>>" vs "PROV >>", acentos e espaços duplicados.
-function normalizarGatilho(t) {
-  return normalizarTexto(t)
-    .replace(/\s*>>\s*/g, '>>')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function textoBateGatilho(texto, gatilho) {
-  const msg = normalizarGatilho(texto);
-  const trigger = normalizarGatilho(gatilho);
-  if (!trigger || !msg) return false;
-
-  // Comparação principal: mensagem contém gatilho ou gatilho contém mensagem.
-  // A segunda condição ajuda quando o anúncio/WhatsApp corta parte do texto.
-  if (msg.includes(trigger) || trigger.includes(msg)) return true;
-
-  // Fallback seguro: ignora o prefixo antes de >> e compara o corpo da frase.
-  // Ex.: "PROV>> Olá!..." e "PROV >> Olá!..."
-  const corpoMsg = msg.includes('>>') ? msg.split('>>').slice(1).join('>>').trim() : msg;
-  const corpoTrigger = trigger.includes('>>') ? trigger.split('>>').slice(1).join('>>').trim() : trigger;
-  return !!corpoTrigger && !!corpoMsg && (corpoMsg.includes(corpoTrigger) || corpoTrigger.includes(corpoMsg));
+  return (t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 }
 
 // Verifica se o texto contém algum dos comandos da lista
@@ -1434,13 +1249,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
-      // Evita poluir o log com mensagens normais enviadas pelo próprio WhatsApp
-      // conectado, como avisos de rastreio, pós-venda e respostas manuais.
-      if (texto && texto.trim().startsWith('#')) {
-        console.log('[zapi][fromMe] mensagem do vendedor sem comando reconhecido:', texto || '(sem texto)');
-      } else {
-        console.log('[zapi][fromMe] mensagem enviada sem comando interno — ignorada pelo CRM');
-      }
+      console.log('[zapi][fromMe] mensagem do vendedor sem comando reconhecido:', texto || '(sem texto)');
       return; // mensagem do vendedor sem comando reconhecido
     }
 
@@ -1457,34 +1266,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     );
     const lead = rl.rows[0] || null;
 
-    // Calcula o gatilho antes de tratar lead existente.
-    // Assim, se a mesma pessoa clicar no anúncio novamente, conseguimos reativar o FU1.
-    const msg = normalizarGatilho(texto);
-    const trigger = normalizarGatilho(cliente.trigger_msg);
-    const triggerOk = textoBateGatilho(texto, cliente.trigger_msg);
-
     // -- Lead existe: garantir chat_lid salvo + pausar followup se respondeu --
     if (lead) {
       // Salva o chat_lid se ainda nao tiver (essencial para os comandos)
       if (chatLid && lead.chat_lid !== chatLid) {
-        await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, lead.id]);
+        await query('UPDATE movatak_leads SET chat_lid = $1 WHERE id = $2', [chatLid, lead.id]);
       }
-
-      // Se o lead ja existia e clicou no anuncio/frase-gatilho de novo,
-      // reabre o atendimento e agenda novamente o FU1, exceto se ja estiver convertido.
-      if (triggerOk && lead.etapa !== 'cliente') {
-        await query(
-          `UPDATE movatak_leads
-             SET etapa = 'followup', nome = COALESCE($1, nome), atualizado_em = NOW()
-           WHERE id = $2`,
-          [body.senderName || null, lead.id]
-        );
-        await agendarFollowupV2(lead.id, cliente.id, 1, true);
-        await enviarFollowupsPendentesDoLead(lead.id, 1);
-        console.log(`[zapi] Lead existente reativado em FU1 -> lead ${lead.id} telefone ${telefone}`);
-        return;
-      }
-
       if (lead.etapa === 'followup') {
         await query(
           `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
@@ -1500,14 +1287,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // -- Novo lead: mensagem bate com o trigger do trafego --
-    console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({
-      msg_original: texto,
-      trigger_original: cliente.trigger_msg,
-      msg,
-      trigger,
-      triggerOk
-    }));
-    if (triggerOk) {
+    const msg = normalizarTexto(texto);
+    const trigger = normalizarTexto(cliente.trigger_msg);
+    console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({ msg, trigger }));
+    if (trigger && msg.includes(trigger)) {
       const novoLead = await query(
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
          VALUES ($1, $2, $3, 'followup', $4)
@@ -1515,7 +1298,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id, telefone, body.senderName || null, chatLid]
       );
       await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
-      await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
       console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
@@ -1526,26 +1308,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 // ============================================================
 // API — Comandos de automação por cliente
 // ============================================================
-
-function normalizarListaComandos(input) {
-  if (input == null) return [];
-  const bruto = Array.isArray(input) ? input.join(',') : String(input);
-  return bruto
-    .split(/[\n,;]+/)
-    .map(s => String(s).trim().toLowerCase())
-    .filter(Boolean)
-    .filter((v, i, arr) => arr.indexOf(v) === i);
-}
-
-function extrairComandosDoBody(body) {
-  const src = body.comandos && typeof body.comandos === 'object' ? body.comandos : body;
-  return {
-    followup: normalizarListaComandos(src.followup || src.comando_followup || src.comandos_followup),
-    convertido: normalizarListaComandos(src.convertido || src.comando_convertido || src.comando_convertido_venda || src.vendido || src.comando_vendido),
-    descartar: normalizarListaComandos(src.descartar || src.comando_descartar || src.descartado || src.comando_descartado),
-    desfazer: normalizarListaComandos(src.desfazer || src.comando_desfazer || src.estornar || src.comando_estornar)
-  };
-}
 
 // Buscar comandos de um cliente
 app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
@@ -1561,9 +1323,15 @@ app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) =>
 // Atualizar comandos de um cliente
 app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
   try {
-    // O painel envia os comandos como texto: "#vendido, #fechou".
-    // A versão anterior só aceitava arrays, por isso a tela parecia salvar, mas voltava ao padrão.
-    const comandos = extrairComandosDoBody(req.body);
+    const { followup, convertido, descartar, desfazer } = req.body;
+    const norm = (arr) => (Array.isArray(arr) ? arr : [])
+      .map(s => String(s).trim().toLowerCase()).filter(Boolean);
+    const comandos = {
+      followup:   norm(followup),
+      convertido: norm(convertido),
+      descartar:  norm(descartar),
+      desfazer:   norm(desfazer)
+    };
 
     // Validação: nenhum comando pode se repetir entre os campos
     const todos = [
@@ -1580,20 +1348,17 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
       'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true AND comando IS NOT NULL',
       [req.params.id]
     );
-    const cmdsVendedores = rv.rows
-      .flatMap(r => normalizarListaComandos(r.comando))
-      .map(c => String(c).trim().toLowerCase());
+    const cmdsVendedores = rv.rows.map(r => String(r.comando).trim().toLowerCase());
     const colisao = todos.find(c => cmdsVendedores.includes(c));
     if (colisao) {
       return res.status(400).json({ error: 'O comando "' + colisao + '" ja pertence a um vendedor.' });
     }
 
     await query(
-      'UPDATE movatak_clientes SET comandos = $1::jsonb WHERE id = $2',
+      'UPDATE movatak_clientes SET comandos = $1 WHERE id = $2',
       [JSON.stringify(comandos), req.params.id]
     );
-    console.log('[comandos][salvo]', JSON.stringify({ clienteId: req.params.id, comandos }));
-    res.json({ ok: true, comandos });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
