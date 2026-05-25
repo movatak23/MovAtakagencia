@@ -212,7 +212,7 @@ tr:hover td{background:var(--bg3)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 
-.modal-fu { max-width: 560px; }
+.modal-fu { max-width: 760px; }
 .fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
 .fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
 .fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
@@ -421,7 +421,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.6.8-html-comandos-fix';
+const PAINEL_VERSION = 'v1.7.0-estavel';
 const SENHA_KEY  = 'mvtk_painel_secret';
 
 let secret = '';
@@ -927,6 +927,9 @@ async function abrirFU(id) {
     carregarComandos(id);
     // Carregar gráfico de performance
     carregarRanking(id);
+    // Carregar status operacional e fila do follow-up
+    carregarOperacao(id);
+    carregarFilaFollowup(id);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
@@ -993,7 +996,9 @@ async function salvarFU() {
       return;
     }
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
-    setTimeout(fecharFU, 1000);
+    carregarOperacao(fuId);
+    carregarFilaFollowup(fuId);
+    setTimeout(() => { document.getElementById('btn-fu-save').textContent = 'Salvar alterações'; }, 1200);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
@@ -1120,6 +1125,131 @@ async function carregarRanking(id) {
   }
 }
 
+
+// ── Operação e fila do follow-up ───────────────────────────
+function fmtData(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleString('pt-BR'); }
+  catch(e) { return iso; }
+}
+
+async function carregarOperacao(id) {
+  const wrap = document.getElementById('fu-operacao-box');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando status...</div>';
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/operacao');
+    const leads = r.leads || {};
+    const fila = r.fila || {};
+    const cards = [
+      ['Leads', leads.total_leads || 0],
+      ['Atendimento', leads.em_atendimento || 0],
+      ['FU ativo', leads.em_followup || 0],
+      ['Clientes', leads.clientes || 0],
+      ['FU1 pendente', fila.pendentes_fu1 || 0],
+      ['FU2 pendente', fila.pendentes_fu2 || 0],
+      ['Atrasadas', fila.pendentes_atrasadas || 0],
+      ['Pausadas', fila.pausadas || 0]
+    ];
+    wrap.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin-bottom:12px">
+        ${cards.map(([label, val]) => `
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px">
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">${label}</div>
+            <div style="font-size:20px;font-weight:800;color:var(--text)">${val}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.6">
+        <strong>Último lead:</strong> ${r.ultimo_lead ? `${r.ultimo_lead.nome || 'Sem nome'} · ${r.ultimo_lead.telefone} · ${fmtData(r.ultimo_lead.criado_em)}` : '—'}<br>
+        <strong>Próxima mensagem:</strong> ${r.proxima_mensagem ? `FU${r.proxima_mensagem.sequencia_fu} msg${r.proxima_mensagem.etapa_seq} · ${r.proxima_mensagem.telefone} · ${fmtData(r.proxima_mensagem.proximo_envio)}` : '—'}<br>
+        <strong>Último envio:</strong> ${fmtData(fila.ultimo_envio_em)}
+      </div>`;
+  } catch(e) {
+    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar operação: ' + e.message + '</div>';
+  }
+}
+
+async function carregarFilaFollowup(id) {
+  const wrap = document.getElementById('fu-fila-box');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando fila...</div>';
+  try {
+    const rows = await api('/movatak/admin/clientes/' + id + '/fila-followup?limit=60');
+    if (!rows.length) {
+      wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhuma mensagem na fila.</div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:10px">
+        <table style="font-size:12px">
+          <thead>
+            <tr>
+              <th>Lead</th><th>FU</th><th>Próximo envio</th><th>Status</th><th>Ação</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td><strong>${r.nome || 'Sem nome'}</strong><br><span class="td-mono">${r.telefone || ''}</span></td>
+                <td class="td-mono">FU${r.sequencia_fu || 1} · msg${r.etapa_seq}</td>
+                <td class="td-mono">${fmtData(r.proximo_envio)}</td>
+                <td><span class="badge ${r.status === 'pendente' ? 'badge-green' : 'badge-gray'}">${r.status}</span></td>
+                <td>
+                  ${r.status === 'pendente'
+                    ? `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${r.lead_id})">Pausar</button>`
+                    : `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="reativarLeadFU(${r.lead_id})">Reativar FU2</button>`}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar fila: ' + e.message + '</div>';
+  }
+}
+
+async function pausarLeadFU(leadId) {
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/followup/pausar', { method: 'PATCH', body: JSON.stringify({}) });
+    carregarOperacao(fuId);
+    carregarFilaFollowup(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao pausar lead: ' + e.message;
+  }
+}
+
+async function reativarLeadFU(leadId) {
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/followup/reativar', {
+      method: 'PATCH',
+      body: JSON.stringify({ sequencia_fu: 2, enviar_imediato: true })
+    });
+    carregarOperacao(fuId);
+    carregarFilaFollowup(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao reativar lead: ' + e.message;
+  }
+}
+
+async function testarGatilhoAtual() {
+  const texto = document.getElementById('fu-trigger-teste').value.trim();
+  const box = document.getElementById('fu-trigger-resultado');
+  if (!texto) { box.textContent = 'Digite uma mensagem para testar.'; return; }
+  try {
+    const r = await api('/movatak/admin/clientes/' + fuId + '/testar-gatilho', {
+      method: 'POST',
+      body: JSON.stringify({ texto })
+    });
+    box.innerHTML = r.bateu
+      ? '<span style="color:var(--green)">Gatilho reconhecido. Esse texto dispara o FU1.</span>'
+      : '<span style="color:var(--red)">Gatilho não reconhecido. Ajuste a frase-gatilho.</span>';
+  } catch(e) {
+    box.textContent = 'Erro no teste: ' + e.message;
+  }
+}
+
 // Auto refresh a cada 2 minutos
 setInterval(() => { if (secret) carregarTudo(); }, 120000);
 </script>
@@ -1176,9 +1306,28 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
     </div>
 
-    <!-- BLOCO 6: COMANDOS -->
+    <!-- BLOCO 6: STATUS OPERACIONAL -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Comandos de automação</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Status operacional</div>
+      <div id="fu-operacao-box"></div>
+      <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" class="fu-textarea" id="fu-trigger-teste" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Cole aqui a mensagem recebida do anúncio">
+        <button class="btn-add-small" onclick="testarGatilhoAtual()">Testar</button>
+      </div>
+      <div class="fu-hint" id="fu-trigger-resultado"></div>
+    </div>
+
+    <!-- BLOCO 7: FILA DE FOLLOW-UP -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Fila de follow-up</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Mostra mensagens pendentes, enviadas e pausadas. Use para auditar se o fluxo realmente entrou na fila.</div>
+      <div id="fu-fila-box"></div>
+    </div>
+
+    <!-- BLOCO 8: COMANDOS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Comandos de automação</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Texto embutido numa mensagem enviada pela equipe que dispara a ação. Separe múltiplos comandos por vírgula.</div>
       <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
       <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
@@ -1189,9 +1338,9 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
     </div>
 
-    <!-- BLOCO 7: VENDEDORES -->
+    <!-- BLOCO 9: VENDEDORES -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Vendedores</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Vendedores</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
       <div class="vendedor-list" id="fu-vendedores-list"></div>
       <div class="add-vendedor-row">
@@ -1200,9 +1349,9 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       </div>
     </div>
 
-    <!-- BLOCO 8: PERFORMANCE -->
+    <!-- BLOCO 10: PERFORMANCE -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Performance dos vendedores</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Performance dos vendedores</div>
       <div id="fu-ranking-chart" style="margin-top:10px"></div>
     </div>
 
