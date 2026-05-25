@@ -670,6 +670,10 @@ async function abrirFU(id) {
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
     // Carregar vendedores
     carregarVendedores(id);
+    // Carregar comandos de automação
+    carregarComandos(id);
+    // Carregar gráfico de performance
+    carregarRanking(id);
     // Carregar whatsapp_dono
     api('/movatak/admin/clientes').then(clientes => {
       const c = clientes.find(x => x.id === id);
@@ -709,6 +713,17 @@ async function salvarFU() {
         body: JSON.stringify({ whatsapp_dono })
       }).catch(() => {});
     }
+    // Salvar comandos de automação
+    const parseCmds = (id) => (document.getElementById(id).value || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
+    await api('/movatak/admin/clientes/' + fuId + '/comandos', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        followup:   parseCmds('fu-cmd-followup'),
+        convertido: parseCmds('fu-cmd-convertido'),
+        descartar:  parseCmds('fu-cmd-descartar')
+      })
+    }).catch(() => {});
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
     setTimeout(fecharFU, 1000);
   } catch(e) {
@@ -731,10 +746,12 @@ async function carregarVendedores(id) {
       return;
     }
     lista.innerHTML = vendedores.map(v => `
-      <div class="vendedor-item">
-        <span class="vendedor-nome">${v.nome}</span>
-        <span class="vendedor-tag">Vendedor - ${v.nome}</span>
+      <div class="vendedor-item" style="flex-wrap:wrap;gap:8px">
+        <span class="vendedor-nome" style="flex:1">${v.nome}</span>
         <button class="btn-remove" onclick="removerVendedor(${v.id})" title="Remover">×</button>
+        <input type="text" class="fu-textarea" style="flex-basis:100%;min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px"
+          id="vend-cmd-${v.id}" value="${v.comando || ''}" placeholder="Comando deste vendedor (ex: #joao)"
+          onchange="salvarComandoVendedor(${v.id})">
       </div>
     `).join('');
   } catch(e) {
@@ -763,6 +780,61 @@ async function removerVendedor(vendedorId) {
     carregarVendedores(fuId);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao remover vendedor.';
+  }
+}
+
+// ── Comandos de automação ──────────────────────────────────
+async function carregarComandos(id) {
+  try {
+    const c = await api('/movatak/admin/clientes/' + id + '/comandos');
+    document.getElementById('fu-cmd-followup').value   = (c.followup   || []).join(', ');
+    document.getElementById('fu-cmd-convertido').value = (c.convertido || []).join(', ');
+    document.getElementById('fu-cmd-descartar').value  = (c.descartar  || []).join(', ');
+  } catch(e) {
+    document.getElementById('fu-cmd-followup').value = '';
+    document.getElementById('fu-cmd-convertido').value = '';
+    document.getElementById('fu-cmd-descartar').value = '';
+  }
+}
+
+async function salvarComandoVendedor(vendedorId) {
+  const comando = document.getElementById('vend-cmd-' + vendedorId).value.trim();
+  try {
+    await api('/movatak/admin/vendedores/' + vendedorId + '/comando', {
+      method: 'PATCH',
+      body: JSON.stringify({ comando })
+    });
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar comando do vendedor.';
+  }
+}
+
+// ── Gráfico de performance dos vendedores ──────────────────
+async function carregarRanking(id) {
+  const wrap = document.getElementById('fu-ranking-chart');
+  try {
+    const ranking = await api('/movatak/admin/clientes/' + id + '/ranking');
+    if (!ranking.length) {
+      wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhum vendedor com vendas ainda.</div>';
+      return;
+    }
+    const max = Math.max(...ranking.map(v => parseInt(v.fechamentos || 0)), 1);
+    wrap.innerHTML = ranking.map((v, i) => {
+      const fech = parseInt(v.fechamentos || 0);
+      const pct  = Math.round((fech / max) * 100);
+      const cor  = i === 0 ? 'var(--green)' : i === 1 ? 'var(--accent)' : 'var(--amber)';
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:13px;color:var(--text)">${v.nome}</span>
+          <span style="font-size:13px;font-weight:700;color:${cor}">${fech} ${fech === 1 ? 'venda' : 'vendas'}</span>
+        </div>
+        <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${cor};border-radius:4px;transition:width .5s"></div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar performance.</div>';
   }
 }
 
@@ -795,13 +867,28 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
     <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
     <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
 
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comandos de automação</label>
+    <div class="fu-hint" style="margin-bottom:10px">Texto que, embutido numa mensagem enviada pela equipe, dispara a ação. Separe múltiplos comandos por vírgula.</div>
+
+    <label class="fu-label">Comando — Follow Up <span class="fu-tag">ativa a sequência</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-followup" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#followup, #aguardando">
+
+    <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
+
+    <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
+
     <label class="fu-label" style="margin-top:16px">Vendedores</label>
+    <div class="fu-hint" style="margin-bottom:8px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
     <div class="vendedor-list" id="fu-vendedores-list"></div>
     <div class="add-vendedor-row">
       <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
       <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
     </div>
-    <div class="fu-hint">Cada vendedor terá uma etiqueta "Vendedor - [Nome]" criada automaticamente no WhatsApp Business.</div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Performance dos vendedores</label>
+    <div id="fu-ranking-chart" style="margin-top:10px"></div>
 
     <div class="login-err" id="fu-err" style="margin-top:12px"></div>
     <div class="modal-btns">
