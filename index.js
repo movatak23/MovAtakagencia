@@ -1,5 +1,10 @@
 'use strict';
 
+// ============================================================
+// VERSÃO — incrementar a cada atualização
+// ============================================================
+const MOVATAK_VERSION = 'v1.5.0';
+
 const express = require('express');
 const { Pool } = require('pg');
 const cron = require('node-cron');
@@ -1213,10 +1218,14 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
 });
 
 // ============================================================
-// Health check
+// Health check + Versão
 // ============================================================
 app.get('/movatak/health', (req, res) => {
-  res.json({ status: 'ok', ts: new Date().toISOString() });
+  res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
+});
+
+app.get('/movatak/version', (req, res) => {
+  res.json({ version: MOVATAK_VERSION });
 });
 
 // ============================================================
@@ -1224,5 +1233,5 @@ app.get('/movatak/health', (req, res) => {
 // ============================================================
 const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`[Movatak] Backend rodando na porta ${PORT}`);
+  console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
 });
