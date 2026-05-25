@@ -129,6 +129,11 @@ const MSGS_FOLLOWUP = {
 };
 
 const DIAS_FOLLOWUP = { 1: 1, 2: 3, 3: 7, 4: 14 };
+// Follow up em 2 blocos: FU1 imediatas, FU2 (D+0, D+1, D+3)
+const DIAS_FOLLOWUP_V2 = {
+  fu1: { 1: 0, 2: 0 },  // ambas imediatas
+  fu2: { 1: 0, 2: 1, 3: 3 }  // imediata, D+1, D+3
+};
 
 // ============================================================
 // ROTA 1 — Webhook de mensagem recebida
@@ -320,26 +325,41 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 // ============================================================
 // CRON — Disparador de follow up (roda a cada hora)
 // ============================================================
-cron.schedule('0 * * * *', async () => {
-  console.log('[cron] Verificando fila de follow up...');
+// ============================================================
+// CRON — Follow up: envio + migração FU1→FU2 (a cada 10 min)
+// ============================================================
+cron.schedule('*/10 * * * *', async () => {
+  console.log('[cron] Verificando fila de follow up e migrações...');
   try {
+    // 1. ENVIO: buscar mensagens pendentes de ambas sequências
     const r = await query(
-      `SELECT f.*, l.telefone, l.nome, c.zapi_instance, c.zapi_token, c.zapi_client_token
+      `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
        FROM movatak_followup f
        JOIN movatak_leads l ON l.id = f.lead_id
        JOIN movatak_clientes c ON c.id = f.cliente_id
        WHERE f.status = 'pendente'
-         AND f.proximo_envio <= NOW()
-         AND l.etapa = 'followup'`,
+         AND f.proximo_envio <= NOW()`,
       []
     );
 
     for (const row of r.rows) {
       try {
-        const gerarMsg = MSGS_FOLLOWUP[row.etapa_seq];
-        if (!gerarMsg) continue;
+        // Só envia se lead está em follow up
+        if (row.etapa !== 'followup') { continue; }
 
-        const msg = gerarMsg(row.nome);
+        // Buscar mensagem da sequência correta
+        const fu_data = row.followup_msgs_v2 || {};
+        const seq_key = 'fu' + row.sequencia_fu;
+        const msgs = fu_data[seq_key] || {};
+        const msg_text = msgs['msg' + row.etapa_seq];
+        
+        if (!msg_text || !msg_text.trim()) {
+          // Campo vazio, marca como enviado mas não manda nada
+          await query(`UPDATE movatak_followup SET status = 'enviado' WHERE id = $1`, [row.id]);
+          continue;
+        }
+
+        const msg = msg_text.replace(/{nome}/g, row.nome || 'Lead');
         await zapiEnviar(
           row.zapi_instance,
           row.zapi_token,
@@ -353,15 +373,66 @@ cron.schedule('0 * * * *', async () => {
           [row.id]
         );
 
+        console.log(`[cron] FU${row.sequencia_fu} msg${row.etapa_seq} enviado → lead ${row.lead_id}`);
+      } catch (e) {
+        console.error(`[cron] Erro envio lead ${row.lead_id}:`, e.message);
+      }
+    }
+
+    // 2. MIGRAÇÃO: FU1 → FU2 (leads que não responderam em 1h)
+    const migracao = await query(
+      `SELECT f.*, l.id as lead_id, c.followup_msgs_v2
+       FROM movatak_followup f
+       JOIN movatak_leads l ON l.id = f.lead_id
+       JOIN movatak_clientes c ON c.id = f.cliente_id
+       WHERE f.status IN ('pendente', 'enviado')
+         AND f.sequencia_fu = 1
+         AND f.data_entrada <= NOW() - INTERVAL '1 hour'
+         AND l.etapa = 'followup'
+       GROUP BY f.lead_id, f.client_id HAVING COUNT(*) = MAX(CASE WHEN status = 'enviado' THEN 1 END)`,
+      []
+    );
+
+    for (const row of migracao.rows) {
+      try {
+        // Verificar se ainda não respondeu (contar mensagens do lead)
+        const check = await query(
+          `SELECT COUNT(*) FROM movatak_leads l
+           JOIN movatak_mensagens m ON m.lead_id = l.id
+           WHERE l.id = $1 AND m.tipo = 'recebido'`,
+          [row.lead_id]
+        );
+        if (parseInt(check.rows[0].count) > 0) continue; // lead respondeu, não migra
+
+        // Deletar mensagens pendentes do FU1
         await query(
-          `INSERT INTO movatak_mensagens (lead_id, cliente_id, tipo)
-           VALUES ($1, $2, $3)`,
-          [row.lead_id, row.cliente_id, `followup_${row.etapa_seq}`]
+          `DELETE FROM movatak_followup
+           WHERE lead_id = $1 AND sequencia_fu = 1 AND status IN ('pendente', 'enviado')`,
+          [row.lead_id]
         );
 
-        console.log(`[cron] Follow up ${row.etapa_seq} enviado → lead ${row.lead_id}`);
+        // Agendar mensagens do FU2
+        const fu2_msgs = (row.followup_msgs_v2 && row.followup_msgs_v2.fu2) || {};
+        const dias_fu2 = { 1: 0, 2: 1, 3: 3 };
+        let etapa = 1;
+        for (const [k, v] of Object.entries(fu2_msgs)) {
+          const txt = (v || '').trim();
+          if (txt) {
+            const dias = dias_fu2[etapa] || 0;
+            const proximo = new Date();
+            proximo.setDate(proximo.getDate() + dias);
+            await query(
+              `INSERT INTO movatak_followup (lead_id, cliente_id, etapa_seq, proximo_envio, status, sequencia_fu, data_entrada)
+               VALUES ($1, (SELECT cliente_id FROM movatak_leads WHERE id = $1), $2, $3, 'pendente', 2, NOW())`,
+              [row.lead_id, etapa, proximo.toISOString()]
+            );
+          }
+          etapa++;
+        }
+
+        console.log(`[cron] Lead ${row.lead_id} migrado para FU2`);
       } catch (e) {
-        console.error(`[cron] Erro lead ${row.lead_id}:`, e.message);
+        console.error(`[cron] Erro migração lead ${row.lead_id}:`, e.message);
       }
     }
   } catch (e) {
@@ -695,19 +766,26 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      'SELECT followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg FROM movatak_clientes WHERE id = $1',
+      'SELECT followup_msgs, followup_msgs_v2, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg FROM movatak_clientes WHERE id = $1',
       [req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
     const row = r.rows[0];
-    const msgs = row.followup_msgs || {
+    // Compatibilidade: se nao tiver v2, monta vazio
+    const fu1 = (row.followup_msgs_v2 && row.followup_msgs_v2.fu1) || { msg1: '', msg2: '' };
+    const fu2 = (row.followup_msgs_v2 && row.followup_msgs_v2.fu2) || { msg1: '', msg2: '', msg3: '' };
+    // Msgs antigas para retrocompatibilidade
+    const msgsAntigo = row.followup_msgs || {
       msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
       msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!',
       msg3: 'Ei! Nao quero ser chato, mas queria passar uma ultima vez. Tem algo que posso esclarecer?',
       msg4: 'Ultimo recado! Se em algum momento fizer sentido retomar, estarei aqui. Abraco!'
     };
     res.json({
-      ...msgs,
+      // Novo formato (2 blocos)
+      followup_v2: { fu1, fu2 },
+      // Formato antigo (para compatibilidade)
+      ...msgsAntigo,
       boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!',
       verba_diaria: row.verba_diaria || null,
       whatsapp_dono: row.whatsapp_dono || null,
@@ -716,18 +794,19 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Atualizar mensagens de follow up de um cliente
+// Atualizar mensagens de follow up de um cliente (novo formato: 2 blocos)
 app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
-    const { msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
-    if (!msg1 || !msg2 || !msg3 || !msg4) return res.status(400).json({ error: 'Todas as 4 mensagens sao obrigatorias.' });
+    const { followup_v2, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
+    // followup_v2 = { fu1: {msg1, msg2}, fu2: {msg1, msg2, msg3} }
+    // Campos em branco sao permitidos
     await query(
       `UPDATE movatak_clientes
-         SET followup_msgs = $1, boas_vindas_msg = $2, verba_diaria = $3,
+         SET followup_msgs_v2 = $1, boas_vindas_msg = $2, verba_diaria = $3,
              whatsapp_dono = $4, trigger_msg = COALESCE($5, trigger_msg)
        WHERE id = $6`,
       [
-        JSON.stringify({ msg1, msg2, msg3, msg4 }),
+        JSON.stringify(followup_v2 || {}),
         boas_vindas_msg || null,
         verba_diaria ? parseFloat(verba_diaria) : null,
         whatsapp_dono ? String(whatsapp_dono).replace(/\D/g, '') : null,
@@ -1109,11 +1188,16 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         await query('UPDATE movatak_leads SET chat_lid = $1 WHERE id = $2', [chatLid, lead.id]);
       }
       if (lead.etapa === 'followup') {
+        // Lead respondeu: pausa follow-up e volta para 'lead' (atendimento normal)
         await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status IN ('pendente', 'enviado')`,
           [lead.id]
         );
-        console.log(`[zapi] Follow up pausado (lead respondeu) -> lead ${lead.id}`);
+        await query(
+          `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+        console.log(`[zapi] Lead respondeu, saiu do FU -> lead ${lead.id}`);
       }
       return;
     }
@@ -1122,12 +1206,31 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const msg = normalizarTexto(texto);
     const trigger = normalizarTexto(cliente.trigger_msg);
     if (trigger && msg.includes(trigger)) {
-      await query(
+      // Criar lead direto em followup (FU1)
+      const rlead = await query(
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
-         VALUES ($1, $2, $3, 'lead', $4)`,
+         VALUES ($1, $2, $3, 'followup', $4) RETURNING id`,
         [cliente.id, telefone, body.senderName || null, chatLid]
       );
-      console.log(`[zapi] Novo lead criado -> ${telefone} (${cliente.nome})`);
+      const new_lead_id = rlead.rows[0].id;
+
+      // Agendar mensagens do FU1 (ambas imediatas, D+0)
+      const fu1_msgs = (cliente.followup_msgs_v2 && cliente.followup_msgs_v2.fu1) || {};
+      let etapa = 1;
+      for (const [k, v] of Object.entries(fu1_msgs)) {
+        const txt = (v || '').trim();
+        if (txt) {
+          // D+0 = agora
+          await query(
+            `INSERT INTO movatak_followup (lead_id, cliente_id, etapa_seq, proximo_envio, status, sequencia_fu, data_entrada)
+             VALUES ($1, $2, $3, NOW(), 'pendente', 1, NOW())`,
+            [new_lead_id, cliente.id, etapa]
+          );
+        }
+        etapa++;
+      }
+
+      console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
     console.error('[zapi] erro processamento:', e.message);
