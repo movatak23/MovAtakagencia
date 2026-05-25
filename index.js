@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.6.2-debug';
+const MOVATAK_VERSION = 'v1.6.3-vendedor-comando';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1016,6 +1016,45 @@ function contemComando(texto, comandos) {
   });
 }
 
+function slugComando(nome) {
+  return normalizarTexto(nome).replace(/[^a-z0-9]+/g, '');
+}
+
+function comandosDoVendedor(vendedor) {
+  const lista = [];
+
+  // Campo oficial: comando (ex.: #rebeka)
+  if (vendedor.comando) lista.push(String(vendedor.comando));
+
+  // Segurança caso algum cadastro antigo tenha salvo mais de um comando no mesmo campo
+  if (vendedor.comando && String(vendedor.comando).includes(',')) {
+    String(vendedor.comando).split(',').forEach(c => lista.push(c));
+  }
+
+  // Segurança caso exista uma coluna JSON/array chamada comandos em algum banco já migrado
+  if (Array.isArray(vendedor.comandos)) {
+    vendedor.comandos.forEach(c => lista.push(c));
+  }
+
+  // Fallback automático pelo nome do vendedor.
+  // Ex.: Rebeka => #rebeka | Ronaldo Valério => #ronaldovalerio
+  const slug = slugComando(vendedor.nome || '');
+  if (slug) {
+    lista.push('#' + slug);
+    lista.push(slug);
+  }
+
+  return [...new Set(
+    lista
+      .map(c => String(c || '').trim().toLowerCase())
+      .filter(Boolean)
+  )];
+}
+
+function vendedorBateComando(vendedor, texto) {
+  return contemComando(texto, comandosDoVendedor(vendedor));
+}
+
 
 // Extrai telefone numérico de vários formatos possíveis do payload Z-API.
 // Em alguns eventos fromMe, o phone pode vir como @lid; por isso testamos campos alternativos.
@@ -1137,9 +1176,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
         [cliente.id]
       );
-      const vendedorDetectado = rv.rows.find(v =>
-        v.comando && contemComando(texto, [v.comando])
-      );
+      const vendedorDetectado = rv.rows.find(v => vendedorBateComando(v, texto));
+      if (!vendedorDetectado) {
+        console.log('[zapi][fromMe] nenhum vendedor bateu com o comando. Cadastrados:', JSON.stringify(
+          rv.rows.map(v => ({ nome: v.nome, comando: v.comando || null, comandos_validos: comandosDoVendedor(v) }))
+        ));
+      }
       if (vendedorDetectado) {
         await query(
           `UPDATE movatak_leads SET etapa = 'cliente', vendedor_id = $1, atualizado_em = NOW() WHERE id = $2`,
