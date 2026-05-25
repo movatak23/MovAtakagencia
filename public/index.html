@@ -360,13 +360,16 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </table>
       </div>
     </div>
+    <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
+      Movatak <span id="versao-painel">v1.5.0</span> · backend <span id="versao-backend">—</span>
+    </div>
   </main>
 </div>
 
 <!-- MODAL NOVO CLIENTE -->
 <div class="modal-overlay" id="modal">
   <div class="modal">
-    <h3>Cadastrar novo cliente</h3>
+    <h3 id="modal-titulo">Cadastrar novo cliente</h3>
     <div class="form-grid">
       <div class="form-field full">
         <label>NOME DA EMPRESA</label>
@@ -385,11 +388,11 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <input type="text" id="f-instance" placeholder="ID da instância">
       </div>
       <div class="form-field">
-        <label>Z-API TOKEN</label>
+        <label id="lbl-token">Z-API TOKEN</label>
         <input type="text" id="f-token" placeholder="token da instância">
       </div>
       <div class="form-field full">
-        <label>Z-API CLIENT TOKEN</label>
+        <label id="lbl-client-token">Z-API CLIENT TOKEN</label>
         <input type="text" id="f-client-token" placeholder="client-token">
       </div>
       <div class="form-field">
@@ -418,6 +421,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
+const PAINEL_VERSION = 'v1.5.0';
 const SENHA_KEY  = 'mvtk_painel_secret';
 
 let secret = '';
@@ -449,6 +453,24 @@ function iniciar() {
   document.getElementById('app').classList.add('visible');
   document.getElementById('login-err').textContent = '';
   carregarTudo();
+  verificarVersao();
+}
+
+// Compara versão do painel com a do backend — alerta se divergir
+async function verificarVersao() {
+  try {
+    const r = await api('/movatak/version');
+    const elBack = document.getElementById('versao-backend');
+    elBack.textContent = r.version || '—';
+    if (r.version && r.version !== PAINEL_VERSION) {
+      elBack.style.color = 'var(--amber)';
+      elBack.textContent = r.version + ' (painel desatualizado — Ctrl+Shift+R)';
+    } else {
+      elBack.style.color = 'var(--green)';
+    }
+  } catch(e) {
+    document.getElementById('versao-backend').textContent = 'offline';
+  }
 }
 
 // Verificar sessão salva
@@ -598,7 +620,7 @@ async function selecionarCliente(id, nome) {
   document.querySelector('.periodo-bar h2').textContent = nome;
   document.getElementById('chart-title').textContent = 'Leads por hora — hoje · ' + nome;
   try {
-    const r = await api('/movatak/admin/clientes/' + id + '/resumo');
+    const r = await api('/movatak/admin/clientes/' + id + '/resumo?dias=' + periodoAtual);
     renderMetricasCliente(r);
     renderGraficoHoras(r.leads_por_hora);
     renderVendedoresVendas(r.vendedores);
@@ -715,20 +737,97 @@ function renderClientes(clientes) {
       <td class="${taxaCls}">${taxa}%</td>
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
       <td class="td-mono" style="font-size:13px">—</td>
-      <td><button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button></td>
+      <td>
+        <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
+        <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button>
+      </td>
     </tr>`;
   }).join('');
 }
 
 // ── Modal ──────────────────────────────────────────────────
+let editandoClienteId = null;
+
 function abrirModal() {
+  editandoClienteId = null;
   document.getElementById('modal').classList.add('open');
   document.getElementById('token-resultado').style.display = 'none';
   document.getElementById('modal-err').textContent = '';
-  document.getElementById('btn-salvar').textContent = 'Cadastrar';
+  document.getElementById('modal-titulo').textContent = 'Cadastrar novo cliente';
+  document.getElementById('lbl-token').textContent = 'Z-API TOKEN';
+  document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
+  document.getElementById('f-planos').closest('.form-field').style.display = '';
+  const btn = document.getElementById('btn-salvar');
+  btn.textContent = 'Cadastrar';
+  btn.onclick = salvarCliente;
   ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos'].forEach(id => {
     document.getElementById('f-' + id).value = '';
   });
+}
+
+// Abrir modal em modo edição — carrega dados do cliente
+async function abrirEdicao(id) {
+  editandoClienteId = id;
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('token-resultado').style.display = 'none';
+  document.getElementById('modal-err').textContent = '';
+  document.getElementById('modal-titulo').textContent = 'Editar cliente';
+  document.getElementById('lbl-token').textContent = 'Z-API TOKEN (deixe vazio para manter)';
+  document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN (deixe vazio para manter)';
+  // Planos não são editados aqui
+  document.getElementById('f-planos').closest('.form-field').style.display = 'none';
+  const btn = document.getElementById('btn-salvar');
+  btn.textContent = 'Carregando...';
+  btn.onclick = salvarEdicao;
+  // Limpar token/client-token (modo B — não exibe credenciais)
+  document.getElementById('f-token').value = '';
+  document.getElementById('f-client-token').value = '';
+  try {
+    const c = await api('/movatak/admin/clientes/' + id + '/dados');
+    document.getElementById('f-nome').value     = c.nome || '';
+    document.getElementById('f-whatsapp').value = c.whatsapp || '';
+    document.getElementById('f-trigger').value  = c.trigger_msg || '';
+    document.getElementById('f-instance').value = c.zapi_instance || '';
+    document.getElementById('f-cpl').value      = c.teto_cpl || '';
+    btn.textContent = 'Salvar alterações';
+  } catch(e) {
+    document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
+    btn.textContent = 'Salvar alterações';
+  }
+}
+
+async function salvarEdicao() {
+  const nome          = document.getElementById('f-nome').value.trim();
+  const whatsapp      = document.getElementById('f-whatsapp').value.trim();
+  const trigger_msg   = document.getElementById('f-trigger').value.trim();
+  const zapi_instance = document.getElementById('f-instance').value.trim();
+  const zapi_token    = document.getElementById('f-token').value.trim();
+  const zapi_ct       = document.getElementById('f-client-token').value.trim();
+  const cpl           = document.getElementById('f-cpl').value.trim();
+
+  if (!nome || !whatsapp || !trigger_msg || !zapi_instance) {
+    document.getElementById('modal-err').textContent = 'Nome, WhatsApp, Instance ID e frase-gatilho são obrigatórios.';
+    return;
+  }
+
+  document.getElementById('btn-salvar').textContent = 'Salvando...';
+  document.getElementById('modal-err').textContent = '';
+
+  try {
+    await api('/movatak/admin/clientes/' + editandoClienteId + '/dados', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        nome, whatsapp, zapi_instance, trigger_msg,
+        zapi_token, zapi_client_token: zapi_ct,
+        teto_cpl: cpl ? parseFloat(cpl) : null
+      })
+    });
+    document.getElementById('btn-salvar').textContent = 'Salvo!';
+    setTimeout(() => { fecharModal(); carregarTudo(); }, 800);
+  } catch(e) {
+    document.getElementById('modal-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-salvar').textContent = 'Salvar alterações';
+  }
 }
 
 function fecharModal() {
@@ -807,8 +906,9 @@ async function abrirFU(id) {
     document.getElementById('fu-msg3').value = msgs.msg3 || '';
     document.getElementById('fu-msg4').value = msgs.msg4 || '';
     document.getElementById('fu-boas-vindas').value = msgs.boas_vindas_msg || '';
-    document.getElementById('fu-verba').value = '';
-    document.getElementById('fu-whatsapp-dono').value = '';
+    document.getElementById('fu-verba').value = msgs.verba_diaria || '';
+    document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
+    document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
     // Carregar vendedores
     carregarVendedores(id);
@@ -816,11 +916,6 @@ async function abrirFU(id) {
     carregarComandos(id);
     // Carregar gráfico de performance
     carregarRanking(id);
-    // Carregar whatsapp_dono
-    api('/movatak/admin/clientes').then(clientes => {
-      const c = clientes.find(x => x.id === id);
-      if (c && c.whatsapp_dono) document.getElementById('fu-whatsapp-dono').value = c.whatsapp_dono;
-    }).catch(() => {});
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
@@ -845,27 +940,30 @@ async function salvarFU() {
     const boas_vindas_msg = document.getElementById('fu-boas-vindas').value.trim();
     const verba_diaria = document.getElementById('fu-verba').value.trim();
     const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
+    const trigger_msg = document.getElementById('fu-trigger').value.trim();
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
-      body: JSON.stringify({ msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria })
+      body: JSON.stringify({ msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg })
     });
-    if (whatsapp_dono) {
-      await api('/movatak/admin/clientes/' + fuId + '/dono', {
-        method: 'PATCH',
-        body: JSON.stringify({ whatsapp_dono })
-      }).catch(() => {});
-    }
     // Salvar comandos de automação
     const parseCmds = (id) => (document.getElementById(id).value || '')
       .split(',').map(s => s.trim()).filter(Boolean);
-    await api('/movatak/admin/clientes/' + fuId + '/comandos', {
+    const resCmd = await fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/comandos', {
       method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-movatak-secret': secret },
       body: JSON.stringify({
         followup:   parseCmds('fu-cmd-followup'),
         convertido: parseCmds('fu-cmd-convertido'),
-        descartar:  parseCmds('fu-cmd-descartar')
+        descartar:  parseCmds('fu-cmd-descartar'),
+        desfazer:   parseCmds('fu-cmd-desfazer')
       })
-    }).catch(() => {});
+    });
+    if (!resCmd.ok) {
+      const err = await resCmd.json().catch(() => ({}));
+      document.getElementById('fu-err').textContent = err.error || 'Erro ao salvar comandos.';
+      document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
+      return;
+    }
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
     setTimeout(fecharFU, 1000);
   } catch(e) {
@@ -935,10 +1033,12 @@ async function carregarComandos(id) {
     document.getElementById('fu-cmd-followup').value   = (c.followup   || []).join(', ');
     document.getElementById('fu-cmd-convertido').value = (c.convertido || []).join(', ');
     document.getElementById('fu-cmd-descartar').value  = (c.descartar  || []).join(', ');
+    document.getElementById('fu-cmd-desfazer').value   = (c.desfazer   || []).join(', ');
   } catch(e) {
     document.getElementById('fu-cmd-followup').value = '';
     document.getElementById('fu-cmd-convertido').value = '';
     document.getElementById('fu-cmd-descartar').value = '';
+    document.getElementById('fu-cmd-desfazer').value = '';
   }
 }
 
@@ -991,6 +1091,11 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
   <div class="modal modal-fu">
     <h3 id="fu-titulo">Mensagens de Follow Up</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
+
+    <label class="fu-label" style="margin-top:0">Frase-gatilho do tráfego <span class="fu-tag">cria o lead</span></label>
+    <input type="text" class="fu-textarea" id="fu-trigger" style="min-height:auto;padding:12px 14px;resize:none" placeholder="vim pelo anuncio">
+    <div class="fu-hint">Quando o lead manda uma mensagem contendo esse texto, ele é registrado automaticamente.</div>
+
     <label class="fu-label">D+1 — Mensagem 1 <span class="fu-tag">1 dia após</span></label>
     <textarea class="fu-textarea" id="fu-msg1" rows="3"></textarea>
     <div class="fu-hint">Enviada 1 dia após a etiqueta Follow Up ser aplicada.</div>
@@ -1023,6 +1128,10 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
     <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
+
+    <label class="fu-label">Comando — Desfazer venda <span class="fu-tag">reverte conversão</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-desfazer" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#estornar, #desfazer">
+    <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
 
     <label class="fu-label" style="margin-top:16px">Vendedores</label>
     <div class="fu-hint" style="margin-bottom:8px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
