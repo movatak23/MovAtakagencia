@@ -686,7 +686,7 @@ app.patch('/movatak/admin/leads/:id/plano', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 ORDER BY nome',
+      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome',
       [req.params.id]
     );
     res.json(r.rows);
