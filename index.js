@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.8.0-produto-assistido';
+const MOVATAK_VERSION = 'v1.9.0-produto-crm';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -28,6 +28,11 @@ const MOVATAK_DEBUG = String(process.env.MOVATAK_DEBUG || '').toLowerCase() === 
 function logDebug(...args) {
   if (MOVATAK_DEBUG) console.log(...args);
 }
+
+// Regras anti-spam e segurança operacional.
+// Ajustáveis via Railway sem mexer no código.
+const MOVATAK_REENTRADA_FU1_HORAS = parseInt(process.env.MOVATAK_REENTRADA_FU1_HORAS || '6', 10);
+const MOVATAK_MAX_AUTO_MSG_DIA = parseInt(process.env.MOVATAK_MAX_AUTO_MSG_DIA || '6', 10);
 
 // ============================================================
 // Banco de dados
@@ -173,6 +178,113 @@ function csvEscape(v) {
   return '"' + s.replace(/"/g, '""') + '"';
 }
 
+async function contarMensagensAutomaticasHoje(leadId) {
+  const r = await query(
+    `SELECT COUNT(*)::int AS total
+       FROM movatak_lead_eventos
+      WHERE lead_id = $1
+        AND tipo = 'mensagem_enviada'
+        AND criado_em >= CURRENT_DATE`,
+    [leadId]
+  );
+  return parseInt((r.rows[0] || {}).total || 0, 10);
+}
+
+async function podeEnviarMensagemAutomatica(leadId) {
+  try {
+    const total = await contarMensagensAutomaticasHoje(leadId);
+    return total < MOVATAK_MAX_AUTO_MSG_DIA;
+  } catch (e) {
+    // Se a auditoria ainda não estiver migrada, não derruba o envio.
+    console.error('[anti-spam]', e.message);
+    return true;
+  }
+}
+
+async function reentradaFU1Permitida(leadId) {
+  try {
+    const r = await query(
+      `SELECT 1
+         FROM movatak_lead_eventos
+        WHERE lead_id = $1
+          AND tipo IN ('reativado_gatilho','lead_criado','followup_reativado_manual')
+          AND criado_em >= NOW() - ($2 || ' hours')::INTERVAL
+        LIMIT 1`,
+      [leadId, MOVATAK_REENTRADA_FU1_HORAS]
+    );
+    return !r.rows.length;
+  } catch (e) {
+    console.error('[anti-spam]', e.message);
+    return true;
+  }
+}
+
+async function localizarCampanhaPorGatilho(clienteId, texto) {
+  try {
+    const r = await query(
+      `SELECT * FROM movatak_campanhas
+        WHERE cliente_id = $1 AND ativo = true AND gatilho IS NOT NULL
+        ORDER BY criado_em DESC`,
+      [clienteId]
+    );
+    return r.rows.find(c => textoBateGatilho(texto, c.gatilho)) || null;
+  } catch (e) {
+    // Se a migração de campanhas ainda não existir, segue pelo gatilho geral.
+    return null;
+  }
+}
+
+const TEMPLATES_FOLLOWUP = {
+  provedor: {
+    nome: 'Provedor de Internet',
+    trigger_msg: 'Olá! Tenho interesse nos planos de internet.',
+    followup_v2: {
+      fu1: {
+        msg1: 'Oi {nome}! Tudo bem? Recebemos seu interesse nos planos de internet. Posso te ajudar a escolher o melhor plano?',
+        msg2: '{nome}, temos opções com internet rápida e suporte próximo. Me diga sua cidade/bairro para verificarmos a disponibilidade.'
+      },
+      fu2: {
+        msg1: '{nome}, passando para saber se ainda deseja contratar sua internet. Posso continuar seu atendimento?',
+        msg2: 'Oi {nome}! Ainda consigo te ajudar com a instalação. Quer que eu veja as condições para sua região?',
+        msg3: '{nome}, último contato por aqui. Se quiser retomar a contratação, é só me chamar.'
+      }
+    },
+    boas_vindas_msg: 'Seja bem-vindo(a){nome}! Seu atendimento foi encaminhado e em breve nossa equipe passa os próximos passos.'
+  },
+  dtfuv: {
+    nome: 'DTF UV / Estampas',
+    trigger_msg: 'PROV >> Olá! Tenho interesse nas estampas e gostaria de informações.',
+    followup_v2: {
+      fu1: {
+        msg1: 'Oi {nome}! Tudo bem? Recebemos seu interesse nas estampas. Vou te passar as informações e tirar suas dúvidas.',
+        msg2: '{nome}, nossas estampas ajudam a identificar equipamentos com acabamento profissional e alta durabilidade. Posso te mostrar os modelos?'
+      },
+      fu2: {
+        msg1: '{nome}, passando para saber se ainda deseja seguir com as estampas. Posso retomar seu atendimento?',
+        msg2: 'Oi {nome}! Ainda temos disponibilidade para produção. Quer que eu te envie as opções?',
+        msg3: '{nome}, último contato por aqui. Se quiser fechar suas estampas depois, é só me chamar.'
+      }
+    },
+    boas_vindas_msg: 'A DTFclub agradece a preferência. Daremos nosso melhor para que suas estampas cheguem com a qualidade de sempre.'
+  },
+  generico: {
+    nome: 'Genérico Comercial',
+    trigger_msg: 'Olá! Tenho interesse e gostaria de informações.',
+    followup_v2: {
+      fu1: {
+        msg1: 'Oi {nome}! Tudo bem? Recebemos seu contato e estou à disposição para te ajudar.',
+        msg2: '{nome}, posso te passar as informações e tirar suas dúvidas por aqui.'
+      },
+      fu2: {
+        msg1: '{nome}, passando para saber se ainda posso te ajudar.',
+        msg2: 'Oi {nome}! Ainda ficou alguma dúvida sobre o atendimento?',
+        msg3: '{nome}, vou encerrar por aqui, mas se quiser retomar é só chamar.'
+      }
+    },
+    boas_vindas_msg: 'Seja bem-vindo(a){nome}! Obrigado pela preferência.'
+  }
+};
+
 // ============================================================
 // Mensagens de follow up por etapa
 // ============================================================
@@ -277,6 +389,13 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       }
 
       const msg = String(msgText).replace(/{nome}/g, row.nome || 'Lead');
+
+      if (!(await podeEnviarMensagemAutomatica(leadId))) {
+        await query(`UPDATE movatak_followup SET status = 'pausado', erro_envio = 'limite anti-spam diario atingido' WHERE id = $1`, [row.id]);
+        await registrarEventoLead(leadId, row.cliente_id, 'anti_spam', 'Mensagem automática pausada por limite diário', { followup_id: row.id });
+        console.log(`[anti-spam] limite diario atingido -> lead ${leadId}`);
+        continue;
+      }
 
       await zapiEnviar(
         row.zapi_instance,
@@ -1410,8 +1529,8 @@ function vendedorBateComando(vendedor, texto) {
 function textoPareceComandoInterno(texto, comandos, vendedores) {
   const t = String(texto || '').trim();
   if (!t) return false;
-  // O padrão operacional recomendado é comando começando com #.
-  if (t.includes('#')) return true;
+  // Segurança: comandos internos devem começar com #. Isso evita que uma mensagem comum enviada pela equipe seja interpretada como automação.
+  if (!t.startsWith('#')) return false;
   if (contemComando(t, comandos.followup || [])) return true;
   if (contemComando(t, comandos.convertido || [])) return true;
   if (contemComando(t, comandos.descartar || [])) return true;
@@ -1645,6 +1764,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // ===== MENSAGEM RECEBIDA DO LEAD =====
+    if (!String(texto || '').trim()) {
+      logDebug('[zapi][lead] ignorado: evento sem texto util');
+      return;
+    }
+
     if (!telefone) {
       console.log('[zapi][lead] ignorado: nao consegui extrair telefone real do payload');
       return;
@@ -1659,9 +1783,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
     // Calcula o gatilho antes de tratar lead existente.
     // Assim, se a mesma pessoa clicar no anúncio novamente, conseguimos reativar o FU1.
+    const campanhaDetectada = await localizarCampanhaPorGatilho(cliente.id, texto);
     const msg = normalizarGatilho(texto);
-    const trigger = normalizarGatilho(cliente.trigger_msg);
-    const triggerOk = textoBateGatilho(texto, cliente.trigger_msg);
+    const trigger = normalizarGatilho(campanhaDetectada ? campanhaDetectada.gatilho : cliente.trigger_msg);
+    const triggerOk = !!campanhaDetectada || textoBateGatilho(texto, cliente.trigger_msg);
 
     // -- Lead existe: garantir chat_lid salvo + pausar followup se respondeu --
     if (lead) {
@@ -1673,12 +1798,20 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Se o lead ja existia e clicou no anuncio/frase-gatilho de novo,
       // reabre o atendimento e agenda novamente o FU1, exceto se ja estiver convertido.
       if (triggerOk && lead.etapa !== 'cliente') {
+        if (!(await reentradaFU1Permitida(lead.id))) {
+          await registrarEventoLead(lead.id, cliente.id, 'anti_spam_reentrada', 'Reentrada no FU1 bloqueada por intervalo mínimo', { telefone, horas: MOVATAK_REENTRADA_FU1_HORAS });
+          console.log(`[anti-spam] reentrada FU1 bloqueada -> lead ${lead.id}`);
+          return;
+        }
         await query(
           `UPDATE movatak_leads
              SET etapa = 'followup', nome = COALESCE($1, nome), atualizado_em = NOW()
            WHERE id = $2`,
           [body.senderName || null, lead.id]
         );
+        if (campanhaDetectada) {
+          await query('UPDATE movatak_leads SET campanha_id = $1 WHERE id = $2', [campanhaDetectada.id, lead.id]).catch(() => null);
+        }
         await agendarFollowupV2(lead.id, cliente.id, 1, true);
         await enviarFollowupsPendentesDoLead(lead.id, 1);
         await registrarEventoLead(lead.id, cliente.id, 'reativado_gatilho', 'Lead existente reativado no FU1 por nova frase-gatilho', { telefone, texto });
@@ -1716,7 +1849,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
          RETURNING id`,
         [cliente.id, telefone, body.senderName || null, chatLid]
       );
-      await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto });
+      if (campanhaDetectada) {
+        await query('UPDATE movatak_leads SET campanha_id = $1 WHERE id = $2', [campanhaDetectada.id, novoLead.rows[0].id]).catch(() => null);
+      }
+      await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
       await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
       await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
       console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
@@ -2171,6 +2307,124 @@ app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', authMovatak, asy
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+
+// ============================================================
+// API — Campanhas, templates, ações do lead e teste Z-API
+// ============================================================
+app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT c.*,
+              COUNT(l.id) AS leads,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS vendas,
+              ROUND(100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0), 1) AS conversao
+         FROM movatak_campanhas c
+         LEFT JOIN movatak_leads l ON l.campanha_id = c.id
+        WHERE c.cliente_id = $1
+        GROUP BY c.id
+        ORDER BY c.ativo DESC, c.criado_em DESC`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
+  try {
+    const { nome, gatilho, verba_diaria } = req.body || {};
+    if (!nome || !gatilho) return res.status(400).json({ error: 'Nome e gatilho da campanha são obrigatórios.' });
+    const r = await query(
+      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, ativo)
+       VALUES ($1,$2,$3,$4,true) RETURNING *`,
+      [req.params.id, String(nome).trim(), String(gatilho).trim(), verba_diaria ? parseFloat(verba_diaria) : null]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
+  try {
+    const { nome, gatilho, verba_diaria, ativo } = req.body || {};
+    const r = await query(
+      `UPDATE movatak_campanhas
+          SET nome = COALESCE($1, nome), gatilho = COALESCE($2, gatilho), verba_diaria = $3, ativo = COALESCE($4, ativo), atualizado_em = NOW()
+        WHERE id = $5 RETURNING *`,
+      [nome ? String(nome).trim() : null, gatilho ? String(gatilho).trim() : null, verba_diaria === undefined ? null : (verba_diaria ? parseFloat(verba_diaria) : null), typeof ativo === 'boolean' ? ativo : null, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/admin/templates-followup', authMovatak, async (req, res) => {
+  res.json(Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({ id, nome: t.nome })));
+});
+
+app.post('/movatak/admin/clientes/:id/aplicar-template', authMovatak, async (req, res) => {
+  try {
+    const templateId = String((req.body || {}).template || '').trim();
+    const t = TEMPLATES_FOLLOWUP[templateId];
+    if (!t) return res.status(400).json({ error: 'Template inválido.' });
+    await query(
+      `UPDATE movatak_clientes
+          SET followup_msgs_v2 = $1::jsonb,
+              boas_vindas_msg = $2,
+              trigger_msg = COALESCE(NULLIF($3,''), trigger_msg)
+        WHERE id = $4`,
+      [JSON.stringify(t.followup_v2), t.boas_vindas_msg, t.trigger_msg || '', req.params.id]
+    );
+    res.json({ ok: true, template: templateId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/testar-zapi', authMovatak, async (req, res) => {
+  try {
+    const r = await query('SELECT * FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const c = r.rows[0];
+    const destino = String((req.body || {}).telefone || c.whatsapp_dono || MOVATAK_ADMIN_WA).replace(/\D/g, '');
+    if (!destino) return res.status(400).json({ error: 'Informe um telefone para teste.' });
+    const msg = `Teste Z-API Movatak CRM ${MOVATAK_VERSION} — ${new Date().toLocaleString('pt-BR')}`;
+    await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, destino, msg);
+    res.json({ ok: true, telefone: destino });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/movatak/admin/leads/:id/cliente', authMovatak, async (req, res) => {
+  try {
+    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    await query(`UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`, [req.params.id]);
+    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [req.params.id]);
+    await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'cliente_manual', 'Lead marcado como cliente pelo painel');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/leads/:id/descartar', authMovatak, async (req, res) => {
+  try {
+    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    await query(`UPDATE movatak_leads SET etapa = 'descartado', atualizado_em = NOW() WHERE id = $1`, [req.params.id]);
+    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [req.params.id]);
+    await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'descartado_manual', 'Lead descartado pelo painel');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => {
+  try {
+    const vendedorId = req.body && req.body.vendedor_id ? parseInt(req.body.vendedor_id) : null;
+    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    await query(`UPDATE movatak_leads SET vendedor_id = $1, atualizado_em = NOW() WHERE id = $2`, [vendedorId, req.params.id]);
+    await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'vendedor_atribuido_manual', 'Vendedor atribuído manualmente pelo painel', { vendedor_id: vendedorId });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================
