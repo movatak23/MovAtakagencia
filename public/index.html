@@ -421,7 +421,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.9.0-produto-crm';
+const PAINEL_VERSION = 'v1.9.1-templates-campanhas-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -1337,8 +1337,8 @@ async function carregarTemplatesFollowup() {
   const sel = document.getElementById('fu-template-select');
   if (!sel) return;
   try {
-    const rows = await api('/movatak/admin/templates-followup');
-    sel.innerHTML = '<option value="">Escolha um modelo pronto</option>' + rows.map(t => `<option value="${t.id}">${t.nome}</option>`).join('');
+    const rows = await api('/movatak/admin/templates-followup?cliente_id=' + fuId);
+    sel.innerHTML = '<option value="">Escolha um modelo pronto</option>' + rows.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}${t.tipo === 'cliente' ? ' (seu)' : ''}</option>`).join('');
   } catch(e) {
     sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
   }
@@ -1358,6 +1358,54 @@ async function aplicarTemplateFollowup() {
     await abrirFU(fuId);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao aplicar template: ' + e.message;
+  }
+}
+
+async function criarTemplateFollowup() {
+  const nome = prompt('Nome do novo template. Ex: Provedor - Black Friday, DTF UV - Reativação, Clínica - Avaliação');
+  if (!nome || !nome.trim()) return;
+
+  const comandosFromInput = (id) => (document.getElementById(id)?.value || '')
+    .split(/[;,\n]/).map(s => s.trim()).filter(Boolean);
+
+  const followup_v2 = {
+    fu1: {
+      msg1: document.getElementById('fu1-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu1-msg2')?.value.trim() || ''
+    },
+    fu2: {
+      msg1: document.getElementById('fu2-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu2-msg2')?.value.trim() || '',
+      msg3: document.getElementById('fu2-msg3')?.value.trim() || ''
+    }
+  };
+
+  if (!followup_v2.fu1.msg1 && !followup_v2.fu1.msg2 && !followup_v2.fu2.msg1 && !followup_v2.fu2.msg2 && !followup_v2.fu2.msg3) {
+    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem antes de criar o template.';
+    return;
+  }
+
+  try {
+    const res = await api('/movatak/admin/clientes/' + fuId + '/templates-followup', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome: nome.trim(),
+        trigger_msg: document.getElementById('fu-trigger')?.value.trim() || '',
+        boas_vindas_msg: document.getElementById('fu-boas-vindas')?.value.trim() || '',
+        followup_v2,
+        comandos: {
+          convertido: comandosFromInput('fu-cmd-convertido'),
+          descartar: comandosFromInput('fu-cmd-descartar'),
+          desfazer: comandosFromInput('fu-cmd-desfazer')
+        }
+      })
+    });
+    document.getElementById('fu-err').textContent = 'Template criado com sucesso.';
+    await carregarTemplatesFollowup();
+    const sel = document.getElementById('fu-template-select');
+    if (sel && res.id) sel.value = res.id;
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao criar template: ' + e.message;
   }
 }
 
@@ -1485,8 +1533,9 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1"></select>
         <button class="btn-add-small" onclick="aplicarTemplateFollowup()">Aplicar template</button>
+        <button class="btn-add-small" onclick="criarTemplateFollowup()">+ Criar template</button>
       </div>
-      <div class="fu-hint">Use com cuidado: o template substitui as mensagens atuais do cliente.</div>
+      <div class="fu-hint">Use com cuidado: aplicar substitui as mensagens atuais. O botão criar salva as mensagens atuais como novo template reutilizável.</div>
 
       <label class="fu-label" style="margin-top:14px">Cadastrar campanha/origem</label>
       <div style="display:grid;grid-template-columns:1fr 1fr 120px auto;gap:8px;align-items:center">
