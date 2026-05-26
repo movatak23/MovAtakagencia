@@ -368,7 +368,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.0.2-templates-campanhas-ux</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.1.0-campanhas-atribuicao</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -442,13 +442,14 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.0.2-templates-campanhas-ux';
+const PAINEL_VERSION = 'v2.1.0-campanhas-atribuicao';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
 let secret = '';
 let periodoAtual = 30;
 let tokenGerado  = '';
+let templatesFollowupCache = [];
 
 function getPermissoesPortal() {
   const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
@@ -543,6 +544,15 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 // ── Período ────────────────────────────────────────────────
 function setPeriodo(d) {
   periodoAtual = d;
@@ -1419,12 +1429,20 @@ async function testarZapiAgora() {
 
 async function carregarTemplatesFollowup() {
   const sel = document.getElementById('fu-template-select');
-  if (!sel) return;
   try {
     const rows = await api('/movatak/admin/templates-followup?cliente_id=' + fuId);
-    sel.innerHTML = '<option value="">Escolha um modelo pronto</option>' + rows.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}${t.tipo === 'cliente' ? ' (seu)' : ''}</option>`).join('');
+    templatesFollowupCache = rows || [];
+    const options = '<option value="">Escolha um modelo pronto</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}${t.tipo === 'cliente' ? ' (seu)' : ''}</option>`).join('');
+    if (sel) sel.innerHTML = options;
+    document.querySelectorAll('.campanha-template-select').forEach(csel => {
+      const atual = csel.dataset.value || csel.value || '';
+      csel.innerHTML = '<option value="">Sem template</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
+      csel.value = atual;
+    });
+    const campSel = document.getElementById('fu-campanha-template');
+    if (campSel) campSel.innerHTML = '<option value="">Template vinculado</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
   } catch(e) {
-    sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
+    if (sel) sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
   }
 }
 
@@ -1516,15 +1534,20 @@ async function carregarCampanhas(id) {
   try {
     const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
     box.innerHTML = rows.length ? `
-      <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:10px">
+      <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:10px">
         <table style="font-size:12px">
-          <thead><tr><th>Campanha</th><th>Leads</th><th>Vendas</th><th>Conv.</th><th>Status</th></tr></thead>
+          <thead><tr><th>Campanha</th><th>Gatilho</th><th>Template</th><th>Invest.</th><th>Leads</th><th>Vendas</th><th>Conv.</th><th>CPL</th><th>CPV</th><th>Status</th></tr></thead>
           <tbody>${rows.map(c => `
             <tr>
-              <td><strong>${c.nome}</strong>${c.verba_diaria ? `<br><span class="td-mono">Verba: R$ ${c.verba_diaria}</span>` : ''}</td>
+              <td><strong>${escapeHtml(c.nome || '')}</strong></td>
+              <td class="td-mono" style="max-width:260px;white-space:normal">${escapeHtml(c.gatilho || '')}</td>
+              <td>${escapeHtml(c.template_nome || '—')}</td>
+              <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo || 'diario'}</span></td>
               <td class="td-mono">${c.leads || 0}</td>
               <td class="td-green">${c.vendas || 0}</td>
               <td>${c.conversao || '0.0'}%</td>
+              <td class="td-mono">${c.cpl ? 'R$ ' + c.cpl : '—'}</td>
+              <td class="td-mono">${c.custo_venda ? 'R$ ' + c.custo_venda : '—'}</td>
               <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
             </tr>`).join('')}</tbody>
         </table>
@@ -1536,21 +1559,26 @@ async function carregarCampanhas(id) {
 
 async function adicionarCampanha() {
   const nome = document.getElementById('fu-campanha-nome').value.trim();
-  const verba_diaria = document.getElementById('fu-campanha-verba').value.trim();
+  const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
+  const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
+  const investimento_valor = document.getElementById('fu-campanha-investimento').value.trim();
+  const template_id = document.getElementById('fu-campanha-template').value;
   if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
+  if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
   try {
     await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
       method: 'POST',
-      body: JSON.stringify({ nome, verba_diaria })
+      body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
     });
-    document.getElementById('fu-campanha-nome').value = '';
-    document.getElementById('fu-campanha-verba').value = '';
+    ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('fu-campanha-template').value = '';
     carregarCampanhas(fuId);
-    document.getElementById('fu-err').textContent = 'Campanha/origem cadastrada.';
+    document.getElementById('fu-err').textContent = 'Campanha cadastrada com gatilho, investimento e template vinculados.';
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao cadastrar campanha: ' + e.message;
   }
 }
+
 
 async function marcarLeadCliente(leadId) {
   try {
@@ -1636,10 +1664,10 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Dados gerais da campanha</div>
-      <label class="fu-label">Verba diária de mídia (R$)</label>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Investimento consolidado</div>
+      <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
       <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
-      <div class="fu-hint">Usada para calcular o CPL real automaticamente.</div>
+      <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
       <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
       <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
       <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
@@ -1648,14 +1676,17 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
     <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
       <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Campanhas e origens</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cadastre apenas o nome da campanha/origem para acompanhar performance. A frase-gatilho técnica fica no bloco 2.</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
       <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
-      <div style="display:grid;grid-template-columns:1fr 120px auto;gap:8px;align-items:center">
+      <div style="display:grid;grid-template-columns:1.1fr 1.4fr .7fr .8fr 1fr auto;gap:8px;align-items:center">
         <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
-        <input type="number" class="fu-textarea" id="fu-campanha-verba" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Verba R$">
+        <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
+        <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
+        <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
+        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado</option></select>
         <button class="btn-add-small" onclick="adicionarCampanha()">Adicionar</button>
       </div>
-      <div class="fu-hint">Sem campo de gatilho aqui para evitar conflito com o gatilho principal.</div>
+      <div class="fu-hint">Use uma frase-gatilho distinta para cada campanha. Quando o lead chega pelo WhatsApp, o CRM grava essa campanha no lead e usa essa atribuição até a venda.</div>
       <div id="fu-campanhas-box"></div>
     </div>
 
