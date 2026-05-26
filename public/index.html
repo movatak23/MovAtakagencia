@@ -212,7 +212,7 @@ tr:hover td{background:var(--bg3)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 
-.modal-fu { max-width: 760px; }
+.modal-fu { max-width: 1120px; width: calc(100vw - 48px); }
 .fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
 .fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
 .fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
@@ -368,7 +368,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.1.1-campanhas-templates-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.1.2-campanhas-templates-delete-ux</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -442,7 +442,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.1-campanhas-templates-fix';
+const PAINEL_VERSION = 'v2.1.2-campanhas-templates-delete-ux';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -1538,30 +1538,84 @@ async function salvarTemplateFollowupAtual() {
 async function carregarCampanhas(id) {
   const box = document.getElementById('fu-campanhas-box');
   if (!box) return;
-  box.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando campanhas...</div>';
+  box.innerHTML = '<div style="font-size:13px;color:var(--text3);margin-top:10px">Carregando campanhas...</div>';
   try {
     const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
     box.innerHTML = rows.length ? `
-      <div style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:10px">
-        <table style="font-size:12px">
-          <thead><tr><th>Campanha</th><th>Gatilho</th><th>Template</th><th>Invest.</th><th>Leads</th><th>Vendas</th><th>Conv.</th><th>CPL</th><th>CPV</th><th>Status</th></tr></thead>
+      <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:14px;background:var(--bg2)">
+        <table style="font-size:12px;min-width:1180px;width:100%">
+          <thead>
+            <tr>
+              <th style="min-width:190px">Campanha</th>
+              <th style="min-width:300px">Frase-gatilho</th>
+              <th style="min-width:170px">Template</th>
+              <th style="min-width:125px">Investimento</th>
+              <th>Leads</th>
+              <th>Vendas</th>
+              <th>Conv.</th>
+              <th>CPL</th>
+              <th>CPV</th>
+              <th>Status</th>
+              <th style="min-width:90px">Ações</th>
+            </tr>
+          </thead>
           <tbody>${rows.map(c => `
             <tr>
-              <td><strong>${escapeHtml(c.nome || '')}</strong></td>
-              <td class="td-mono" style="max-width:260px;white-space:normal">${escapeHtml(c.gatilho || '')}</td>
-              <td>${escapeHtml(c.template_nome || '—')}</td>
-              <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo || 'diario'}</span></td>
+              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong></td>
+              <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}</td>
+              <td style="white-space:normal">${escapeHtml(c.template_nome || '—')}</td>
+              <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
               <td class="td-mono">${c.leads || 0}</td>
               <td class="td-green">${c.vendas || 0}</td>
               <td>${c.conversao || '0.0'}%</td>
               <td class="td-mono">${c.cpl ? 'R$ ' + c.cpl : '—'}</td>
               <td class="td-mono">${c.custo_venda ? 'R$ ' + c.custo_venda : '—'}</td>
               <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
+              <td><button class="btn-remove" title="Excluir campanha" onclick="excluirCampanha(${c.id})">×</button></td>
             </tr>`).join('')}</tbody>
         </table>
       </div>` : '<div style="font-size:13px;color:var(--text3);margin-top:10px">Nenhuma campanha cadastrada ainda.</div>';
   } catch(e) {
-    box.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar campanhas: ' + e.message + '</div>';
+    box.innerHTML = '<div style="font-size:13px;color:var(--red);margin-top:10px">Erro ao carregar campanhas: ' + e.message + '</div>';
+  }
+}
+
+
+async function excluirCampanha(campanhaId) {
+  if (!confirm('Excluir esta campanha/origem? Ela será removida da tela e deixará de atribuir novos leads.')) return;
+  const statusEl = document.getElementById('fu-campanha-status');
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Excluindo campanha...'; }
+    await api('/movatak/admin/campanhas/' + campanhaId, { method: 'DELETE' });
+    await carregarCampanhas(fuId);
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha excluída.'; }
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao excluir campanha: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao excluir campanha.'; }
+  }
+}
+
+async function excluirTemplateFollowupSelecionado() {
+  const sel = document.getElementById('fu-template-select');
+  const template = sel ? sel.value : '';
+  const statusEl = document.getElementById('fu-template-status');
+  if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template personalizado para excluir.'; return; }
+  if (!template.startsWith('custom:')) {
+    document.getElementById('fu-err').textContent = 'Templates padrão não podem ser excluídos. Apenas templates personalizados deste cliente.';
+    return;
+  }
+  const id = template.replace('custom:', '').replace(/\D/g, '');
+  if (!id) return;
+  if (!confirm('Excluir este template personalizado?')) return;
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Excluindo template...'; }
+    await api('/movatak/admin/templates-followup/' + id, { method: 'DELETE' });
+    await carregarTemplatesFollowup(fuId);
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Template excluído.'; }
+    document.getElementById('fu-err').textContent = '';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao excluir template: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao excluir template.'; }
   }
 }
 
@@ -1630,6 +1684,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
         <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1"></select>
         <button class="btn-add-small" onclick="aplicarTemplateFollowup()">Aplicar template</button>
         <button class="btn-add-small" onclick="criarTemplateFollowup()">+ Criar template</button>
+        <button class="btn-cancel" style="padding:8px 14px" onclick="excluirTemplateFollowupSelecionado()">Excluir template</button>
       </div>
       <div id="fu-template-create-box" style="display:none;margin-top:12px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px">
         <label class="fu-label" style="margin-top:0">Nome do novo template</label>
@@ -1644,16 +1699,12 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div id="fu-template-status" class="fu-hint" style="margin-top:8px"></div>
     </div>
 
-    <!-- BLOCO 1: GATILHO -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Frase-gatilho do tráfego</div>
-      <input type="text" class="fu-textarea" id="fu-trigger" style="min-height:auto;padding:12px 14px;resize:none" placeholder="vim pelo anuncio">
-      <div class="fu-hint">Quando o lead manda uma mensagem contendo esse texto, ele é registrado automaticamente.</div>
-    </div>
+    <!-- Campo legado oculto: a atribuição principal agora vem dos gatilhos cadastrados em Campanhas e Origens. -->
+    <input type="hidden" id="fu-trigger" value="">
 
     <!-- BLOCO 2: FOLLOW UP 1 -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Follow up 1 — Boas-vindas imediata</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Follow up 1 — Boas-vindas imediata</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Enviadas imediatamente quando o lead chega. Se não responder em 1 hora, vai para o Follow up 2.</div>
       <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
       <textarea class="fu-textarea" id="fu1-msg1" rows="3" placeholder="Ex: Olá {nome}! Bem-vindo(a). Você está disponível para prosseguirmos?"></textarea>
@@ -1663,7 +1714,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 3: FOLLOW UP 2 -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">4. Follow up 2 — Reativação</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Follow up 2 — Reativação</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Ativado automaticamente se o lead não responder em 1 hora. Mensagens: imediata, D+1, D+3. Campos em branco não são enviados.</div>
       <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
       <textarea class="fu-textarea" id="fu2-msg1" rows="3" placeholder="Deixe em branco se não quiser usar este follow up"></textarea>
@@ -1675,14 +1726,14 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 4: BOAS-VINDAS AO CLIENTE -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">5. Mensagem de boas-vindas ao virar cliente</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">4. Mensagem de boas-vindas ao virar cliente</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Enviada automaticamente quando o lead responde ou você marca como cliente.</div>
       <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
     </div>
 
     <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Investimento consolidado</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">5. Investimento consolidado</div>
       <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
       <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
       <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
@@ -1693,10 +1744,10 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Campanhas e origens</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Campanhas e origens</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
       <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
-      <div style="display:grid;grid-template-columns:1.1fr 1.4fr .7fr .8fr 1fr auto;gap:8px;align-items:center">
+      <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
         <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
         <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
         <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
@@ -1711,7 +1762,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 8: STATUS OPERACIONAL -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Status operacional</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Status operacional</div>
       <div id="fu-operacao-box"></div>
       <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
       <div style="display:flex;gap:8px;align-items:center">
@@ -1729,7 +1780,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 8: FILA DE FOLLOW-UP -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Fila de follow-up</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Fila de follow-up</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Mostra mensagens pendentes, enviadas e pausadas. Use para auditar se o fluxo realmente entrou na fila.</div>
       <div id="fu-fila-box"></div>
       <div id="fu-historico-box"></div>
@@ -1737,7 +1788,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 9: COMANDOS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Comandos de automação</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Comandos de automação</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Texto embutido numa mensagem enviada pela equipe que dispara a ação. Separe múltiplos comandos por vírgula.</div>
       <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
       <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
@@ -1750,7 +1801,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 10: VENDEDORES -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">11. Vendedores</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Vendedores</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
       <div class="vendedor-list" id="fu-vendedores-list"></div>
       <div class="add-vendedor-row">
@@ -1763,7 +1814,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
 
     <!-- BLOCO 11: PERFORMANCE -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">12. Performance dos vendedores</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">11. Performance dos vendedores</div>
       <div id="fu-ranking-chart" style="margin-top:10px"></div>
     </div>
 
