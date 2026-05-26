@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.0.2-templates-campanhas-ux';
+const MOVATAK_VERSION = 'v2.1.0-campanhas-atribuicao';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -283,9 +283,14 @@ async function reentradaFU1Permitida(leadId) {
 async function localizarCampanhaPorGatilho(clienteId, texto) {
   try {
     const r = await query(
-      `SELECT * FROM movatak_campanhas
-        WHERE cliente_id = $1 AND ativo = true AND gatilho IS NOT NULL
-        ORDER BY criado_em DESC`,
+      `SELECT c.*, t.followup_v2 AS template_followup_v2, t.boas_vindas_msg AS template_boas_vindas_msg, t.comandos AS template_comandos, t.nome AS template_nome
+         FROM movatak_campanhas c
+         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id AND t.ativo = true
+        WHERE c.cliente_id = $1
+          AND c.ativo = true
+          AND c.gatilho IS NOT NULL
+          AND TRIM(c.gatilho) <> ''
+        ORDER BY LENGTH(c.gatilho) DESC, c.criado_em DESC`,
       [clienteId]
     );
     return r.rows.find(c => textoBateGatilho(texto, c.gatilho)) || null;
@@ -293,6 +298,16 @@ async function localizarCampanhaPorGatilho(clienteId, texto) {
     // Se a migração de campanhas ainda não existir, segue pelo gatilho geral.
     return null;
   }
+}
+
+function followupDataDaLinha(row) {
+  return row.template_followup_v2 || row.followup_msgs_v2 || {};
+}
+
+function parseMoedaParaNumero(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const n = parseFloat(String(v).replace(/\./g, '').replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
 }
 
 const TEMPLATES_FOLLOWUP = {
@@ -414,10 +429,14 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
 
   const r = await query(
     `SELECT f.*, l.telefone, l.nome, l.etapa,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
+            c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
+            camp.id AS campanha_id, camp.nome AS campanha_nome,
+            t.followup_v2 AS template_followup_v2
        FROM movatak_followup f
        JOIN movatak_leads l ON l.id = f.lead_id
        JOIN movatak_clientes c ON c.id = f.cliente_id
+       LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
+       LEFT JOIN movatak_followup_templates t ON t.id = camp.template_id AND t.ativo = true
       WHERE f.lead_id = $1
         AND f.status = 'pendente'
         AND f.proximo_envio <= NOW()
@@ -438,7 +457,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
         continue;
       }
 
-      const fuData = row.followup_msgs_v2 || {};
+      const fuData = followupDataDaLinha(row);
       const seqKey = 'fu' + (row.sequencia_fu || 1);
       const msgs = fuData[seqKey] || {};
       const msgText = msgs['msg' + row.etapa_seq];
@@ -711,10 +730,14 @@ cron.schedule('*/10 * * * *', async () => {
     await migrarFU1ParaFU2();
 
     const r = await query(
-      `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2
+      `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
+              camp.id AS campanha_id, camp.nome AS campanha_nome,
+              t.followup_v2 AS template_followup_v2
        FROM movatak_followup f
        JOIN movatak_leads l ON l.id = f.lead_id
        JOIN movatak_clientes c ON c.id = f.cliente_id
+       LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
+       LEFT JOIN movatak_followup_templates t ON t.id = camp.template_id AND t.ativo = true
        WHERE f.status = 'pendente'
          AND f.proximo_envio <= NOW()`,
       []
@@ -724,7 +747,7 @@ cron.schedule('*/10 * * * *', async () => {
       try {
         if (row.etapa !== 'followup') continue;
         
-        const fu_data = row.followup_msgs_v2 || {};
+        const fu_data = followupDataDaLinha(row);
         const seq_key = 'fu' + (row.sequencia_fu || 1);
         const msgs = fu_data[seq_key] || {};
         const msg_text = msgs['msg' + row.etapa_seq];
@@ -1487,12 +1510,20 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
     );
     const dados = cd.rows[0] || {};
     const totalLeads = parseInt(m.rows[0].total_leads || 0);
+    let investimento_total_campanhas = null;
+    try {
+      const inv = await query(
+        `SELECT COALESCE(SUM(COALESCE(investimento_valor, verba_diaria, 0)),0) AS total
+           FROM movatak_campanhas
+          WHERE cliente_id = $1 AND ativo = true`,
+        [id]
+      );
+      investimento_total_campanhas = inv.rows[0] ? inv.rows[0].total : null;
+    } catch(e) {}
     let cpl_calculado = null, alerta_cpl = false;
-    if (dados.verba_diaria && totalLeads > 0) {
-      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(dados.criado_em).getTime()) / 86400000));
-      const base = dias === 0 ? 1 : dias;
-      const verbaGasta = parseFloat(dados.verba_diaria) * Math.min(diasRodando, base);
-      cpl_calculado = (verbaGasta / totalLeads).toFixed(2);
+    const investimentoBase = parseFloat(investimento_total_campanhas || 0) > 0 ? parseFloat(investimento_total_campanhas) : (dados.verba_diaria ? parseFloat(dados.verba_diaria) : null);
+    if (investimentoBase && totalLeads > 0) {
+      cpl_calculado = (investimentoBase / totalLeads).toFixed(2);
       if (dados.teto_cpl && parseFloat(cpl_calculado) > parseFloat(dados.teto_cpl)) alerta_cpl = true;
     }
 
@@ -1543,6 +1574,7 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
       resumo_executivo,
       comparativo: { total_leads: totalAnt, convertidos: convAnt, delta_leads: totalAtual - totalAnt, delta_convertidos: convAtual - convAnt },
       campanha_top: campanhaTop.rows[0] || null,
+      investimento_total_campanhas,
       cpl_calculado: permissoes.ver_cpl ? cpl_calculado : null,
       teto_cpl: permissoes.ver_cpl ? (dados.teto_cpl || null) : null,
       alerta_cpl: permissoes.ver_cpl ? alerta_cpl : false
@@ -1560,14 +1592,18 @@ app.get('/movatak/app/campanhas', authCliente, async (req, res) => {
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
     const periodo = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
     const r = await query(
-      `SELECT c.id, c.nome, c.gatilho, c.verba_diaria, c.ativo,
+      `SELECT c.id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.ativo, t.nome AS template_nome,
               COUNT(l.id)::int AS leads,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
-              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao
+              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao,
+              COALESCE(c.investimento_valor, c.verba_diaria, 0) AS investimento,
+              CASE WHEN COUNT(l.id) > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id),0))::numeric, 2) ELSE NULL END AS cpl,
+              CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
          FROM movatak_campanhas c
+         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
          LEFT JOIN movatak_leads l ON l.campanha_id = c.id ${periodo}
         WHERE c.cliente_id = $1
-        GROUP BY c.id
+        GROUP BY c.id, t.nome
         ORDER BY c.ativo DESC, vendas DESC, leads DESC`,
       [req.clienteId]
     );
@@ -1620,7 +1656,14 @@ app.get('/movatak/app/configuracoes', authCliente, async (req, res) => {
     const vendedores = req.clientePermissoes.editar_vendedores ? await query(
       `SELECT id, nome, comando, email_acesso, acesso_token, CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome`, [req.clienteId]
     ) : { rows: [] };
-    res.json({ permissoes: req.clientePermissoes, cliente: dados.rows[0] || {}, vendedores: vendedores.rows });
+    let templates = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({ id, nome: t.nome, tipo: 'padrao' }));
+    if (req.clientePermissoes.editar_campanhas || req.clientePermissoes.editar_followup) {
+      try {
+        const custom = (await listarTemplatesCustom(req.clienteId)).map(t => ({ id: 'custom:' + t.id, nome: t.nome, tipo: 'cliente' }));
+        templates = [...templates, ...custom];
+      } catch(e) {}
+    }
+    res.json({ permissoes: req.clientePermissoes, cliente: dados.rows[0] || {}, vendedores: vendedores.rows, templates });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -1666,11 +1709,15 @@ app.patch('/movatak/app/vendedores/:id', authCliente, async (req, res) => {
 app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
   try {
     if (!req.clientePermissoes.editar_campanhas) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar campanhas.' });
-    const { nome, gatilho, verba_diaria } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
     const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
-    const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, ativo) VALUES ($1,$2,$3,$4,true) RETURNING *`,
-      [req.clienteId, String(nome).trim(), gatilhoFinal, verba_diaria ? parseFloat(verba_diaria) : null]);
+    if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória.' });
+    const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
+    const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
+    const templateDbId = await resolverTemplateCampanha(req.clienteId, template_id);
+    const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo) VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`,
+      [req.clienteId, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId]);
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2062,7 +2109,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           [body.senderName || null, lead.id]
         );
         if (campanhaDetectada) {
-          await query('UPDATE movatak_leads SET campanha_id = $1 WHERE id = $2', [campanhaDetectada.id, lead.id]).catch(() => null);
+          await query('UPDATE movatak_leads SET campanha_id = COALESCE(campanha_id, $1), campanha_id_ultimo_toque = $1, template_id_origem = COALESCE(template_id_origem, $2), gatilho_detectado = $3 WHERE id = $4', [campanhaDetectada.id, campanhaDetectada.template_id || null, campanhaDetectada.gatilho || null, lead.id]).catch(() => null);
         }
         await agendarFollowupV2(lead.id, cliente.id, 1, true);
         await enviarFollowupsPendentesDoLead(lead.id, 1);
@@ -2096,14 +2143,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }));
     if (triggerOk) {
       const novoLead = await query(
-        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid)
-         VALUES ($1, $2, $3, 'followup', $4)
+        `INSERT INTO movatak_leads
+           (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado)
+         VALUES ($1, $2, $3, 'followup', $4, $5, $5, $6, $7)
          RETURNING id`,
-        [cliente.id, telefone, body.senderName || null, chatLid]
+        [cliente.id, telefone, body.senderName || null, chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
       );
-      if (campanhaDetectada) {
-        await query('UPDATE movatak_leads SET campanha_id = $1 WHERE id = $2', [campanhaDetectada.id, novoLead.rows[0].id]).catch(() => null);
-      }
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
       await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
       await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
@@ -2523,12 +2568,16 @@ app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, 
     const texto = req.body && req.body.texto ? String(req.body.texto) : '';
     const r = await query('SELECT trigger_msg FROM movatak_clientes WHERE id = $1', [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
+    const campanha = await localizarCampanhaPorGatilho(req.params.id, texto);
+    const bateuGeral = textoBateGatilho(texto, r.rows[0].trigger_msg);
     res.json({
       texto_original: texto,
-      trigger_original: r.rows[0].trigger_msg,
+      trigger_original: campanha ? campanha.gatilho : r.rows[0].trigger_msg,
       texto_normalizado: normalizarGatilho(texto),
-      trigger_normalizado: normalizarGatilho(r.rows[0].trigger_msg),
-      bateu: textoBateGatilho(texto, r.rows[0].trigger_msg)
+      trigger_normalizado: normalizarGatilho(campanha ? campanha.gatilho : r.rows[0].trigger_msg),
+      bateu: !!campanha || bateuGeral,
+      campanha: campanha ? { id: campanha.id, nome: campanha.nome, template_id: campanha.template_id || null, template_nome: campanha.template_nome || null } : null,
+      origem: campanha ? 'campanha' : (bateuGeral ? 'gatilho_geral' : null)
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2650,17 +2699,43 @@ function erroEstruturaBanco(e) {
   return msg.includes('does not exist') || msg.includes('não existe') || msg.includes('nao existe') || msg.includes('column') || msg.includes('relation');
 }
 
+
+async function resolverTemplateCampanha(clienteId, templateRef) {
+  const ref = String(templateRef || '').trim();
+  if (!ref) return null;
+  if (ref.startsWith('custom:')) {
+    const n = parseInt(ref.replace('custom:', '').replace(/\D/g, ''), 10);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (/^\d+$/.test(ref)) return parseInt(ref, 10);
+  const t = TEMPLATES_FOLLOWUP[ref];
+  if (!t) return null;
+  const r = await query(
+    `INSERT INTO movatak_followup_templates
+       (cliente_id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, ativo)
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, true)
+     RETURNING id`,
+    [clienteId, t.nome, t.trigger_msg || null, JSON.stringify(t.followup_v2 || {}), t.boas_vindas_msg || null, JSON.stringify(t.comandos || {})]
+  );
+  return r.rows[0].id;
+}
+
 app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.ativo, c.criado_em, c.atualizado_em,
+      `SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em,
+              t.nome AS template_nome,
               COUNT(l.id)::int AS leads,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
-              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao
+              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao,
+              COALESCE(c.investimento_valor, c.verba_diaria, 0) AS investimento,
+              CASE WHEN COUNT(l.id) > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id),0))::numeric, 2) ELSE NULL END AS cpl,
+              CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
          FROM movatak_campanhas c
+         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
          LEFT JOIN movatak_leads l ON l.campanha_id = c.id
         WHERE c.cliente_id = $1
-        GROUP BY c.id
+        GROUP BY c.id, t.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
     );
@@ -2675,13 +2750,17 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
 
 app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
-    const { nome, gatilho, verba_diaria } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
     const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
+    if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
+    const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
+    const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
+    const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
     const r = await query(
-      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, ativo)
-       VALUES ($1,$2,$3,$4,true) RETURNING *`,
-      [req.params.id, String(nome).trim(), gatilhoFinal, verba_diaria ? parseFloat(verba_diaria) : null]
+      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`,
+      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId]
     );
     res.json(r.rows[0]);
   } catch (e) {
@@ -2693,16 +2772,22 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
 
 app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
   try {
-    const { nome, gatilho, verba_diaria, ativo } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo } = req.body || {};
+    const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
+    const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
+    const templateDbId = template_id === undefined ? undefined : await resolverTemplateCampanha(null, template_id);
     const r = await query(
       `UPDATE movatak_campanhas
           SET nome = COALESCE($1, nome),
-              gatilho = COALESCE($2, gatilho),
+              gatilho = CASE WHEN $2::text IS NULL THEN gatilho ELSE $2 END,
               verba_diaria = CASE WHEN $3::text IS NULL THEN verba_diaria ELSE $3::numeric END,
-              ativo = COALESCE($4, ativo),
+              investimento_valor = CASE WHEN $3::text IS NULL THEN investimento_valor ELSE $3::numeric END,
+              investimento_tipo = COALESCE($4, investimento_tipo),
+              template_id = CASE WHEN $5::text IS NULL THEN template_id ELSE $5::int END,
+              ativo = COALESCE($6, ativo),
               atualizado_em = NOW()
-        WHERE id = $5 RETURNING *`,
-      [nome ? String(nome).trim() : null, gatilho ? String(gatilho).trim() : null, verba_diaria === undefined ? null : (verba_diaria ? parseFloat(verba_diaria) : null), typeof ativo === 'boolean' ? ativo : null, req.params.id]
+        WHERE id = $7 RETURNING *`,
+      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
     res.json(r.rows[0]);
