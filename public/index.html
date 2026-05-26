@@ -258,6 +258,13 @@ tr:hover td{background:var(--bg3)}
 tr.cliente-row{cursor:pointer}
 tr.cliente-row.selecionado td{background:var(--bg4)}
 tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
+
+.perm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+.perm-item{display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:12px;color:var(--text2)}
+.perm-item input{width:auto;accent-color:var(--accent)}
+.vend-access-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+@media(max-width:700px){.perm-grid,.vend-access-grid{grid-template-columns:1fr}}
+
 </style>
 </head>
 <body>
@@ -361,7 +368,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v1.8.1-painel-corrigido</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.0.0-portais-permissoes</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -403,6 +410,20 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label>PLANOS (separados por vírgula)</label>
         <input type="text" id="f-planos" placeholder="Basic, Pro, Premium">
       </div>
+      <div class="form-field full" id="permissoes-cliente-box">
+        <label>ACESSOS DO CLIENTE NO PORTAL</label>
+        <div class="perm-grid">
+          <label class="perm-item"><input type="checkbox" id="perm-ver-cpl" checked> Ver CPL</label>
+          <label class="perm-item"><input type="checkbox" id="perm-ver-vendedores" checked> Ver vendedores</label>
+          <label class="perm-item"><input type="checkbox" id="perm-ver-campanhas" checked> Ver campanhas</label>
+          <label class="perm-item"><input type="checkbox" id="perm-ver-eventos" checked> Ver movimentações</label>
+          <label class="perm-item"><input type="checkbox" id="perm-editar-vendedores"> Editar/cadastrar vendedores</label>
+          <label class="perm-item"><input type="checkbox" id="perm-editar-followup"> Ajustar mensagens de follow-up</label>
+          <label class="perm-item"><input type="checkbox" id="perm-editar-campanhas"> Cadastrar campanhas/origens</label>
+          <label class="perm-item"><input type="checkbox" id="perm-exportar-csv" checked> Exportar CSV</label>
+        </div>
+        <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
+      </div>
     </div>
     <div id="token-resultado" style="display:none">
       <div class="token-box">
@@ -421,13 +442,35 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.9.1-templates-campanhas-fix';
+const PAINEL_VERSION = 'v2.0.0-portais-permissoes';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
 let secret = '';
 let periodoAtual = 30;
 let tokenGerado  = '';
+
+function getPermissoesPortal() {
+  const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
+  return {
+    ver_dashboard: true,
+    ver_cpl: g('perm-ver-cpl'),
+    ver_vendedores: g('perm-ver-vendedores'),
+    ver_campanhas: g('perm-ver-campanhas'),
+    ver_eventos: g('perm-ver-eventos'),
+    editar_vendedores: g('perm-editar-vendedores'),
+    editar_followup: g('perm-editar-followup'),
+    editar_campanhas: g('perm-editar-campanhas'),
+    exportar_csv: g('perm-exportar-csv')
+  };
+}
+function setPermissoesPortal(p = {}) {
+  const def = { ver_cpl:true, ver_vendedores:true, ver_campanhas:true, ver_eventos:true, editar_vendedores:false, editar_followup:false, editar_campanhas:false, exportar_csv:true, ...(p || {}) };
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  set('perm-ver-cpl', def.ver_cpl); set('perm-ver-vendedores', def.ver_vendedores); set('perm-ver-campanhas', def.ver_campanhas); set('perm-ver-eventos', def.ver_eventos);
+  set('perm-editar-vendedores', def.editar_vendedores); set('perm-editar-followup', def.editar_followup); set('perm-editar-campanhas', def.editar_campanhas); set('perm-exportar-csv', def.exportar_csv);
+}
+
 
 // ── Login ──────────────────────────────────────────────────
 function fazerLogin() {
@@ -764,6 +807,7 @@ function abrirModal() {
   ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos'].forEach(id => {
     document.getElementById('f-' + id).value = '';
   });
+  setPermissoesPortal();
 }
 
 // Abrir modal em modo edição — carrega dados do cliente
@@ -790,6 +834,7 @@ async function abrirEdicao(id) {
     document.getElementById('f-trigger').value  = c.trigger_msg || '';
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
+    setPermissoesPortal(c.permissoes_portal || {});
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -820,7 +865,8 @@ async function salvarEdicao() {
       body: JSON.stringify({
         nome, whatsapp, zapi_instance, trigger_msg,
         zapi_token, zapi_client_token: zapi_ct,
-        teto_cpl: cpl ? parseFloat(cpl) : null
+        teto_cpl: cpl ? parseFloat(cpl) : null,
+        permissoes_portal: getPermissoesPortal()
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
@@ -866,7 +912,8 @@ async function salvarCliente() {
         nome, whatsapp, zapi_instance, zapi_token,
         zapi_client_token: zapi_ct, trigger_msg,
         teto_cpl: cpl ? parseFloat(cpl) : null,
-        planos
+        planos,
+        permissoes_portal: getPermissoesPortal()
       })
     });
 
@@ -1031,6 +1078,14 @@ async function carregarVendedores(id) {
         <input type="text" class="fu-textarea" style="flex-basis:100%;min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px"
           id="vend-cmd-${v.id}" value="${v.comando || ''}" placeholder="Comando deste vendedor (ex: #joao)"
           onchange="salvarComandoVendedor(${v.id})">
+        <div class="vend-access-grid">
+          <input type="email" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-email-${v.id}" value="${v.email_acesso || ''}" placeholder="Email de acesso do vendedor">
+          <input type="password" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-senha-${v.id}" placeholder="Nova senha (opcional)">
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;width:100%;font-size:11px;color:var(--text3);font-family:var(--mono)">
+          <button class="btn-add-small" style="padding:6px 10px;font-size:11px" onclick="salvarAcessoVendedor(${v.id})">Salvar acesso</button>
+          <span>Token: ${v.acesso_token || 'gerado após salvar'} · senha: ${v.tem_senha ? 'configurada' : 'não configurada'}</span>
+        </div>
       </div>
     `).join('');
   } catch(e) {
@@ -1040,13 +1095,17 @@ async function carregarVendedores(id) {
 
 async function adicionarVendedor() {
   const nome = document.getElementById('fu-novo-vendedor').value.trim();
+  const email_acesso = (document.getElementById('fu-novo-vendedor-email') || {}).value ? document.getElementById('fu-novo-vendedor-email').value.trim() : '';
+  const senha_acesso = (document.getElementById('fu-novo-vendedor-senha') || {}).value ? document.getElementById('fu-novo-vendedor-senha').value.trim() : '';
   if (!nome) return;
   try {
     await api('/movatak/admin/clientes/' + fuId + '/vendedores', {
       method: 'POST',
-      body: JSON.stringify({ nome })
+      body: JSON.stringify({ nome, email_acesso, senha_acesso })
     });
     document.getElementById('fu-novo-vendedor').value = '';
+    if (document.getElementById('fu-novo-vendedor-email')) document.getElementById('fu-novo-vendedor-email').value = '';
+    if (document.getElementById('fu-novo-vendedor-senha')) document.getElementById('fu-novo-vendedor-senha').value = '';
     carregarVendedores(fuId);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao adicionar vendedor: ' + e.message;
@@ -1096,6 +1155,23 @@ async function salvarComandoVendedor(vendedorId) {
     });
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao salvar comando do vendedor.';
+  }
+}
+
+
+async function salvarAcessoVendedor(vendedorId) {
+  const email_acesso = document.getElementById('vend-email-' + vendedorId).value.trim();
+  const senha_acesso = document.getElementById('vend-senha-' + vendedorId).value.trim();
+  const comando = document.getElementById('vend-cmd-' + vendedorId).value.trim();
+  try {
+    await api('/movatak/admin/vendedores/' + vendedorId + '/acesso', {
+      method: 'PATCH',
+      body: JSON.stringify({ email_acesso, senha_acesso, comando })
+    });
+    document.getElementById('fu-err').textContent = 'Acesso do vendedor salvo.';
+    carregarVendedores(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar acesso do vendedor: ' + e.message;
   }
 }
 
@@ -1594,6 +1670,8 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div class="vendedor-list" id="fu-vendedores-list"></div>
       <div class="add-vendedor-row">
         <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
+        <input type="email" class="fu-textarea" id="fu-novo-vendedor-email" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Email de acesso">
+        <input type="password" class="fu-textarea" id="fu-novo-vendedor-senha" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Senha">
         <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
       </div>
     </div>
