@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.2-campanhas-templates-delete-ux';
+const MOVATAK_VERSION = 'v2.1.3-campanhas-duplicadas-botao-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1594,19 +1594,30 @@ app.get('/movatak/app/campanhas', authCliente, async (req, res) => {
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
     const periodo = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
     const r = await query(
-      `SELECT c.id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.ativo, t.nome AS template_nome,
+      `WITH camp AS (
+           SELECT c.*,
+                  COUNT(*) OVER (PARTITION BY c.cliente_id, LOWER(TRIM(COALESCE(c.gatilho,'')))) AS qtd_mesmo_gatilho
+             FROM movatak_campanhas c
+            WHERE c.cliente_id = $1
+              AND c.excluida_em IS NULL
+        )
+        SELECT c.id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.ativo, t.nome AS template_nome,
+              c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
+              (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
               COUNT(l.id)::int AS leads,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
               COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao,
               COALESCE(c.investimento_valor, c.verba_diaria, 0) AS investimento,
               CASE WHEN COUNT(l.id) > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id),0))::numeric, 2) ELSE NULL END AS cpl,
               CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
-         FROM movatak_campanhas c
+         FROM camp c
          LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
-         LEFT JOIN movatak_leads l ON l.campanha_id = c.id ${periodo}
-        WHERE c.cliente_id = $1
-          AND c.excluida_em IS NULL
-        GROUP BY c.id, t.nome
+         LEFT JOIN movatak_leads l
+           ON (CASE WHEN c.qtd_mesmo_gatilho > 1
+                    THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
+                    ELSE l.campanha_id = c.id
+               END) ${periodo}
+        GROUP BY c.id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.ativo, c.qtd_mesmo_gatilho, t.nome
         ORDER BY c.ativo DESC, vendas DESC, leads DESC`,
       [req.clienteId]
     );
@@ -1719,11 +1730,8 @@ app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória.' });
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
     const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
-    const duplicada = await query(
-      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND excluida_em IS NULL AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
-      [req.clienteId, gatilhoFinal]
-    );
-    if (duplicada.rows.length) return res.status(400).json({ error: 'Já existe campanha ativa com essa frase-gatilho: ' + duplicada.rows[0].nome });
+    // A partir da v2.1.3 permitimos o mesmo gatilho em mais de uma campanha.
+    // Observação: quando isso acontece, a atribuição exata por campanha fica compartilhada pelo gatilho.
     const templateDbId = await resolverTemplateCampanha(req.clienteId, template_id);
     const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo) VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`,
       [req.clienteId, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId]);
@@ -2806,20 +2814,31 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
   try {
     await garantirEstruturaCampanhasTemplates();
     const r = await query(
-      `SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em,
+      `WITH camp AS (
+           SELECT c.*,
+                  COUNT(*) OVER (PARTITION BY c.cliente_id, LOWER(TRIM(COALESCE(c.gatilho,'')))) AS qtd_mesmo_gatilho
+             FROM movatak_campanhas c
+            WHERE c.cliente_id = $1
+              AND c.excluida_em IS NULL
+        )
+        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em,
               t.nome AS template_nome,
+              c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
+              (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
               COUNT(l.id)::int AS leads,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
               COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao,
               COALESCE(c.investimento_valor, c.verba_diaria, 0) AS investimento,
               CASE WHEN COUNT(l.id) > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id),0))::numeric, 2) ELSE NULL END AS cpl,
               CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
-         FROM movatak_campanhas c
+         FROM camp c
          LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
-         LEFT JOIN movatak_leads l ON l.campanha_id = c.id
-        WHERE c.cliente_id = $1
-          AND c.excluida_em IS NULL
-        GROUP BY c.id, t.nome
+         LEFT JOIN movatak_leads l
+           ON (CASE WHEN c.qtd_mesmo_gatilho > 1
+                    THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
+                    ELSE l.campanha_id = c.id
+               END)
+        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
     );
@@ -2841,11 +2860,8 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
     const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
-    const duplicada = await query(
-      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND excluida_em IS NULL AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
-      [req.params.id, gatilhoFinal]
-    );
-    if (duplicada.rows.length) return res.status(400).json({ error: 'Já existe campanha ativa com essa frase-gatilho: ' + duplicada.rows[0].nome });
+    // A partir da v2.1.3 permitimos o mesmo gatilho em mais de uma campanha.
+    // Observação: quando isso acontece, a atribuição exata por campanha fica compartilhada pelo gatilho.
     const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
     const r = await query(
       `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo)
