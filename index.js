@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.9.0-produto-crm';
+const MOVATAK_VERSION = 'v1.9.1-templates-campanhas-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2313,13 +2313,18 @@ app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', authMovatak, asy
 // ============================================================
 // API — Campanhas, templates, ações do lead e teste Z-API
 // ============================================================
+function erroEstruturaBanco(e) {
+  const msg = String((e && e.message) || '').toLowerCase();
+  return msg.includes('does not exist') || msg.includes('não existe') || msg.includes('nao existe') || msg.includes('column') || msg.includes('relation');
+}
+
 app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT c.*,
-              COUNT(l.id) AS leads,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS vendas,
-              ROUND(100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0), 1) AS conversao
+      `SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.ativo, c.criado_em, c.atualizado_em,
+              COUNT(l.id)::int AS leads,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
+              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao
          FROM movatak_campanhas c
          LEFT JOIN movatak_leads l ON l.campanha_id = c.id
         WHERE c.cliente_id = $1
@@ -2328,7 +2333,12 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
       [req.params.id]
     );
     res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[campanhas][listar]', e.message);
+    // Não quebra o painel se a migração de campanhas ainda não foi executada.
+    if (erroEstruturaBanco(e)) return res.json([]);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
@@ -2341,7 +2351,11 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
       [req.params.id, String(nome).trim(), String(gatilho).trim(), verba_diaria ? parseFloat(verba_diaria) : null]
     );
     res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[campanhas][criar]', e.message);
+    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de campanhas não existe no banco. Rode a MIGRACOES-v1.9.1.sql no PostgreSQL do Railway.' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
@@ -2349,7 +2363,11 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
     const { nome, gatilho, verba_diaria, ativo } = req.body || {};
     const r = await query(
       `UPDATE movatak_campanhas
-          SET nome = COALESCE($1, nome), gatilho = COALESCE($2, gatilho), verba_diaria = $3, ativo = COALESCE($4, ativo), atualizado_em = NOW()
+          SET nome = COALESCE($1, nome),
+              gatilho = COALESCE($2, gatilho),
+              verba_diaria = CASE WHEN $3::text IS NULL THEN verba_diaria ELSE $3::numeric END,
+              ativo = COALESCE($4, ativo),
+              atualizado_em = NOW()
         WHERE id = $5 RETURNING *`,
       [nome ? String(nome).trim() : null, gatilho ? String(gatilho).trim() : null, verba_diaria === undefined ? null : (verba_diaria ? parseFloat(verba_diaria) : null), typeof ativo === 'boolean' ? ativo : null, req.params.id]
     );
@@ -2358,22 +2376,109 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+async function listarTemplatesCustom(clienteId) {
+  const r = await query(
+    `SELECT id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, criado_em
+       FROM movatak_followup_templates
+      WHERE cliente_id = $1 AND ativo = true
+      ORDER BY criado_em DESC`,
+    [clienteId]
+  );
+  return r.rows;
+}
+
 app.get('/movatak/admin/templates-followup', authMovatak, async (req, res) => {
-  res.json(Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({ id, nome: t.nome })));
+  try {
+    const clienteId = req.query.cliente_id || req.query.clienteId || null;
+    const padroes = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({
+      id,
+      nome: t.nome,
+      tipo: 'padrao'
+    }));
+    if (!clienteId) return res.json(padroes);
+
+    let custom = [];
+    try {
+      custom = (await listarTemplatesCustom(clienteId)).map(t => ({
+        id: 'custom:' + t.id,
+        nome: t.nome,
+        tipo: 'cliente'
+      }));
+    } catch (e) {
+      if (!erroEstruturaBanco(e)) throw e;
+      console.error('[templates][listar-custom]', e.message);
+    }
+
+    res.json([...padroes, ...custom]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const nome = String(body.nome || '').trim();
+    const followup = body.followup_v2 || body.followup || {};
+    if (!nome) return res.status(400).json({ error: 'Informe o nome do template.' });
+    if (!followup || typeof followup !== 'object') return res.status(400).json({ error: 'Template sem mensagens de follow-up.' });
+
+    const r = await query(
+      `INSERT INTO movatak_followup_templates
+         (cliente_id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, ativo)
+       VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, true)
+       RETURNING id, nome`,
+      [
+        req.params.id,
+        nome,
+        body.trigger_msg ? String(body.trigger_msg).trim() : null,
+        JSON.stringify(followup),
+        body.boas_vindas_msg || null,
+        JSON.stringify(body.comandos || {})
+      ]
+    );
+    res.json({ ok: true, id: 'custom:' + r.rows[0].id, nome: r.rows[0].nome });
+  } catch (e) {
+    console.error('[templates][criar]', e.message);
+    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de templates não existe no banco. Rode a MIGRACOES-v1.9.1.sql no PostgreSQL do Railway.' });
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/movatak/admin/clientes/:id/aplicar-template', authMovatak, async (req, res) => {
   try {
     const templateId = String((req.body || {}).template || '').trim();
-    const t = TEMPLATES_FOLLOWUP[templateId];
+    let t = null;
+
+    if (templateId.startsWith('custom:')) {
+      const templateDbId = templateId.replace('custom:', '').replace(/\D/g, '');
+      const r = await query(
+        `SELECT * FROM movatak_followup_templates
+          WHERE id = $1 AND cliente_id = $2 AND ativo = true`,
+        [templateDbId, req.params.id]
+      );
+      if (!r.rows.length) return res.status(400).json({ error: 'Template personalizado não encontrado.' });
+      const row = r.rows[0];
+      t = {
+        nome: row.nome,
+        trigger_msg: row.trigger_msg,
+        followup_v2: row.followup_v2 || {},
+        boas_vindas_msg: row.boas_vindas_msg || '',
+        comandos: row.comandos || null
+      };
+    } else {
+      t = TEMPLATES_FOLLOWUP[templateId];
+    }
+
     if (!t) return res.status(400).json({ error: 'Template inválido.' });
+
+    const comandosJson = t.comandos ? JSON.stringify(t.comandos) : null;
     await query(
       `UPDATE movatak_clientes
           SET followup_msgs_v2 = $1::jsonb,
               boas_vindas_msg = $2,
-              trigger_msg = COALESCE(NULLIF($3,''), trigger_msg)
-        WHERE id = $4`,
-      [JSON.stringify(t.followup_v2), t.boas_vindas_msg, t.trigger_msg || '', req.params.id]
+              trigger_msg = COALESCE(NULLIF($3,''), trigger_msg),
+              comandos = COALESCE($4::jsonb, comandos)
+        WHERE id = $5`,
+      [JSON.stringify(t.followup_v2), t.boas_vindas_msg, t.trigger_msg || '', comandosJson, req.params.id]
     );
     res.json({ ok: true, template: templateId });
   } catch (e) { res.status(500).json({ error: e.message }); }
