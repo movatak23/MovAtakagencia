@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.0.0-portais-permissoes';
+const MOVATAK_VERSION = 'v2.0.2-templates-campanhas-ux';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -77,6 +77,19 @@ async function query(sql, params) {
   } finally {
     client.release();
   }
+}
+
+// Garante colunas usadas pelo portal individual do vendedor.
+// Mantém compatibilidade quando o deploy sobe antes da migração completa.
+async function garantirColunasVendedoresPortal() {
+  await query(`ALTER TABLE movatak_vendedores
+    ADD COLUMN IF NOT EXISTS comando TEXT,
+    ADD COLUMN IF NOT EXISTS email_acesso TEXT,
+    ADD COLUMN IF NOT EXISTS senha_hash TEXT,
+    ADD COLUMN IF NOT EXISTS acesso_token TEXT`, []);
+  await query(`UPDATE movatak_vendedores
+       SET acesso_token = 'vend_' || EXTRACT(EPOCH FROM NOW())::bigint || '_' || id || '_' || substr(md5(random()::text), 1, 10)
+     WHERE acesso_token IS NULL OR acesso_token = ''`, []);
 }
 
 // ============================================================
@@ -1304,19 +1317,40 @@ app.patch('/movatak/admin/leads/:id/plano', authMovatak, async (req, res) => {
 // Listar vendedores de um cliente
 app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
   try {
+    await garantirColunasVendedoresPortal();
     const r = await query(
       `SELECT id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em,
               CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha
-         FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome`,
+         FROM movatak_vendedores
+        WHERE cliente_id = $1 AND ativo = true
+        ORDER BY nome`,
       [req.params.id]
     );
     res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
+  } catch(e) {
+    console.error('[admin/vendedores:list]', e.message);
+    // Fallback para bancos antigos/parcialmente migrados: permite o painel abrir e mostra os dados básicos.
+    try {
+      const r2 = await query(
+        `SELECT id, cliente_id, nome, NULL::text AS comando, NULL::text AS email_acesso,
+                NULL::text AS acesso_token, ativo, criado_em, false AS tem_senha
+           FROM movatak_vendedores
+          WHERE cliente_id = $1 AND ativo = true
+          ORDER BY nome`,
+        [req.params.id]
+      );
+      return res.json(r2.rows);
+    } catch(e2) {
+      console.error('[admin/vendedores:list:fallback]', e2.message);
+      res.status(500).json({ error: e.message });
+    }
+  }
 });
 
 // Cadastrar vendedor e criar etiqueta na Z-API
 app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
   try {
+    await garantirColunasVendedoresPortal();
     const { nome, email_acesso, senha_acesso, comando } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome obrigatorio.' });
 
@@ -1633,9 +1667,10 @@ app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
   try {
     if (!req.clientePermissoes.editar_campanhas) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar campanhas.' });
     const { nome, gatilho, verba_diaria } = req.body || {};
-    if (!nome || !gatilho) return res.status(400).json({ error: 'Nome e gatilho são obrigatórios.' });
+    if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
+    const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
     const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, ativo) VALUES ($1,$2,$3,$4,true) RETURNING *`,
-      [req.clienteId, String(nome).trim(), String(gatilho).trim(), verba_diaria ? parseFloat(verba_diaria) : null]);
+      [req.clienteId, String(nome).trim(), gatilhoFinal, verba_diaria ? parseFloat(verba_diaria) : null]);
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -2156,6 +2191,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
 // Atualizar comando de um vendedor
 app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res) => {
   try {
+    await garantirColunasVendedoresPortal();
     const comando = req.body.comando ? String(req.body.comando).trim().toLowerCase() : null;
 
     if (comando) {
@@ -2198,6 +2234,7 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
 // Atualizar acesso do vendedor ao portal individual
 app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) => {
   try {
+    await garantirColunasVendedoresPortal();
     const { email_acesso, senha_acesso, nome, comando } = req.body || {};
     const campos = [];
     const valores = [];
@@ -2216,6 +2253,7 @@ app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) 
 
 app.post('/movatak/vendedor/login', async (req, res) => {
   try {
+    await garantirColunasVendedoresPortal();
     const { email, senha } = req.body || {};
     if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
     const r = await query(
@@ -2638,16 +2676,17 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
 app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
     const { nome, gatilho, verba_diaria } = req.body || {};
-    if (!nome || !gatilho) return res.status(400).json({ error: 'Nome e gatilho da campanha são obrigatórios.' });
+    if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
+    const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
     const r = await query(
       `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, ativo)
        VALUES ($1,$2,$3,$4,true) RETURNING *`,
-      [req.params.id, String(nome).trim(), String(gatilho).trim(), verba_diaria ? parseFloat(verba_diaria) : null]
+      [req.params.id, String(nome).trim(), gatilhoFinal, verba_diaria ? parseFloat(verba_diaria) : null]
     );
     res.json(r.rows[0]);
   } catch (e) {
     console.error('[campanhas][criar]', e.message);
-    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de campanhas não existe no banco. Rode a MIGRACOES-v1.9.1.sql no PostgreSQL do Railway.' });
+    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de campanhas não existe ou está desatualizada. Rode a MIGRACOES-v2.0.2.sql no PostgreSQL do Railway.' });
     res.status(500).json({ error: e.message });
   }
 });
