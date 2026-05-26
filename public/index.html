@@ -421,7 +421,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v1.8.1-painel-corrigido';
+const PAINEL_VERSION = 'v1.9.0-produto-crm';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -931,6 +931,8 @@ async function abrirFU(id) {
     // Carregar status operacional e fila do follow-up
     carregarOperacao(id);
     carregarFilaFollowup(id);
+    carregarCampanhas(id);
+    carregarTemplatesFollowup();
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
@@ -1230,7 +1232,12 @@ async function carregarHistoricoLead(leadId) {
             <div style="font-size:13px;font-weight:700;color:var(--text)">${lead.nome || 'Sem nome'} · ${lead.telefone || ''}</div>
             <div style="font-size:12px;color:var(--text2)">Etapa: ${lead.etapa || '—'} · Vendedor: ${lead.vendedor_nome || '—'}</div>
           </div>
-          <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="document.getElementById('fu-historico-box').innerHTML=''">Fechar</button>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="marcarLeadCliente(${lead.id})">Cliente</button>
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="descartarLeadPainel(${lead.id})">Descartar</button>
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${lead.id})">Pausar FU</button>
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="document.getElementById('fu-historico-box').innerHTML=''">Fechar</button>
+          </div>
         </div>
         <div style="max-height:260px;overflow:auto">
           ${eventos.length ? eventos.map(ev => `
@@ -1312,6 +1319,108 @@ async function testarGatilhoAtual() {
   }
 }
 
+
+async function testarZapiAgora() {
+  try {
+    const telefone = prompt('Telefone para receber o teste Z-API. Deixe em branco para usar o WhatsApp do dono ou o admin Movatak.') || '';
+    await api('/movatak/admin/clientes/' + fuId + '/testar-zapi', {
+      method: 'POST',
+      body: JSON.stringify({ telefone })
+    });
+    document.getElementById('fu-err').textContent = 'Teste Z-API enviado com sucesso.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro no teste Z-API: ' + e.message;
+  }
+}
+
+async function carregarTemplatesFollowup() {
+  const sel = document.getElementById('fu-template-select');
+  if (!sel) return;
+  try {
+    const rows = await api('/movatak/admin/templates-followup');
+    sel.innerHTML = '<option value="">Escolha um modelo pronto</option>' + rows.map(t => `<option value="${t.id}">${t.nome}</option>`).join('');
+  } catch(e) {
+    sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
+  }
+}
+
+async function aplicarTemplateFollowup() {
+  const sel = document.getElementById('fu-template-select');
+  const template = sel ? sel.value : '';
+  if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template primeiro.'; return; }
+  if (!confirm('Aplicar este template vai substituir as mensagens de follow-up, boas-vindas e frase-gatilho do cliente. Continuar?')) return;
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/aplicar-template', {
+      method: 'POST',
+      body: JSON.stringify({ template })
+    });
+    document.getElementById('fu-err').textContent = 'Template aplicado. Reabrindo configurações...';
+    await abrirFU(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao aplicar template: ' + e.message;
+  }
+}
+
+async function carregarCampanhas(id) {
+  const box = document.getElementById('fu-campanhas-box');
+  if (!box) return;
+  box.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando campanhas...</div>';
+  try {
+    const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
+    box.innerHTML = rows.length ? `
+      <div style="max-height:220px;overflow:auto;border:1px solid var(--border);border-radius:10px;margin-top:10px">
+        <table style="font-size:12px">
+          <thead><tr><th>Campanha</th><th>Leads</th><th>Vendas</th><th>Conv.</th><th>Status</th></tr></thead>
+          <tbody>${rows.map(c => `
+            <tr>
+              <td><strong>${c.nome}</strong><br><span class="td-mono">${c.gatilho || ''}</span></td>
+              <td class="td-mono">${c.leads || 0}</td>
+              <td class="td-green">${c.vendas || 0}</td>
+              <td>${c.conversao || '0.0'}%</td>
+              <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>` : '<div style="font-size:13px;color:var(--text3);margin-top:10px">Nenhuma campanha cadastrada ainda.</div>';
+  } catch(e) {
+    box.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar campanhas: ' + e.message + '</div>';
+  }
+}
+
+async function adicionarCampanha() {
+  const nome = document.getElementById('fu-campanha-nome').value.trim();
+  const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
+  const verba_diaria = document.getElementById('fu-campanha-verba').value.trim();
+  if (!nome || !gatilho) { document.getElementById('fu-err').textContent = 'Informe nome e gatilho da campanha.'; return; }
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
+      method: 'POST',
+      body: JSON.stringify({ nome, gatilho, verba_diaria })
+    });
+    document.getElementById('fu-campanha-nome').value = '';
+    document.getElementById('fu-campanha-gatilho').value = '';
+    document.getElementById('fu-campanha-verba').value = '';
+    carregarCampanhas(fuId);
+    document.getElementById('fu-err').textContent = 'Campanha cadastrada.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao cadastrar campanha: ' + e.message;
+  }
+}
+
+async function marcarLeadCliente(leadId) {
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/cliente', { method: 'PATCH', body: JSON.stringify({}) });
+    await carregarHistoricoLead(leadId); carregarOperacao(fuId); carregarFilaFollowup(fuId);
+  } catch(e) { document.getElementById('fu-err').textContent = 'Erro ao marcar cliente: ' + e.message; }
+}
+
+async function descartarLeadPainel(leadId) {
+  if (!confirm('Descartar este lead?')) return;
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/descartar', { method: 'PATCH', body: JSON.stringify({}) });
+    await carregarHistoricoLead(leadId); carregarOperacao(fuId); carregarFilaFollowup(fuId);
+  } catch(e) { document.getElementById('fu-err').textContent = 'Erro ao descartar lead: ' + e.message; }
+}
+
 // Auto refresh a cada 2 minutos
 setInterval(() => { if (secret) carregarTudo(); }, 120000);
 </script>
@@ -1368,9 +1477,31 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
     </div>
 
-    <!-- BLOCO 6: STATUS OPERACIONAL -->
+
+    <!-- BLOCO 6: TEMPLATES E CAMPANHAS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Status operacional</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Templates e campanhas</div>
+      <label class="fu-label">Template pronto de follow-up</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1"></select>
+        <button class="btn-add-small" onclick="aplicarTemplateFollowup()">Aplicar template</button>
+      </div>
+      <div class="fu-hint">Use com cuidado: o template substitui as mensagens atuais do cliente.</div>
+
+      <label class="fu-label" style="margin-top:14px">Cadastrar campanha/origem</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr 120px auto;gap:8px;align-items:center">
+        <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha">
+        <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
+        <input type="number" class="fu-textarea" id="fu-campanha-verba" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Verba R$">
+        <button class="btn-add-small" onclick="adicionarCampanha()">Adicionar</button>
+      </div>
+      <div class="fu-hint">Campanhas permitem medir leads, vendas e conversão por anúncio/origem.</div>
+      <div id="fu-campanhas-box"></div>
+    </div>
+
+    <!-- BLOCO 7: STATUS OPERACIONAL -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Status operacional</div>
       <div id="fu-operacao-box"></div>
       <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
       <div style="display:flex;gap:8px;align-items:center">
@@ -1381,21 +1512,22 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
         <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
+        <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
       </div>
       <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
     </div>
 
-    <!-- BLOCO 7: FILA DE FOLLOW-UP -->
+    <!-- BLOCO 8: FILA DE FOLLOW-UP -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Fila de follow-up</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Fila de follow-up</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Mostra mensagens pendentes, enviadas e pausadas. Use para auditar se o fluxo realmente entrou na fila.</div>
       <div id="fu-fila-box"></div>
       <div id="fu-historico-box"></div>
     </div>
 
-    <!-- BLOCO 8: COMANDOS -->
+    <!-- BLOCO 9: COMANDOS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Comandos de automação</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Comandos de automação</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Texto embutido numa mensagem enviada pela equipe que dispara a ação. Separe múltiplos comandos por vírgula.</div>
       <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
       <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
@@ -1406,9 +1538,9 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
     </div>
 
-    <!-- BLOCO 9: VENDEDORES -->
+    <!-- BLOCO 10: VENDEDORES -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Vendedores</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Vendedores</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
       <div class="vendedor-list" id="fu-vendedores-list"></div>
       <div class="add-vendedor-row">
@@ -1417,9 +1549,9 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
       </div>
     </div>
 
-    <!-- BLOCO 10: PERFORMANCE -->
+    <!-- BLOCO 11: PERFORMANCE -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Performance dos vendedores</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">11. Performance dos vendedores</div>
       <div id="fu-ranking-chart" style="margin-top:10px"></div>
     </div>
 
