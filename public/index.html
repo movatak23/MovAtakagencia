@@ -368,7 +368,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.1.2-campanhas-templates-delete-ux</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.1.3-campanhas-duplicadas-botao-fix</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -442,7 +442,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.2-campanhas-templates-delete-ux';
+const PAINEL_VERSION = 'v2.1.3-campanhas-duplicadas-botao-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -1562,7 +1562,7 @@ async function carregarCampanhas(id) {
           <tbody>${rows.map(c => `
             <tr>
               <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong></td>
-              <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}</td>
+              <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}${c.gatilho_compartilhado ? '<div style="margin-top:6px;color:var(--amber);font-family:var(--sans);font-size:11px">Gatilho compartilhado com ' + c.campanhas_mesmo_gatilho + ' campanhas. Métrica por gatilho, não por campanha única.</div>' : ''}</td>
               <td style="white-space:normal">${escapeHtml(c.template_nome || '—')}</td>
               <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
               <td class="td-mono">${c.leads || 0}</td>
@@ -1619,7 +1619,7 @@ async function excluirTemplateFollowupSelecionado() {
   }
 }
 
-async function adicionarCampanha() {
+async function adicionarCampanha(btn) {
   const statusEl = document.getElementById('fu-campanha-status');
   const nome = document.getElementById('fu-campanha-nome').value.trim();
   const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
@@ -1630,7 +1630,6 @@ async function adicionarCampanha() {
   if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
   if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
   try {
-    const btn = event?.target;
     if (btn) { btn.disabled = true; btn.textContent = 'Adicionando...'; }
     if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Cadastrando campanha...'; }
     await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
@@ -1646,7 +1645,6 @@ async function adicionarCampanha() {
     document.getElementById('fu-err').textContent = 'Erro ao cadastrar campanha: ' + e.message;
     if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao cadastrar campanha.'; }
   } finally {
-    const btn = event?.target;
     if (btn) { btn.disabled = false; btn.textContent = 'Adicionar'; }
   }
 }
@@ -1753,9 +1751,9 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
         <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
         <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
         <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado</option></select>
-        <button class="btn-add-small" onclick="adicionarCampanha()">Adicionar</button>
+        <button class="btn-add-small" onclick="adicionarCampanha(this)">Adicionar</button>
       </div>
-      <div class="fu-hint">Use uma frase-gatilho distinta para cada campanha. Quando o lead chega pelo WhatsApp, o CRM grava essa campanha no lead e usa essa atribuição até a venda.</div>
+      <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
       <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
       <div id="fu-campanhas-box"></div>
     </div>
