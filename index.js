@@ -3,12 +3,13 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v1.9.1-templates-campanhas-fix';
+const MOVATAK_VERSION = 'v2.0.0-portais-permissoes';
 
 const express = require('express');
 const { Pool } = require('pg');
 const cron = require('node-cron');
 const axios = require('axios');
+const crypto = require('crypto');
 
 const path = require('path');
 const app = express();
@@ -33,6 +34,32 @@ function logDebug(...args) {
 // Ajustáveis via Railway sem mexer no código.
 const MOVATAK_REENTRADA_FU1_HORAS = parseInt(process.env.MOVATAK_REENTRADA_FU1_HORAS || '6', 10);
 const MOVATAK_MAX_AUTO_MSG_DIA = parseInt(process.env.MOVATAK_MAX_AUTO_MSG_DIA || '6', 10);
+
+const DEFAULT_CLIENTE_PERMISSOES = {
+  ver_dashboard: true,
+  ver_cpl: true,
+  ver_vendedores: true,
+  ver_campanhas: true,
+  ver_eventos: true,
+  editar_vendedores: false,
+  editar_followup: false,
+  editar_campanhas: false,
+  exportar_csv: true
+};
+
+function normalizarPermissoes(permissoes) {
+  return { ...DEFAULT_CLIENTE_PERMISSOES, ...(permissoes || {}) };
+}
+
+function hashSenha(senha) {
+  if (!senha) return null;
+  return crypto.createHash('sha256').update(String(senha) + ':' + (process.env.MOVATAK_SECRET || 'movatak')).digest('hex');
+}
+
+function gerarToken(prefixo) {
+  return prefixo + '_' + Date.now() + '_' + crypto.randomBytes(8).toString('hex');
+}
+
 
 // ============================================================
 // Banco de dados
@@ -69,15 +96,36 @@ async function authCliente(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Token ausente.' });
   try {
     const r = await query(
-      'SELECT id FROM movatak_clientes WHERE app_token = $1 AND ativo = true',
+      'SELECT id, nome, permissoes_portal FROM movatak_clientes WHERE app_token = $1 AND ativo = true',
       [token]
     );
     if (!r.rows.length) return res.status(401).json({ error: 'Token invalido.' });
     req.clienteId = r.rows[0].id;
+    req.clienteNome = r.rows[0].nome;
+    req.clientePermissoes = normalizarPermissoes(r.rows[0].permissoes_portal);
     next();
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+}
+
+
+
+async function authVendedor(req, res, next) {
+  const token = req.headers['x-vendedor-token'];
+  if (!token) return res.status(401).json({ error: 'Token do vendedor ausente.' });
+  try {
+    const r = await query(
+      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, c.nome AS cliente_nome
+         FROM movatak_vendedores v
+         JOIN movatak_clientes c ON c.id = v.cliente_id
+        WHERE v.acesso_token = $1 AND v.ativo = true AND c.ativo = true`,
+      [token]
+    );
+    if (!r.rows.length) return res.status(401).json({ error: 'Token do vendedor invalido.' });
+    req.vendedor = r.rows[0];
+    next();
+  } catch (e) { res.status(500).json({ error: e.message }); }
 }
 
 // ============================================================
@@ -1003,21 +1051,21 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
   try {
     const {
       nome, whatsapp, zapi_instance, zapi_token, zapi_client_token,
-      trigger_msg, teto_cpl, planos
+      trigger_msg, teto_cpl, planos, permissoes_portal
     } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_client_token || !trigger_msg) {
       return res.status(400).json({ error: 'Campos obrigatorios: nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg' });
     }
 
-    const app_token = 'mvtk_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+    const app_token = gerarToken('mvtk');
 
     const r = await query(
       `INSERT INTO movatak_clientes
-         (nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, app_token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         (nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, app_token, permissoes_portal)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
        RETURNING id, app_token`,
-      [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl || null, app_token]
+      [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl || null, app_token, JSON.stringify(normalizarPermissoes(permissoes_portal))]
     );
 
     const clienteId = r.rows[0].id;
@@ -1041,7 +1089,7 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl
+      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -1055,7 +1103,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 // Editar dados de um cliente. Token e client-token só são alterados se enviados.
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl } = req.body;
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance || !trigger_msg) {
       return res.status(400).json({ error: 'Nome, WhatsApp, Instance ID e frase-gatilho sao obrigatorios.' });
@@ -1065,6 +1113,7 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
     const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
     const valores = [nome, whatsapp, zapi_instance, trigger_msg, teto_cpl ? parseFloat(teto_cpl) : null];
     let idx = 6;
+    if (permissoes_portal) { campos.push('permissoes_portal = $' + idx + '::jsonb'); valores.push(JSON.stringify(normalizarPermissoes(permissoes_portal))); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
@@ -1256,7 +1305,9 @@ app.patch('/movatak/admin/leads/:id/plano', authMovatak, async (req, res) => {
 app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome',
+      `SELECT id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em,
+              CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha
+         FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome`,
       [req.params.id]
     );
     res.json(r.rows);
@@ -1266,7 +1317,7 @@ app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) 
 // Cadastrar vendedor e criar etiqueta na Z-API
 app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
   try {
-    const { nome } = req.body;
+    const { nome, email_acesso, senha_acesso, comando } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome obrigatorio.' });
 
     const rc = await query('SELECT * FROM movatak_clientes WHERE id = $1', [req.params.id]);
@@ -1276,8 +1327,10 @@ app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res)
     // Salvar vendedor — etiqueta deve ser criada manualmente no WhatsApp Business
     // com o nome exato: 'Vendedor - ' + nome
     const r = await query(
-      'INSERT INTO movatak_vendedores (cliente_id, nome) VALUES ($1, $2) RETURNING *',
-      [req.params.id, nome]
+      `INSERT INTO movatak_vendedores (cliente_id, nome, email_acesso, senha_hash, acesso_token, comando)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em`,
+      [req.params.id, nome, email_acesso || null, hashSenha(senha_acesso), gerarToken('vend'), comando ? String(comando).trim().toLowerCase() : null]
     );
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -1409,18 +1462,182 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
       if (dados.teto_cpl && parseFloat(cpl_calculado) > parseFloat(dados.teto_cpl)) alerta_cpl = true;
     }
 
+    // Comparativo com período anterior
+    const baseDias = dias === 0 ? 1 : dias;
+    const comparativo = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente')      AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')     AS em_followup
+       FROM movatak_leads
+       WHERE cliente_id = $1
+         AND criado_em >= NOW() - ($2 || ' days')::INTERVAL * 2
+         AND criado_em <  NOW() - ($2 || ' days')::INTERVAL`,
+      [id, baseDias]
+    );
+
+    const campanhaTop = await query(
+      `SELECT c.nome, COUNT(l.id)::int AS leads,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas
+         FROM movatak_campanhas c
+         LEFT JOIN movatak_leads l ON l.campanha_id = c.id
+        WHERE c.cliente_id = $1
+          AND l.criado_em >= NOW() - ($2 || ' days')::INTERVAL
+        GROUP BY c.id, c.nome
+        ORDER BY vendas DESC, leads DESC
+        LIMIT 1`, [id, baseDias]
+    ).catch(() => ({ rows: [] }));
+
+    const permissoes = req.clientePermissoes || normalizarPermissoes({});
+    const totalAtual = parseInt(m.rows[0].total_leads || 0);
+    const convAtual = parseInt(m.rows[0].convertidos || 0);
+    const totalAnt = parseInt((comparativo.rows[0] || {}).total_leads || 0);
+    const convAnt = parseInt((comparativo.rows[0] || {}).convertidos || 0);
+    const melhorVendedor = (v.rows || [])[0] || null;
+    const resumo_executivo = `${req.clienteNome || 'Sua campanha'} recebeu ${totalAtual} lead${totalAtual === 1 ? '' : 's'} no período e gerou ${convAtual} venda${convAtual === 1 ? '' : 's'}. ` +
+      `${melhorVendedor ? 'Melhor vendedor: ' + melhorVendedor.nome + ' com ' + melhorVendedor.fechamentos + ' venda(s). ' : ''}` +
+      `${campanhaTop.rows[0] ? 'Campanha destaque: ' + campanhaTop.rows[0].nome + '. ' : ''}` +
+      `${parseInt(m.rows[0].em_followup || 0)} lead(s) seguem em follow-up.`;
+
     res.json({
+      cliente_nome: req.clienteNome,
       periodo_dias: dias,
       ...m.rows[0],
       leads_por_hora: leadsPorHora,
-      vendedores: v.rows,
-      cpl_calculado,
-      teto_cpl: dados.teto_cpl || null,
-      alerta_cpl
+      vendedores: permissoes.ver_vendedores ? v.rows : [],
+      permissoes,
+      resumo_executivo,
+      comparativo: { total_leads: totalAnt, convertidos: convAnt, delta_leads: totalAtual - totalAnt, delta_convertidos: convAtual - convAnt },
+      campanha_top: campanhaTop.rows[0] || null,
+      cpl_calculado: permissoes.ver_cpl ? cpl_calculado : null,
+      teto_cpl: permissoes.ver_cpl ? (dados.teto_cpl || null) : null,
+      alerta_cpl: permissoes.ver_cpl ? alerta_cpl : false
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+
+// Campanhas no portal do cliente
+app.get('/movatak/app/campanhas', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.ver_campanhas) return res.json([]);
+    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
+    const periodo = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const r = await query(
+      `SELECT c.id, c.nome, c.gatilho, c.verba_diaria, c.ativo,
+              COUNT(l.id)::int AS leads,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
+              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao
+         FROM movatak_campanhas c
+         LEFT JOIN movatak_leads l ON l.campanha_id = c.id ${periodo}
+        WHERE c.cliente_id = $1
+        GROUP BY c.id
+        ORDER BY c.ativo DESC, vendas DESC, leads DESC`,
+      [req.clienteId]
+    );
+    res.json(r.rows);
+  } catch(e) { if (erroEstruturaBanco(e)) return res.json([]); res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/app/eventos', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.ver_eventos) return res.json([]);
+    const r = await query(
+      `SELECT e.id, e.tipo, e.descricao, e.criado_em, l.nome, l.telefone, l.etapa
+         FROM movatak_lead_eventos e
+         LEFT JOIN movatak_leads l ON l.id = e.lead_id
+        WHERE e.cliente_id = $1
+        ORDER BY e.criado_em DESC
+        LIMIT 25`, [req.clienteId]
+    );
+    res.json(r.rows);
+  } catch(e) { if (erroEstruturaBanco(e)) return res.json([]); res.status(500).json({ error: e.message }); }
+});
+
+
+
+app.get('/movatak/app/exportar-leads', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.exportar_csv) return res.status(403).json({ error: 'Exportação não liberada para este acesso.' });
+    const r = await query(
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em,
+              v.nome AS vendedor, c.nome AS campanha
+         FROM movatak_leads l
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+         LEFT JOIN movatak_campanhas c ON c.id = l.campanha_id
+        WHERE l.cliente_id = $1
+        ORDER BY l.criado_em DESC
+        LIMIT 5000`, [req.clienteId]
+    );
+    const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const linhas = [['ID','Nome','Telefone','Etapa','Vendedor','Campanha','Criado em','Atualizado em'].map(esc).join(',')]
+      .concat(r.rows.map(x => [x.id,x.nome,x.telefone,x.etapa,x.vendedor,x.campanha,x.criado_em,x.atualizado_em].map(esc).join(',')));
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="leads-movatak.csv"');
+    res.send('\ufeff' + linhas.join('\n'));
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/app/configuracoes', authCliente, async (req, res) => {
+  try {
+    const dados = await query('SELECT followup_msgs_v2, boas_vindas_msg, trigger_msg, comandos, permissoes_portal FROM movatak_clientes WHERE id = $1', [req.clienteId]);
+    const vendedores = req.clientePermissoes.editar_vendedores ? await query(
+      `SELECT id, nome, comando, email_acesso, acesso_token, CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome`, [req.clienteId]
+    ) : { rows: [] };
+    res.json({ permissoes: req.clientePermissoes, cliente: dados.rows[0] || {}, vendedores: vendedores.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/app/followup', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.editar_followup) return res.status(403).json({ error: 'Este cliente não tem permissão para editar follow-up.' });
+    const { followup_v2, boas_vindas_msg } = req.body || {};
+    await query(`UPDATE movatak_clientes SET followup_msgs_v2 = COALESCE($1::jsonb, followup_msgs_v2), boas_vindas_msg = COALESCE($2, boas_vindas_msg) WHERE id = $3`,
+      [followup_v2 ? JSON.stringify(followup_v2) : null, boas_vindas_msg || null, req.clienteId]);
+    res.json({ ok: true });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/app/vendedores', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.editar_vendedores) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar vendedores.' });
+    const { nome, comando, email_acesso, senha_acesso } = req.body || {};
+    if (!nome) return res.status(400).json({ error: 'Nome obrigatório.' });
+    const r = await query(`INSERT INTO movatak_vendedores (cliente_id, nome, comando, email_acesso, senha_hash, acesso_token) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, nome, comando, email_acesso, acesso_token`,
+      [req.clienteId, String(nome).trim(), comando ? String(comando).trim().toLowerCase() : null, email_acesso || null, hashSenha(senha_acesso), gerarToken('vend')]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/app/vendedores/:id', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.editar_vendedores) return res.status(403).json({ error: 'Este cliente não tem permissão para editar vendedores.' });
+    const { nome, comando, email_acesso, senha_acesso } = req.body || {};
+    const campos = [], valores = [];
+    let idx = 1;
+    if (nome !== undefined) { campos.push('nome = $' + idx++); valores.push(String(nome).trim()); }
+    if (comando !== undefined) { campos.push('comando = $' + idx++); valores.push(comando ? String(comando).trim().toLowerCase() : null); }
+    if (email_acesso !== undefined) { campos.push('email_acesso = $' + idx++); valores.push(email_acesso ? String(email_acesso).trim().toLowerCase() : null); }
+    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenha(senha_acesso)); }
+    if (!campos.length) return res.json({ ok: true });
+    valores.push(req.clienteId, req.params.id);
+    const r = await query(`UPDATE movatak_vendedores SET ${campos.join(', ')} WHERE cliente_id = $${idx++} AND id = $${idx} RETURNING id, nome, comando, email_acesso, acesso_token`, valores);
+    if (!r.rows.length) return res.status(404).json({ error: 'Vendedor não encontrado.' });
+    res.json({ ok: true, vendedor: r.rows[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
+  try {
+    if (!req.clientePermissoes.editar_campanhas) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar campanhas.' });
+    const { nome, gatilho, verba_diaria } = req.body || {};
+    if (!nome || !gatilho) return res.status(400).json({ error: 'Nome e gatilho são obrigatórios.' });
+    const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, ativo) VALUES ($1,$2,$3,$4,true) RETURNING *`,
+      [req.clienteId, String(nome).trim(), String(gatilho).trim(), verba_diaria ? parseFloat(verba_diaria) : null]);
+    res.json(r.rows[0]);
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // Atualizar whatsapp_dono
@@ -1974,6 +2191,83 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
     );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+
+// Atualizar acesso do vendedor ao portal individual
+app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) => {
+  try {
+    const { email_acesso, senha_acesso, nome, comando } = req.body || {};
+    const campos = [];
+    const valores = [];
+    let idx = 1;
+    if (nome !== undefined) { campos.push('nome = $' + idx++); valores.push(String(nome).trim()); }
+    if (email_acesso !== undefined) { campos.push('email_acesso = $' + idx++); valores.push(email_acesso ? String(email_acesso).trim().toLowerCase() : null); }
+    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenha(senha_acesso)); }
+    if (comando !== undefined) { campos.push('comando = $' + idx++); valores.push(comando ? String(comando).trim().toLowerCase() : null); }
+    if (!campos.length) return res.json({ ok: true });
+    valores.push(req.params.id);
+    const r = await query(`UPDATE movatak_vendedores SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id, nome, comando, email_acesso, acesso_token`, valores);
+    if (!r.rows.length) return res.status(404).json({ error: 'Vendedor não encontrado.' });
+    res.json({ ok: true, vendedor: r.rows[0] });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/vendedor/login', async (req, res) => {
+  try {
+    const { email, senha } = req.body || {};
+    if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
+    const r = await query(
+      `SELECT v.id, v.nome, v.email_acesso, v.acesso_token, c.nome AS cliente_nome
+         FROM movatak_vendedores v
+         JOIN movatak_clientes c ON c.id = v.cliente_id
+        WHERE LOWER(v.email_acesso) = LOWER($1) AND v.senha_hash = $2 AND v.ativo = true AND c.ativo = true
+        LIMIT 1`,
+      [String(email).trim().toLowerCase(), hashSenha(senha)]
+    );
+    if (!r.rows.length) return res.status(401).json({ error: 'Acesso inválido.' });
+    res.json({ token: r.rows[0].acesso_token, vendedor: { nome: r.rows[0].nome, cliente_nome: r.rows[0].cliente_nome } });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/vendedor/resumo', authVendedor, async (req, res) => {
+  try {
+    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
+    const periodoSQL = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const m = await query(
+      `SELECT COUNT(l.id)::int AS leads_atribuidos,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'followup')::int AS em_followup,
+              COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE)::int AS leads_hoje,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.criado_em) = CURRENT_DATE)::int AS vendas_hoje
+         FROM movatak_leads l
+        WHERE l.vendedor_id = $1 ${periodoSQL}`,
+      [req.vendedor.id]
+    );
+    const ranking = await query(
+      `SELECT v.nome,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas
+         FROM movatak_vendedores v
+         LEFT JOIN movatak_leads l ON l.vendedor_id = v.id AND l.criado_em >= NOW() - INTERVAL '30 days'
+        WHERE v.cliente_id = $1 AND v.ativo = true
+        GROUP BY v.id, v.nome
+        ORDER BY vendas DESC`,
+      [req.vendedor.cliente_id]
+    );
+    const eventos = await query(
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em
+         FROM movatak_leads l
+        WHERE l.vendedor_id = $1
+        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
+        LIMIT 30`,
+      [req.vendedor.id]
+    );
+    const row = m.rows[0] || {};
+    const total = parseInt(row.leads_atribuidos || 0);
+    const vendas = parseInt(row.vendas || 0);
+    res.json({ vendedor: req.vendedor, periodo_dias: dias, ...row, taxa_conversao: total ? ((vendas/total)*100).toFixed(1) : '0.0', ranking: ranking.rows, leads: eventos.rows });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 // ============================================================
