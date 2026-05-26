@@ -368,7 +368,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.1.0-campanhas-atribuicao</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.1.1-campanhas-templates-fix</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -442,7 +442,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.0-campanhas-atribuicao';
+const PAINEL_VERSION = 'v2.1.1-campanhas-templates-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -1479,8 +1479,10 @@ async function cancelarCriarTemplateFollowup() {
 }
 
 async function salvarTemplateFollowupAtual() {
+  const statusEl = document.getElementById('fu-template-status');
+  const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Salvar modelo'));
   const nome = (document.getElementById('fu-template-nome')?.value || '').trim();
-  if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome do template.'; return; }
+  if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome do template.'; if(statusEl) statusEl.textContent=''; return; }
 
   const comandosFromInput = (id) => (document.getElementById(id)?.value || '')
     .split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
@@ -1498,11 +1500,14 @@ async function salvarTemplateFollowupAtual() {
   };
 
   if (!followup_v2.fu1.msg1 && !followup_v2.fu1.msg2 && !followup_v2.fu2.msg1 && !followup_v2.fu2.msg2 && !followup_v2.fu2.msg3) {
-    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem antes de criar o template.';
+    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem do FU1 ou FU2 antes de criar o template.';
+    if(statusEl) statusEl.textContent='';
     return;
   }
 
   try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Salvando template...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
     const res = await api('/movatak/admin/clientes/' + fuId + '/templates-followup', {
       method: 'POST',
       body: JSON.stringify({
@@ -1517,16 +1522,19 @@ async function salvarTemplateFollowupAtual() {
         }
       })
     });
-    document.getElementById('fu-err').textContent = 'Template criado com sucesso.';
+    document.getElementById('fu-err').textContent = '';
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Template criado com sucesso.'; }
     await carregarTemplatesFollowup();
     const sel = document.getElementById('fu-template-select');
     if (sel && res.id) sel.value = res.id;
     cancelarCriarTemplateFollowup();
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao criar template: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao salvar template.'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar modelo'; }
   }
 }
-
 async function carregarCampanhas(id) {
   const box = document.getElementById('fu-campanhas-box');
   if (!box) return;
@@ -1558,6 +1566,7 @@ async function carregarCampanhas(id) {
 }
 
 async function adicionarCampanha() {
+  const statusEl = document.getElementById('fu-campanha-status');
   const nome = document.getElementById('fu-campanha-nome').value.trim();
   const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
   const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
@@ -1565,20 +1574,28 @@ async function adicionarCampanha() {
   const template_id = document.getElementById('fu-campanha-template').value;
   if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
   if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
+  if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
   try {
+    const btn = event?.target;
+    if (btn) { btn.disabled = true; btn.textContent = 'Adicionando...'; }
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Cadastrando campanha...'; }
     await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
       method: 'POST',
       body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
     });
     ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('fu-campanha-template').value = '';
-    carregarCampanhas(fuId);
-    document.getElementById('fu-err').textContent = 'Campanha cadastrada com gatilho, investimento e template vinculados.';
+    await carregarCampanhas(fuId);
+    document.getElementById('fu-err').textContent = '';
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha cadastrada com gatilho, investimento e template vinculados.'; }
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao cadastrar campanha: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao cadastrar campanha.'; }
+  } finally {
+    const btn = event?.target;
+    if (btn) { btn.disabled = false; btn.textContent = 'Adicionar'; }
   }
 }
-
 
 async function marcarLeadCliente(leadId) {
   try {
@@ -1624,6 +1641,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
         <div class="fu-hint">O template será criado com os textos atuais deste cliente. Preencha ou ajuste os campos antes de salvar.</div>
       </div>
       <div class="fu-hint">Aplicar substitui as mensagens atuais. Criar template salva os campos atuais como modelo reutilizável.</div>
+      <div id="fu-template-status" class="fu-hint" style="margin-top:8px"></div>
     </div>
 
     <!-- BLOCO 1: GATILHO -->
@@ -1687,6 +1705,7 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
         <button class="btn-add-small" onclick="adicionarCampanha()">Adicionar</button>
       </div>
       <div class="fu-hint">Use uma frase-gatilho distinta para cada campanha. Quando o lead chega pelo WhatsApp, o CRM grava essa campanha no lead e usa essa atribuição até a venda.</div>
+      <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
       <div id="fu-campanhas-box"></div>
     </div>
 
