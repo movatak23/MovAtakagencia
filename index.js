@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.3-campanhas-duplicadas-botao-fix';
+const MOVATAK_VERSION = 'v2.1.4-cliente-cadastro-sem-gatilho';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -77,6 +77,19 @@ async function query(sql, params) {
   } finally {
     client.release();
   }
+}
+
+
+// Garante colunas usadas pelo portal do cliente e permissões do cadastro.
+async function garantirColunasClientesPortal() {
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS permissoes_portal JSONB DEFAULT '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb,
+    ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS followup_msgs_v2 JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS trigger_msg TEXT`, []);
+  await query(`UPDATE movatak_clientes
+     SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
+   WHERE permissoes_portal IS NULL`, []);
 }
 
 // Garante colunas usadas pelo portal individual do vendedor.
@@ -1086,15 +1099,17 @@ app.get('/movatak/admin/clientes', authMovatak, async (req, res) => {
 // Cadastrar cliente novo (onboarding)
 app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
   try {
+    await garantirColunasClientesPortal();
     const {
       nome, whatsapp, zapi_instance, zapi_token, zapi_client_token,
       trigger_msg, teto_cpl, planos, permissoes_portal
     } = req.body;
 
-    if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_client_token || !trigger_msg) {
-      return res.status(400).json({ error: 'Campos obrigatorios: nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg' });
+    if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_client_token) {
+      return res.status(400).json({ error: 'Campos obrigatorios: nome, whatsapp, zapi_instance, zapi_token, zapi_client_token' });
     }
 
+    const triggerPadrao = (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : 'USAR_GATILHOS_DAS_CAMPANHAS';
     const app_token = gerarToken('mvtk');
 
     const r = await query(
@@ -1102,7 +1117,7 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
          (nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, app_token, permissoes_portal)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
        RETURNING id, app_token`,
-      [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl || null, app_token, JSON.stringify(normalizarPermissoes(permissoes_portal))]
+      [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, triggerPadrao, teto_cpl || null, app_token, JSON.stringify(normalizarPermissoes(permissoes_portal))]
     );
 
     const clienteId = r.rows[0].id;
@@ -1125,6 +1140,7 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
 // Buscar dados de um cliente para edição (sem expor token/client-token)
 app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
+    await garantirColunasClientesPortal();
     const r = await query(
       `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal
        FROM movatak_clientes WHERE id = $1`,
@@ -1140,15 +1156,17 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 // Editar dados de um cliente. Token e client-token só são alterados se enviados.
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
+    await garantirColunasClientesPortal();
     const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal } = req.body;
 
-    if (!nome || !whatsapp || !zapi_instance || !trigger_msg) {
-      return res.status(400).json({ error: 'Nome, WhatsApp, Instance ID e frase-gatilho sao obrigatorios.' });
+    if (!nome || !whatsapp || !zapi_instance) {
+      return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
     }
 
+    const triggerPadrao = (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : 'USAR_GATILHOS_DAS_CAMPANHAS';
     // Monta o UPDATE dinamicamente — token/client-token só entram se preenchidos
     const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
-    const valores = [nome, whatsapp, zapi_instance, trigger_msg, teto_cpl ? parseFloat(teto_cpl) : null];
+    const valores = [nome, whatsapp, zapi_instance, triggerPadrao, teto_cpl ? parseFloat(teto_cpl) : null];
     let idx = 6;
     if (permissoes_portal) { campos.push('permissoes_portal = $' + idx + '::jsonb'); valores.push(JSON.stringify(normalizarPermissoes(permissoes_portal))); idx++; }
 
