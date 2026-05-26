@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.0-campanhas-atribuicao';
+const MOVATAK_VERSION = 'v2.1.1-campanhas-templates-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1588,6 +1588,7 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
 // Campanhas no portal do cliente
 app.get('/movatak/app/campanhas', authCliente, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     if (!req.clientePermissoes.ver_campanhas) return res.json([]);
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
     const periodo = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
@@ -1708,6 +1709,7 @@ app.patch('/movatak/app/vendedores/:id', authCliente, async (req, res) => {
 
 app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     if (!req.clientePermissoes.editar_campanhas) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar campanhas.' });
     const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
@@ -1715,6 +1717,11 @@ app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória.' });
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
     const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
+    const duplicada = await query(
+      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
+      [req.clienteId, gatilhoFinal]
+    );
+    if (duplicada.rows.length) return res.status(400).json({ error: 'Já existe campanha ativa com essa frase-gatilho: ' + duplicada.rows[0].nome });
     const templateDbId = await resolverTemplateCampanha(req.clienteId, template_id);
     const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo) VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`,
       [req.clienteId, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId]);
@@ -2699,8 +2706,78 @@ function erroEstruturaBanco(e) {
   return msg.includes('does not exist') || msg.includes('não existe') || msg.includes('nao existe') || msg.includes('column') || msg.includes('relation');
 }
 
+async function garantirEstruturaCampanhasTemplates() {
+  // Proteção contra migrações parciais no Railway. Mantém o painel funcionando
+  // mesmo quando alguma versão anterior não criou todas as colunas.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_followup_templates (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER,
+    nome TEXT NOT NULL,
+    trigger_msg TEXT,
+    followup_v2 JSONB DEFAULT '{}'::jsonb,
+    boas_vindas_msg TEXT,
+    comandos JSONB DEFAULT '{}'::jsonb,
+    ativo BOOLEAN DEFAULT true,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await query(`CREATE TABLE IF NOT EXISTS movatak_campanhas (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    nome TEXT NOT NULL,
+    gatilho TEXT,
+    verba_diaria NUMERIC,
+    investimento_tipo TEXT DEFAULT 'diario',
+    investimento_valor NUMERIC,
+    template_id INTEGER,
+    ativo BOOLEAN DEFAULT true,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`);
+
+  await query(`ALTER TABLE movatak_followup_templates
+    ADD COLUMN IF NOT EXISTS cliente_id INTEGER,
+    ADD COLUMN IF NOT EXISTS nome TEXT,
+    ADD COLUMN IF NOT EXISTS trigger_msg TEXT,
+    ADD COLUMN IF NOT EXISTS followup_v2 JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS boas_vindas_msg TEXT,
+    ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW()`);
+
+  await query(`ALTER TABLE movatak_campanhas
+    ADD COLUMN IF NOT EXISTS cliente_id INTEGER,
+    ADD COLUMN IF NOT EXISTS nome TEXT,
+    ADD COLUMN IF NOT EXISTS gatilho TEXT,
+    ADD COLUMN IF NOT EXISTS verba_diaria NUMERIC,
+    ADD COLUMN IF NOT EXISTS investimento_tipo TEXT DEFAULT 'diario',
+    ADD COLUMN IF NOT EXISTS investimento_valor NUMERIC,
+    ADD COLUMN IF NOT EXISTS template_id INTEGER,
+    ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`);
+
+  await query(`ALTER TABLE movatak_campanhas ALTER COLUMN gatilho DROP NOT NULL`).catch(() => null);
+  await query(`UPDATE movatak_campanhas
+                 SET investimento_valor = COALESCE(investimento_valor, verba_diaria),
+                     investimento_tipo = COALESCE(investimento_tipo, 'diario'),
+                     atualizado_em = COALESCE(atualizado_em, NOW())
+               WHERE investimento_valor IS NULL OR investimento_tipo IS NULL OR atualizado_em IS NULL`).catch(() => null);
+
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS campanha_id INTEGER,
+    ADD COLUMN IF NOT EXISTS campanha_id_ultimo_toque INTEGER,
+    ADD COLUMN IF NOT EXISTS template_id_origem INTEGER,
+    ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT`).catch(() => null);
+
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_cliente_ativo ON movatak_campanhas(cliente_id, ativo)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_template ON movatak_campanhas(template_id)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_campanha ON movatak_leads(campanha_id)`).catch(() => null);
+}
+
 
 async function resolverTemplateCampanha(clienteId, templateRef) {
+  await garantirEstruturaCampanhasTemplates();
   const ref = String(templateRef || '').trim();
   if (!ref) return null;
   if (ref.startsWith('custom:')) {
@@ -2722,6 +2799,7 @@ async function resolverTemplateCampanha(clienteId, templateRef) {
 
 app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     const r = await query(
       `SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em,
               t.nome AS template_nome,
@@ -2750,12 +2828,18 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
 
 app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
     const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
     const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
+    const duplicada = await query(
+      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
+      [req.params.id, gatilhoFinal]
+    );
+    if (duplicada.rows.length) return res.status(400).json({ error: 'Já existe campanha ativa com essa frase-gatilho: ' + duplicada.rows[0].nome });
     const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
     const r = await query(
       `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo)
@@ -2765,13 +2849,14 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
     res.json(r.rows[0]);
   } catch (e) {
     console.error('[campanhas][criar]', e.message);
-    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de campanhas não existe ou está desatualizada. Rode a MIGRACOES-v2.0.2.sql no PostgreSQL do Railway.' });
+    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de campanhas não existe ou está desatualizada. Rode a MIGRACOES-v2.1.1.sql no PostgreSQL do Railway.' });
     res.status(500).json({ error: e.message });
   }
 });
 
 app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo } = req.body || {};
     const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
     const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
@@ -2795,6 +2880,7 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
 });
 
 async function listarTemplatesCustom(clienteId) {
+  await garantirEstruturaCampanhasTemplates();
   const r = await query(
     `SELECT id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, criado_em
        FROM movatak_followup_templates
@@ -2807,6 +2893,7 @@ async function listarTemplatesCustom(clienteId) {
 
 app.get('/movatak/admin/templates-followup', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     const clienteId = req.query.cliente_id || req.query.clienteId || null;
     const padroes = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({
       id,
@@ -2833,6 +2920,7 @@ app.get('/movatak/admin/templates-followup', authMovatak, async (req, res) => {
 
 app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     const body = req.body || {};
     const nome = String(body.nome || '').trim();
     const followup = body.followup_v2 || body.followup || {};
@@ -2856,13 +2944,14 @@ app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (r
     res.json({ ok: true, id: 'custom:' + r.rows[0].id, nome: r.rows[0].nome });
   } catch (e) {
     console.error('[templates][criar]', e.message);
-    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de templates não existe no banco. Rode a MIGRACOES-v1.9.1.sql no PostgreSQL do Railway.' });
+    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de templates não existe no banco. Rode a MIGRACOES-v2.1.1.sql no PostgreSQL do Railway.' });
     res.status(500).json({ error: e.message });
   }
 });
 
 app.post('/movatak/admin/clientes/:id/aplicar-template', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaCampanhasTemplates();
     const templateId = String((req.body || {}).template || '').trim();
     let t = null;
 
