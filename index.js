@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.1-campanhas-templates-fix';
+const MOVATAK_VERSION = 'v2.1.2-campanhas-templates-delete-ux';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -288,6 +288,7 @@ async function localizarCampanhaPorGatilho(clienteId, texto) {
          LEFT JOIN movatak_followup_templates t ON t.id = c.template_id AND t.ativo = true
         WHERE c.cliente_id = $1
           AND c.ativo = true
+          AND c.excluida_em IS NULL
           AND c.gatilho IS NOT NULL
           AND TRIM(c.gatilho) <> ''
         ORDER BY LENGTH(c.gatilho) DESC, c.criado_em DESC`,
@@ -1604,6 +1605,7 @@ app.get('/movatak/app/campanhas', authCliente, async (req, res) => {
          LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
          LEFT JOIN movatak_leads l ON l.campanha_id = c.id ${periodo}
         WHERE c.cliente_id = $1
+          AND c.excluida_em IS NULL
         GROUP BY c.id, t.nome
         ORDER BY c.ativo DESC, vendas DESC, leads DESC`,
       [req.clienteId]
@@ -1718,7 +1720,7 @@ app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
     const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
     const duplicada = await query(
-      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
+      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND excluida_em IS NULL AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
       [req.clienteId, gatilhoFinal]
     );
     if (duplicada.rows.length) return res.status(400).json({ error: 'Já existe campanha ativa com essa frase-gatilho: ' + duplicada.rows[0].nome });
@@ -2731,6 +2733,7 @@ async function garantirEstruturaCampanhasTemplates() {
     investimento_valor NUMERIC,
     template_id INTEGER,
     ativo BOOLEAN DEFAULT true,
+    excluida_em TIMESTAMPTZ,
     criado_em TIMESTAMPTZ DEFAULT NOW(),
     atualizado_em TIMESTAMPTZ DEFAULT NOW()
   )`);
@@ -2743,6 +2746,7 @@ async function garantirEstruturaCampanhasTemplates() {
     ADD COLUMN IF NOT EXISTS boas_vindas_msg TEXT,
     ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS excluida_em TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW()`);
 
   await query(`ALTER TABLE movatak_campanhas
@@ -2754,6 +2758,7 @@ async function garantirEstruturaCampanhasTemplates() {
     ADD COLUMN IF NOT EXISTS investimento_valor NUMERIC,
     ADD COLUMN IF NOT EXISTS template_id INTEGER,
     ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS excluida_em TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`);
 
@@ -2813,6 +2818,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
          LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
          LEFT JOIN movatak_leads l ON l.campanha_id = c.id
         WHERE c.cliente_id = $1
+          AND c.excluida_em IS NULL
         GROUP BY c.id, t.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
@@ -2836,7 +2842,7 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
     const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
     const duplicada = await query(
-      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
+      `SELECT id, nome FROM movatak_campanhas WHERE cliente_id = $1 AND ativo = true AND excluida_em IS NULL AND LOWER(TRIM(gatilho)) = LOWER(TRIM($2)) LIMIT 1`,
       [req.params.id, gatilhoFinal]
     );
     if (duplicada.rows.length) return res.status(400).json({ error: 'Já existe campanha ativa com essa frase-gatilho: ' + duplicada.rows[0].nome });
@@ -2877,6 +2883,60 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
     if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+app.delete('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaCampanhasTemplates();
+    const r = await query(
+      `UPDATE movatak_campanhas
+          SET ativo = false,
+              excluida_em = NOW(),
+              atualizado_em = NOW()
+        WHERE id = $1 AND excluida_em IS NULL
+        RETURNING id, nome`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada ou já excluída.' });
+    res.json({ ok: true, campanha: r.rows[0] });
+  } catch (e) {
+    console.error('[campanhas][excluir]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/movatak/admin/templates-followup/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaCampanhasTemplates();
+    const templateId = String(req.params.id || '').replace(/\D/g, '');
+    if (!templateId) return res.status(400).json({ error: 'Template inválido.' });
+
+    const usado = await query(
+      `SELECT COUNT(*)::int AS total
+         FROM movatak_campanhas
+        WHERE template_id = $1
+          AND ativo = true
+          AND excluida_em IS NULL`,
+      [templateId]
+    );
+    if (parseInt((usado.rows[0] || {}).total || 0, 10) > 0) {
+      return res.status(400).json({ error: 'Este template está vinculado a campanha ativa. Exclua a campanha ou troque o template antes.' });
+    }
+
+    const r = await query(
+      `UPDATE movatak_followup_templates
+          SET ativo = false
+        WHERE id = $1 AND ativo = true
+        RETURNING id, nome`,
+      [templateId]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Template personalizado não encontrado.' });
+    res.json({ ok: true, template: r.rows[0] });
+  } catch (e) {
+    console.error('[templates][excluir]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 async function listarTemplatesCustom(clienteId) {
