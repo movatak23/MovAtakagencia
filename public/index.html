@@ -368,7 +368,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.1.3-campanhas-duplicadas-botao-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.1.4-cliente-cadastro-sem-gatilho</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -386,10 +386,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label>WHATSAPP BUSINESS</label>
         <input type="text" id="f-whatsapp" placeholder="5581999990000">
       </div>
-      <div class="form-field">
-        <label>FRASE GATILHO DO ANÚNCIO</label>
-        <input type="text" id="f-trigger" placeholder="vim pelo anuncio">
-      </div>
+      <input type="hidden" id="f-trigger" value="">
       <div class="form-field">
         <label>Z-API INSTANCE ID</label>
         <input type="text" id="f-instance" placeholder="ID da instância">
@@ -442,7 +439,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.3-campanhas-duplicadas-botao-fix';
+const PAINEL_VERSION = 'v2.1.4-cliente-cadastro-sem-gatilho';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -862,14 +859,14 @@ async function abrirEdicao(id) {
 async function salvarEdicao() {
   const nome          = document.getElementById('f-nome').value.trim();
   const whatsapp      = document.getElementById('f-whatsapp').value.trim();
-  const trigger_msg   = document.getElementById('f-trigger').value.trim();
+  const trigger_msg   = (document.getElementById('f-trigger')?.value || '').trim();
   const zapi_instance = document.getElementById('f-instance').value.trim();
   const zapi_token    = document.getElementById('f-token').value.trim();
   const zapi_ct       = document.getElementById('f-client-token').value.trim();
   const cpl           = document.getElementById('f-cpl').value.trim();
 
-  if (!nome || !whatsapp || !trigger_msg || !zapi_instance) {
-    document.getElementById('modal-err').textContent = 'Nome, WhatsApp, Instance ID e frase-gatilho são obrigatórios.';
+  if (!nome || !whatsapp || !zapi_instance) {
+    document.getElementById('modal-err').textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.';
     return;
   }
 
@@ -903,15 +900,15 @@ function fecharModal() {
 async function salvarCliente() {
   const nome         = document.getElementById('f-nome').value.trim();
   const whatsapp     = document.getElementById('f-whatsapp').value.trim();
-  const trigger_msg  = document.getElementById('f-trigger').value.trim();
+  const trigger_msg  = (document.getElementById('f-trigger')?.value || '').trim();
   const zapi_instance= document.getElementById('f-instance').value.trim();
   const zapi_token   = document.getElementById('f-token').value.trim();
   const zapi_ct      = document.getElementById('f-client-token').value.trim();
   const cpl          = document.getElementById('f-cpl').value.trim();
   const planosTxt    = document.getElementById('f-planos').value.trim();
 
-  if (!nome || !whatsapp || !trigger_msg || !zapi_instance || !zapi_token || !zapi_ct) {
-    document.getElementById('modal-err').textContent = 'Preencha todos os campos obrigatórios.';
+  if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_ct) {
+    document.getElementById('modal-err').textContent = 'Preencha os campos obrigatórios: nome, WhatsApp, instância, token e client-token.';
     return;
   }
 
