@@ -13,7 +13,7 @@
 <body>
 <div class="login" id="login-screen"><div class="box"><div class="logo">M</div><h1>Seus Resultados</h1><p>Acompanhe vendas, leads, campanhas e follow-up em tempo real.</p><label>Código de acesso Movatak</label><input id="login-input" placeholder="mvtk_..." autocomplete="off"><button class="btn" style="width:100%;margin-top:16px" onclick="fazerLogin()">Entrar</button><div class="err" id="login-err"></div></div></div>
 <div class="app" id="app"><header><div class="hleft"><div class="logo" style="width:38px;height:38px;margin:0">M</div><div><div style="font-weight:800">Movatak</div><div class="small">Portal do Cliente</div></div></div><div style="display:flex;align-items:center;gap:12px"><span id="status" class="small"></span><button class="btn secondary" onclick="sair()">Sair</button></div></header><main>
-<div class="top"><div><h2 id="cliente-nome">Visão geral</h2><div class="small">Dashboard executivo de performance</div></div><div class="periodos"><button id="p0" onclick="setPeriodo(0)">Hoje</button><button id="p7" onclick="setPeriodo(7)">7 dias</button><button id="p30" onclick="setPeriodo(30)" class="active">30 dias</button><button id="p90" onclick="setPeriodo(90)">90 dias</button></div></div>
+<div class="top"><div><h2 id="cliente-nome">Visão geral</h2><div class="small">Dashboard executivo de performance</div></div><div class="periodos"><button id="p0" onclick="setPeriodo(0)" class="active">Hoje</button><button id="p7" onclick="setPeriodo(7)">7 dias</button><button id="p30" onclick="setPeriodo(30)">30 dias</button><button id="p90" onclick="setPeriodo(90)">90 dias</button></div></div>
 <div class="summary" id="resumo-executivo">Carregando resumo...</div>
 <div class="actions"><button class="btn secondary" id="btn-export" onclick="exportarCSV()">Exportar CSV</button><button class="btn secondary" onclick="carregar()">Atualizar agora</button></div>
 <div class="grid" id="cards"></div>
@@ -25,7 +25,7 @@
 <div class="footer">Movatak <span id="versao-painel">v2.1.6-conversao-data-fix</span></div>
 </main></div>
 <script>
-const API_BASE='https://movatakagencia-production.up.railway.app';const TOKEN_KEY='mvtk_cliente_token_v2';let token='',periodo=30,permissoes={};
+const API_BASE='https://movatakagencia-production.up.railway.app';const TOKEN_KEY='mvtk_cliente_token_v2';let token='',periodo=0,permissoes={};
 const $=id=>document.getElementById(id);const esc=v=>String(v??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
 async function api(path,opt={}){const res=await fetch(API_BASE+path,{...opt,headers:{'Content-Type':'application/json','x-app-token':token,...(opt.headers||{})}});if(res.status===401){sair();throw new Error('Token inválido.')}if(!res.ok){let t='Erro '+res.status;try{const j=await res.json();t=j.error||t}catch(e){}throw new Error(t)}const ct=res.headers.get('content-type')||'';return ct.includes('application/json')?res.json():res.text()}
 function fazerLogin(){const v=$('login-input').value.trim();if(!v){$('login-err').textContent='Informe o código de acesso.';return}token=v;api('/movatak/app/resumo?dias=7').then(()=>{localStorage.setItem(TOKEN_KEY,v);iniciar()}).catch(e=>{token='';$('login-err').textContent=e.message})}

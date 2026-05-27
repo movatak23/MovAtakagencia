@@ -305,9 +305,9 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     <div class="periodo-bar">
       <h2>Visão geral</h2>
       <div class="periodo-btns">
-        <button onclick="setPeriodo(0)" id="p0">Hoje</button>
+        <button onclick="setPeriodo(0)" id="p0" class="active">Hoje</button>
         <button onclick="setPeriodo(7)" id="p7">7 dias</button>
-        <button onclick="setPeriodo(30)" id="p30" class="active">30 dias</button>
+        <button onclick="setPeriodo(30)" id="p30">30 dias</button>
         <button onclick="setPeriodo(90)" id="p90">90 dias</button>
       </div>
     </div>
@@ -439,12 +439,12 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.6-conversao-data-fix';
+const PAINEL_VERSION = 'v2.1.7-default-hoje';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
 let secret = '';
-let periodoAtual = 30;
+let periodoAtual = 0;
 let tokenGerado  = '';
 let templatesFollowupCache = [];
 
