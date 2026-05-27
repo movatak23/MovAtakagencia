@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.4-cliente-cadastro-sem-gatilho';
+const MOVATAK_VERSION = 'v2.1.5-vendedor-comando-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -660,7 +660,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 
     // ---- Detecção de vendedor ----
     const vendedores = await query(
-      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
+      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true',
       [cliente.id]
     );
     const vendedorDetectado = vendedores.rows.find(v =>
@@ -893,7 +893,7 @@ async function montarRelatorioDiarioCliente(clienteId) {
        LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
         AND l.etapa = 'cliente'
         AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day'
-      WHERE v.cliente_id = $1 AND v.ativo = true
+      WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
       GROUP BY v.id, v.nome
       ORDER BY vendas DESC
       LIMIT 1`,
@@ -1364,7 +1364,7 @@ app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) 
       `SELECT id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em,
               CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha
          FROM movatak_vendedores
-        WHERE cliente_id = $1 AND ativo = true
+        WHERE cliente_id = $1 AND COALESCE(ativo, true) = true
         ORDER BY nome`,
       [req.params.id]
     );
@@ -1377,7 +1377,7 @@ app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) 
         `SELECT id, cliente_id, nome, NULL::text AS comando, NULL::text AS email_acesso,
                 NULL::text AS acesso_token, ativo, criado_em, false AS tem_senha
            FROM movatak_vendedores
-          WHERE cliente_id = $1 AND ativo = true
+          WHERE cliente_id = $1 AND COALESCE(ativo, true) = true
           ORDER BY nome`,
         [req.params.id]
       );
@@ -1427,7 +1427,7 @@ app.get('/movatak/admin/clientes/:id/ranking', authMovatak, async (req, res) => 
       `SELECT v.nome, COUNT(l.id) AS vendas, COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos
        FROM movatak_vendedores v
        LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
-       WHERE v.cliente_id = $1 AND v.ativo = true
+       WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
        GROUP BY v.id, v.nome
        ORDER BY fechamentos DESC`,
       [req.params.id]
@@ -1445,7 +1445,7 @@ app.get('/movatak/app/ranking', authCliente, async (req, res) => {
               COUNT(l.id) AS leads_atribuidos
        FROM movatak_vendedores v
        LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
-       WHERE v.cliente_id = $1 AND v.ativo = true
+       WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
        GROUP BY v.id, v.nome
        ORDER BY fechamentos DESC`,
       [req.clienteId]
@@ -1534,7 +1534,7 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
       const inv = await query(
         `SELECT COALESCE(SUM(COALESCE(investimento_valor, verba_diaria, 0)),0) AS total
            FROM movatak_campanhas
-          WHERE cliente_id = $1 AND ativo = true`,
+          WHERE cliente_id = $1 AND COALESCE(ativo, true) = true`,
         [id]
       );
       investimento_total_campanhas = inv.rows[0] ? inv.rows[0].total : null;
@@ -1686,7 +1686,7 @@ app.get('/movatak/app/configuracoes', authCliente, async (req, res) => {
   try {
     const dados = await query('SELECT followup_msgs_v2, boas_vindas_msg, trigger_msg, comandos, permissoes_portal FROM movatak_clientes WHERE id = $1', [req.clienteId]);
     const vendedores = req.clientePermissoes.editar_vendedores ? await query(
-      `SELECT id, nome, comando, email_acesso, acesso_token, CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true ORDER BY nome`, [req.clienteId]
+      `SELECT id, nome, comando, email_acesso, acesso_token, CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true ORDER BY nome`, [req.clienteId]
     ) : { rows: [] };
     let templates = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({ id, nome: t.nome, tipo: 'padrao' }));
     if (req.clientePermissoes.editar_campanhas || req.clientePermissoes.editar_followup) {
@@ -1786,6 +1786,13 @@ function normalizarTexto(t) {
 
 // Normalização mais agressiva para frase-gatilho de tráfego.
 // Corrige diferenças comuns como "PROV>>" vs "PROV >>", acentos e espaços duplicados.
+function normalizarComandoComparacao(t) {
+  return normalizarTexto(t)
+    .replace(/#\s+/g, '#')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizarGatilho(t) {
   return normalizarTexto(t)
     .replace(/\s*>>\s*/g, '>>')
@@ -1814,10 +1821,10 @@ function textoBateGatilho(texto, gatilho) {
 // Verifica se o texto contém algum dos comandos da lista
 function contemComando(texto, comandos) {
   if (!Array.isArray(comandos) || !comandos.length) return false;
-  const t = normalizarTexto(texto);
+  const t = normalizarComandoComparacao(texto);
   return comandos.some(cmd => {
-    const c = normalizarTexto(cmd);
-    return c && t.includes(c);
+    const c = normalizarComandoComparacao(cmd);
+    return c && (t === c || t.includes(c));
   });
 }
 
@@ -1969,7 +1976,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       logDebug('[zapi][fromMe] recebido', JSON.stringify({ texto, chatLid, telefone }));
 
       const rvPre = await query(
-        'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true',
+        'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true',
         [cliente.id]
       );
 
@@ -1995,8 +2002,24 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       }
 
       if (!rl || !rl.rows.length) {
-        console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + (chatLid || 'sem-chatLid') + ' telefone ' + (telefone || 'sem-telefone'));
-        return;
+        // Fallback controlado: se houver exatamente um lead aberto recente sem chat_lid, atribui o comando a ele.
+        // Isso cobre casos em que a Z-API muda/omite o chatLid do evento fromMe, sem abrir brecha para atribuir errado em massa.
+        const fallback = await query(
+          `SELECT * FROM movatak_leads
+            WHERE cliente_id = $1
+              AND etapa IN ('lead','followup')
+              AND criado_em >= NOW() - INTERVAL '48 hours'
+            ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC
+            LIMIT 2`,
+          [cliente.id]
+        );
+        if (fallback.rows.length === 1) {
+          rl = { rows: [fallback.rows[0]] };
+          console.log('[zapi] comando associado por fallback seguro ao unico lead aberto recente -> lead ' + fallback.rows[0].id);
+        } else {
+          console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + (chatLid || 'sem-chatLid') + ' telefone ' + (telefone || 'sem-telefone') + ' fallback_abertos=' + fallback.rows.length);
+          return;
+        }
       }
 
       const lead = rl.rows[0];
@@ -2248,7 +2271,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
 
     // Validação: não pode colidir com comando de vendedor já cadastrado
     const rv = await query(
-      'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND ativo = true AND comando IS NOT NULL',
+      'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true AND comando IS NOT NULL',
       [req.params.id]
     );
     const cmdsVendedores = rv.rows
@@ -2293,7 +2316,7 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
 
       // Não pode colidir com outro vendedor
       const ro = await query(
-        'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND id != $2 AND ativo = true AND comando IS NOT NULL',
+        'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND id != $2 AND COALESCE(ativo, true) = true AND comando IS NOT NULL',
         [clienteId, req.params.id]
       );
       if (ro.rows.some(r => String(r.comando).trim().toLowerCase() === comando)) {
@@ -2368,7 +2391,7 @@ app.get('/movatak/vendedor/resumo', authVendedor, async (req, res) => {
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas
          FROM movatak_vendedores v
          LEFT JOIN movatak_leads l ON l.vendedor_id = v.id AND l.criado_em >= NOW() - INTERVAL '30 days'
-        WHERE v.cliente_id = $1 AND v.ativo = true
+        WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
         GROUP BY v.id, v.nome
         ORDER BY vendas DESC`,
       [req.vendedor.cliente_id]
@@ -2978,7 +3001,7 @@ async function listarTemplatesCustom(clienteId) {
   const r = await query(
     `SELECT id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, criado_em
        FROM movatak_followup_templates
-      WHERE cliente_id = $1 AND ativo = true
+      WHERE cliente_id = $1 AND COALESCE(ativo, true) = true
       ORDER BY criado_em DESC`,
     [clienteId]
   );
