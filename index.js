@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.6-conversao-data-fix';
+const MOVATAK_VERSION = 'v2.1.7-default-hoje';
 
 const express = require('express');
 const { Pool } = require('pg');
