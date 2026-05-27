@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.1.5-vendedor-comando-fix';
+const MOVATAK_VERSION = 'v2.1.6-conversao-data-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -706,7 +706,7 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
     if (etiqueta === 'cliente' || vendedorDetectado) {
       if (etiqueta === 'cliente' || vendedorDetectado) {
         await query(
-          `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
+          `UPDATE movatak_leads SET etapa = 'cliente', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`,
           [lead.id]
         );
 
@@ -1004,7 +1004,7 @@ app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
          COUNT(*) FILTER (WHERE etapa = 'cliente')                              AS convertidos,
          COUNT(*) FILTER (WHERE etapa = 'followup')                             AS em_followup,
          COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                AS leads_hoje,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE) AS vendas_hoje,
          ROUND(
            100.0 * COUNT(*) FILTER (WHERE etapa = 'cliente') /
            NULLIF(COUNT(*) FILTER (WHERE etapa != 'descartado'), 0), 1
@@ -1083,7 +1083,7 @@ app.get('/movatak/admin/clientes', authMovatak, async (req, res) => {
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS convertidos,
               COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup,
               COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE) AS leads_hoje,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.criado_em) = CURRENT_DATE) AS vendas_hoje
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE) AS vendas_hoje
        FROM movatak_clientes c
        LEFT JOIN movatak_leads l ON l.cliente_id = c.id
        GROUP BY c.id
@@ -1479,20 +1479,23 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
     const id = req.clienteId;
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
       ? parseInt(req.query.dias) : 30;
-    const periodoSQL = dias === 0
-      ? "AND DATE(criado_em) = CURRENT_DATE"
-      : `AND criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const leadPeriodoSQL = dias === 0
+      ? "DATE(criado_em) = CURRENT_DATE"
+      : `criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const vendaPeriodoSQL = dias === 0
+      ? "DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE"
+      : `COALESCE(convertido_em, atualizado_em) >= NOW() - INTERVAL '${dias} days'`;
 
-    // Métricas do período
+    // Métricas do período: leads pela data de entrada; vendas pela data de conversão.
     const m = await query(
       `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente')      AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')     AS em_followup,
-         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                      AS leads_hoje,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje
+         COUNT(*) FILTER (WHERE etapa != 'descartado' AND ${leadPeriodoSQL})  AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND ${vendaPeriodoSQL})     AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')                           AS em_followup,
+         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)               AS leads_hoje,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE) AS vendas_hoje
        FROM movatak_leads
-       WHERE cliente_id = $1 ${periodoSQL}`,
+       WHERE cliente_id = $1`,
       [id]
     );
 
@@ -1512,11 +1515,11 @@ app.get('/movatak/app/resumo', authCliente, async (req, res) => {
     // Vendas por vendedor no período
     const v = await query(
       `SELECT vd.nome,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
-              COUNT(l.id) AS leads_atribuidos
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND ${vendaPeriodoSQL.replace(/COALESCE\(convertido_em, atualizado_em\)/g, 'COALESCE(l.convertido_em, l.atualizado_em)')}) AS fechamentos,
+              COUNT(l.id) FILTER (WHERE ${leadPeriodoSQL.replace(/criado_em/g, 'l.criado_em')}) AS leads_atribuidos
        FROM movatak_vendedores vd
-       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id ${periodoSQL.replace('criado_em', 'l.criado_em')}
-       WHERE vd.cliente_id = $1 AND vd.ativo = true
+       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id AND l.cliente_id = $1
+       WHERE vd.cliente_id = $1 AND COALESCE(vd.ativo, true) = true
        GROUP BY vd.id, vd.nome
        ORDER BY fechamentos DESC`,
       [id]
@@ -2040,7 +2043,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       }
       if (vendedorDetectado) {
         await query(
-          `UPDATE movatak_leads SET etapa = 'cliente', vendedor_id = $1, atualizado_em = NOW() WHERE id = $2`,
+          `UPDATE movatak_leads SET etapa = 'cliente', vendedor_id = $1, convertido_em = NOW(), atualizado_em = NOW() WHERE id = $2`,
           [vendedorDetectado.id, lead.id]
         );
         await query(
@@ -2055,7 +2058,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // -- Comando: convertido --
       if (contemComando(texto, comandos.convertido)) {
         await query(
-          `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
+          `UPDATE movatak_leads SET etapa = 'cliente', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`,
           [lead.id]
         );
         await query(
@@ -2086,7 +2089,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       if (contemComando(texto, comandos.desfazer)) {
         if (lead.etapa === 'cliente') {
           await query(
-            `UPDATE movatak_leads SET etapa = 'lead', vendedor_id = NULL, atualizado_em = NOW() WHERE id = $1`,
+            `UPDATE movatak_leads SET etapa = 'lead', vendedor_id = NULL, convertido_em = NULL, atualizado_em = NOW() WHERE id = $1`,
             [lead.id]
           );
           await registrarEventoLead(lead.id, cliente.id, 'venda_desfeita', 'Conversão revertida por comando', { comando: texto });
@@ -2375,15 +2378,16 @@ app.post('/movatak/vendedor/login', async (req, res) => {
 app.get('/movatak/vendedor/resumo', authVendedor, async (req, res) => {
   try {
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
-    const periodoSQL = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const leadPeriodoSQL = dias === 0 ? "DATE(l.criado_em) = CURRENT_DATE" : `l.criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const vendaPeriodoSQL = dias === 0 ? "DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE" : `COALESCE(l.convertido_em, l.atualizado_em) >= NOW() - INTERVAL '${dias} days'`;
     const m = await query(
-      `SELECT COUNT(l.id)::int AS leads_atribuidos,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
+      `SELECT COUNT(l.id) FILTER (WHERE ${leadPeriodoSQL})::int AS leads_atribuidos,
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND ${vendaPeriodoSQL})::int AS vendas,
               COUNT(l.id) FILTER (WHERE l.etapa = 'followup')::int AS em_followup,
               COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE)::int AS leads_hoje,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.criado_em) = CURRENT_DATE)::int AS vendas_hoje
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE)::int AS vendas_hoje
          FROM movatak_leads l
-        WHERE l.vendedor_id = $1 ${periodoSQL}`,
+        WHERE l.vendedor_id = $1`,
       [req.vendedor.id]
     );
     const ranking = await query(
@@ -2421,21 +2425,24 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
     const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
       ? parseInt(req.query.dias) : 30;
 
-    // Cláusula de período reutilizável
-    const periodoSQL = dias === 0
-      ? "AND DATE(criado_em) = CURRENT_DATE"
-      : `AND criado_em >= NOW() - INTERVAL '${dias} days'`;
+    // Períodos reutilizáveis: leads por data de entrada; vendas por data de conversão.
+    const leadPeriodoSQL = dias === 0
+      ? "DATE(criado_em) = CURRENT_DATE"
+      : `criado_em >= NOW() - INTERVAL '${dias} days'`;
+    const vendaPeriodoSQL = dias === 0
+      ? "DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE"
+      : `COALESCE(convertido_em, atualizado_em) >= NOW() - INTERVAL '${dias} days'`;
 
     // Métricas do cliente no período
     const m = await query(
       `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente')      AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')     AS em_followup,
-         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                      AS leads_hoje,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(criado_em) = CURRENT_DATE) AS vendas_hoje
+         COUNT(*) FILTER (WHERE etapa != 'descartado' AND ${leadPeriodoSQL})  AS total_leads,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND ${vendaPeriodoSQL})     AS convertidos,
+         COUNT(*) FILTER (WHERE etapa = 'followup')                           AS em_followup,
+         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)               AS leads_hoje,
+         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE) AS vendas_hoje
        FROM movatak_leads
-       WHERE cliente_id = $1 ${periodoSQL}`,
+       WHERE cliente_id = $1`,
       [id]
     );
 
@@ -2455,11 +2462,11 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
     // Vendas por vendedor no período
     const v = await query(
       `SELECT vd.nome,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
-              COUNT(l.id) AS leads_atribuidos
+              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND ${vendaPeriodoSQL.replace(/COALESCE\(convertido_em, atualizado_em\)/g, 'COALESCE(l.convertido_em, l.atualizado_em)')}) AS fechamentos,
+              COUNT(l.id) FILTER (WHERE ${leadPeriodoSQL.replace(/criado_em/g, 'l.criado_em')}) AS leads_atribuidos
        FROM movatak_vendedores vd
-       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id ${periodoSQL.replace('criado_em', 'l.criado_em')}
-       WHERE vd.cliente_id = $1 AND vd.ativo = true
+       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id AND l.cliente_id = $1
+       WHERE vd.cliente_id = $1 AND COALESCE(vd.ativo, true) = true
        GROUP BY vd.id, vd.nome
        ORDER BY fechamentos DESC`,
       [id]
@@ -3127,7 +3134,7 @@ app.patch('/movatak/admin/leads/:id/cliente', authMovatak, async (req, res) => {
   try {
     const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
     if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    await query(`UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`, [req.params.id]);
+    await query(`UPDATE movatak_leads SET etapa = 'cliente', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`, [req.params.id]);
     await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [req.params.id]);
     await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'cliente_manual', 'Lead marcado como cliente pelo painel');
     res.json({ ok: true });
