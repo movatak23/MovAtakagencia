@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.3.0-quest-imagens';
+const MOVATAK_VERSION = 'v2.1.7-default-hoje';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 
 const path = require('path');
 const app = express();
-app.use(express.json({ limit: '12mb' }));
+app.use(express.json());
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token');
@@ -162,13 +162,6 @@ const ZAPI_BASE = 'https://api.z-api.io/instances';
 async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
   await axios.post(url, { phone: telefone, message: mensagem }, {
-    headers: { 'Client-Token': clientToken }
-  });
-}
-
-async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-image`;
-  await axios.post(url, { phone: telefone, image: imageUrl, caption: caption || '' }, {
     headers: { 'Client-Token': clientToken }
   });
 }
@@ -2173,22 +2166,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     );
     const lead = rl.rows[0] || null;
 
-    // ===== QUESTIONÁRIO EM ANDAMENTO (venda consultiva) =====
-    // Se o lead está respondendo um questionário ativo, a mensagem é tratada
-    // pelo motor do questionário e não pela lógica de trigger/follow-up.
-    if (lead && cliente.questionario_ativo) {
-      const estQ = await query(
-        `SELECT * FROM movatak_questionario_estado
-          WHERE cliente_id = $1 AND telefone = $2 AND status = 'em_andamento'
-          ORDER BY id DESC LIMIT 1`,
-        [cliente.id, telefone]
-      ).catch(() => ({ rows: [] }));
-      if (estQ.rows.length) {
-        await processarRespostaQuestionario(cliente, lead, estQ.rows[0], texto);
-        return;
-      }
-    }
-
     // Calcula o gatilho antes de tratar lead existente.
     // Assim, se a mesma pessoa clicar no anúncio novamente, conseguimos reativar o FU1.
     const campanhaDetectada = await localizarCampanhaPorGatilho(cliente.id, texto);
@@ -2259,16 +2236,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id, telefone, body.senderName || null, chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
       );
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
-
-      if (cliente.questionario_ativo) {
-        const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid };
-        await iniciarQuestionario(cliente, leadObj);
-        console.log(`[zapi] Novo lead + questionario iniciado -> ${telefone} (${cliente.nome})`);
-      } else {
-        await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
-        await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
-        console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
-      }
+      await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
+      await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
+      console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
     console.error('[zapi] erro processamento:', e.message);
@@ -2892,310 +2862,6 @@ async function garantirEstruturaCampanhasTemplates() {
 }
 
 
-// ============================================================
-// Questionário consultivo — schema, motor e recomendação
-// ============================================================
-async function garantirEstruturaQuestionario() {
-  await query(`ALTER TABLE movatak_clientes
-    ADD COLUMN IF NOT EXISTS questionario_ativo BOOLEAN DEFAULT false,
-    ADD COLUMN IF NOT EXISTS questionario_intro TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_final TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_intro_imagem TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_final_imagem TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_passos JSONB DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS questionario_recomendacao JSONB DEFAULT '[]'::jsonb`).catch(() => null);
-
-  await query(`CREATE TABLE IF NOT EXISTS movatak_questionario_estado (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    lead_id INTEGER,
-    telefone TEXT NOT NULL,
-    passo_idx INTEGER DEFAULT 0,
-    respostas JSONB DEFAULT '{}'::jsonb,
-    status TEXT DEFAULT 'em_andamento',
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    atualizado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-
-  await query(`CREATE TABLE IF NOT EXISTS movatak_cobertura_cep (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    cep TEXT NOT NULL,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_quest_estado ON movatak_questionario_estado(cliente_id, telefone, status)`).catch(() => null);
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
-}
-
-function normalizarCep(cep) {
-  return String(cep || '').replace(/\D/g, '');
-}
-
-// Envia mensagem do questionário: com imagem (legenda junto) quando houver, senão texto.
-async function enviarMsgQuestionario(cliente, telefone, texto, imagem) {
-  if (imagem && String(imagem).trim()) {
-    return zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, String(imagem).trim(), texto);
-  }
-  return zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
-}
-
-// Upload de imagem para o Supabase Storage. Retorna a URL pública.
-async function uploadSupabase(buffer, contentType, ext) {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
-  const bucket = process.env.SUPABASE_BUCKET || 'movatak';
-  if (!base || !key) throw new Error('Storage não configurado: defina SUPABASE_URL e SUPABASE_SERVICE_KEY no Railway.');
-  const nome = 'quest/' + Date.now() + '_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
-  const url = `${base.replace(/\/$/, '')}/storage/v1/object/${bucket}/${nome}`;
-  await axios.post(url, buffer, {
-    headers: {
-      'Authorization': 'Bearer ' + key,
-      'Content-Type': contentType,
-      'x-upsert': 'true'
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity
-  });
-  return `${base.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${nome}`;
-}
-
-async function cepTemCobertura(clienteId, cep) {
-  try {
-    const c = normalizarCep(cep);
-    if (!c) return false;
-    const r = await query(
-      `SELECT 1 FROM movatak_cobertura_cep WHERE cliente_id = $1 AND $2 LIKE cep || '%' LIMIT 1`,
-      [clienteId, c]
-    );
-    return r.rows.length > 0;
-  } catch (e) {
-    console.error('[questionario][cobertura] erro:', e.message);
-    return false;
-  }
-}
-
-function montarTextoPergunta(passo) {
-  if (!passo) return '';
-  const base = passo.pergunta || '';
-  if (passo.tipo === 'sim_nao') {
-    return base + '\n\n1 - Sim\n2 - Não';
-  }
-  if (passo.tipo === 'opcoes') {
-    const ops = Array.isArray(passo.opcoes) ? passo.opcoes : [];
-    const lista = ops.map((o, i) => `${i + 1} - ${o}`).join('\n');
-    return base + (lista ? '\n\n' + lista : '');
-  }
-  return base; // texto e cep
-}
-
-function interpretarResposta(passo, texto) {
-  const t = String(texto || '').trim();
-  if (!t) return { ok: false };
-  if (passo.tipo === 'cep') {
-    const cep = normalizarCep(t);
-    if (cep.length < 8) return { ok: false, motivo: 'cep_invalido' };
-    return { ok: true, valor: cep.slice(0, 8) };
-  }
-  if (passo.tipo === 'sim_nao') {
-    const l = t.toLowerCase();
-    if (l === '1' || l === 'sim' || l === 's') return { ok: true, valor: 'Sim' };
-    if (l === '2' || l === 'nao' || l === 'não' || l === 'n') return { ok: true, valor: 'Não' };
-    return { ok: false };
-  }
-  if (passo.tipo === 'opcoes') {
-    const ops = Array.isArray(passo.opcoes) ? passo.opcoes : [];
-    const n = parseInt(t, 10);
-    if (!isNaN(n) && n >= 1 && n <= ops.length) return { ok: true, valor: ops[n - 1] };
-    const match = ops.find(o => String(o).trim().toLowerCase() === t.toLowerCase());
-    if (match) return { ok: true, valor: match };
-    return { ok: false };
-  }
-  return { ok: true, valor: t }; // texto livre
-}
-
-function avaliarCondicao(cond, respostas) {
-  if (!cond || !cond.campo) return false;
-  const bruto = respostas[cond.campo];
-  if (bruto === undefined || bruto === null) return false;
-  const op = cond.op || '=';
-  const alvo = cond.valor;
-  if (op === '>=' || op === '<=' || op === '>' || op === '<') {
-    const a = parseFloat(String(bruto).replace(/[^\d.,-]/g, '').replace(',', '.'));
-    const b = parseFloat(alvo);
-    if (isNaN(a) || isNaN(b)) return false;
-    if (op === '>=') return a >= b;
-    if (op === '<=') return a <= b;
-    if (op === '>') return a > b;
-    return a < b;
-  }
-  if (op === 'contains') {
-    return String(bruto).toLowerCase().includes(String(alvo).toLowerCase());
-  }
-  return String(bruto).trim().toLowerCase() === String(alvo).trim().toLowerCase();
-}
-
-async function calcularRecomendacao(cliente, respostas) {
-  try {
-    const regras = Array.isArray(cliente.questionario_recomendacao) ? cliente.questionario_recomendacao : [];
-    const rp = await query('SELECT id, nome, valor FROM movatak_planos WHERE cliente_id = $1 ORDER BY valor ASC NULLS LAST, id ASC', [cliente.id]);
-    const planos = rp.rows || [];
-    const planoPorId = id => planos.find(p => String(p.id) === String(id)) || null;
-    for (const regra of regras) {
-      const conds = Array.isArray(regra.condicoes) ? regra.condicoes : [];
-      const bate = conds.every(c => avaliarCondicao(c, respostas));
-      if (bate) {
-        const plano = planoPorId(regra.plano_id);
-        if (plano) return { plano, regra };
-      }
-    }
-    return { plano: null, regra: null };
-  } catch (e) {
-    console.error('[questionario][recomendacao] erro:', e.message);
-    return { plano: null, regra: null };
-  }
-}
-
-async function iniciarQuestionario(cliente, lead) {
-  try {
-    const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-    if (!passos.length) {
-      await agendarFollowupV2(lead.id, cliente.id, 1, true);
-      await enviarFollowupsPendentesDoLead(lead.id, 1);
-      return;
-    }
-    const nome = lead.nome ? (' ' + String(lead.nome).split(' ')[0]) : '';
-
-    // 1) boas-vindas
-    const boas = (cliente.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Obrigado pelo contato.').replace(/{nome}/g, nome);
-    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, boas);
-
-    // pausa o follow-up automático enquanto o questionário roda
-    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
-
-    // cria estado
-    await query(
-      `INSERT INTO movatak_questionario_estado (cliente_id, lead_id, telefone, passo_idx, respostas, status)
-       VALUES ($1, $2, $3, 0, '{}'::jsonb, 'em_andamento')`,
-      [cliente.id, lead.id, lead.telefone]
-    );
-
-    // 2) introdução (opcional, texto e/ou imagem)
-    const introTxt = (cliente.questionario_intro && String(cliente.questionario_intro).trim())
-      ? String(cliente.questionario_intro).replace(/{nome}/g, nome)
-      : '';
-    const introImg = cliente.questionario_intro_imagem || '';
-    if (introTxt || introImg) {
-      await enviarMsgQuestionario(cliente, lead.telefone, introTxt || ' ', introImg);
-    }
-
-    // 3) primeira pergunta
-    await enviarMsgQuestionario(cliente, lead.telefone, montarTextoPergunta(passos[0]), passos[0].imagem);
-
-    await registrarEventoLead(lead.id, cliente.id, 'questionario_iniciado', 'Questionário consultivo iniciado', { total_perguntas: passos.length });
-  } catch (e) {
-    console.error('[questionario][iniciar] erro:', e.message);
-  }
-}
-
-async function processarRespostaQuestionario(cliente, lead, estado, texto) {
-  try {
-    const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-    const idx = estado.passo_idx || 0;
-    const passo = passos[idx];
-    if (!passo) {
-      await query(`UPDATE movatak_questionario_estado SET status='concluido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
-      return;
-    }
-
-    const interp = interpretarResposta(passo, texto);
-    if (!interp.ok) {
-      const dica = interp.motivo === 'cep_invalido'
-        ? 'Não consegui ler o CEP. Me envia os 8 números, ex: 50000000.'
-        : 'Não entendi sua resposta.';
-      await enviarMsgQuestionario(cliente, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo), passo.imagem);
-      return;
-    }
-
-    const respostas = (estado.respostas && typeof estado.respostas === 'object') ? estado.respostas : {};
-    respostas[passo.id] = interp.valor;
-
-    let notaCep = '';
-    if (passo.tipo === 'cep') {
-      const coberto = await cepTemCobertura(cliente.id, interp.valor);
-      respostas._cobertura = coberto;
-      respostas._cep = interp.valor;
-      notaCep = coberto
-        ? '✅ Boa notícia: atendemos a sua região!'
-        : '⚠️ Vou confirmar a disponibilidade na sua região e já te retorno.';
-    }
-
-    const proxIdx = idx + 1;
-    if (proxIdx >= passos.length) {
-      await query(
-        `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$3`,
-        [proxIdx, JSON.stringify(respostas), estado.id]
-      );
-      if (notaCep) await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, notaCep);
-      await finalizarQuestionario(cliente, lead, respostas);
-    } else {
-      await query(
-        `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, atualizado_em=NOW() WHERE id=$3`,
-        [proxIdx, JSON.stringify(respostas), estado.id]
-      );
-      const prox = passos[proxIdx];
-      const txt = (notaCep ? notaCep + '\n\n' : '') + montarTextoPergunta(prox);
-      await enviarMsgQuestionario(cliente, lead.telefone, txt, prox.imagem);
-    }
-  } catch (e) {
-    console.error('[questionario][processar] erro:', e.message);
-  }
-}
-
-async function finalizarQuestionario(cliente, lead, respostas) {
-  try {
-    const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-    const rec = await calcularRecomendacao(cliente, respostas);
-    const nome = lead.nome ? (' ' + String(lead.nome).split(' ')[0]) : '';
-    const planoTxt = rec.plano
-      ? (rec.plano.nome + (rec.plano.valor != null ? ' — R$ ' + Number(rec.plano.valor).toFixed(2).replace('.', ',') : ''))
-      : 'um dos nossos planos';
-
-    if (rec.plano) {
-      await query(`UPDATE movatak_leads SET plano_id = $1, atualizado_em = NOW() WHERE id = $2`, [rec.plano.id, lead.id]).catch(() => null);
-    }
-
-    const finalTpl = (cliente.questionario_final && String(cliente.questionario_final).trim())
-      ? cliente.questionario_final
-      : 'Prontinho{nome}! Com base nas suas respostas, o plano ideal pra você é: {plano}. Um consultor já vai falar com você pra finalizar. 🙌';
-    const finalMsg = finalTpl.replace(/{nome}/g, nome).replace(/{plano}/g, planoTxt);
-    await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
-
-    const resumoLinhas = passos
-      .filter(p => respostas[p.id] !== undefined)
-      .map(p => `• ${p.pergunta_curta || p.pergunta}: ${respostas[p.id]}`);
-    const cobTxt = (respostas._cobertura === true) ? 'SIM' : (respostas._cobertura === false ? 'NÃO (verificar)' : '—');
-    const resumo =
-      '🔔 Lead qualificado pelo questionário!\n' +
-      `Nome: ${lead.nome || '—'}\n` +
-      `Fone: ${lead.telefone}\n` +
-      (respostas._cep ? `CEP: ${respostas._cep} | Cobertura: ${cobTxt}\n` : '') +
-      (resumoLinhas.length ? resumoLinhas.join('\n') + '\n' : '') +
-      `Plano sugerido: ${rec.plano ? rec.plano.nome : '— (definir manualmente)'}`;
-
-    const destino = cliente.whatsapp_dono || MOVATAK_ADMIN_WA;
-    if (destino) {
-      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, destino, resumo)
-        .catch(e => console.error('[questionario][resumo vendedor]', e.message));
-    }
-
-    await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
-  } catch (e) {
-    console.error('[questionario][finalizar] erro:', e.message);
-  }
-}
-
-
 async function resolverTemplateCampanha(clienteId, templateRef) {
   await garantirEstruturaCampanhasTemplates();
   const ref = String(templateRef || '').trim();
@@ -3525,121 +3191,6 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
 // ============================================================
 // Health check + Versão
 // ============================================================
-// ============================================================
-// API — Questionário consultivo (config por cliente + cobertura CEP)
-// ============================================================
-app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
-  try {
-    const dataUrl = (req.body && req.body.dataUrl) || '';
-    const m = /^data:(image\/(png|jpe?g|webp));base64,(.+)$/i.exec(dataUrl);
-    if (!m) return res.status(400).json({ error: 'Imagem inválida. Envie PNG, JPG ou WEBP.' });
-    const contentType = m[1].toLowerCase();
-    const ext = m[2].toLowerCase() === 'jpeg' ? 'jpg' : m[2].toLowerCase();
-    const buffer = Buffer.from(m[3], 'base64');
-    if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 8MB).' });
-    const url = await uploadSupabase(buffer, contentType, ext);
-    res.json({ ok: true, url });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(
-      `SELECT questionario_ativo, questionario_intro, questionario_final,
-              questionario_intro_imagem, questionario_final_imagem,
-              questionario_passos, questionario_recomendacao
-         FROM movatak_clientes WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const rp = await query('SELECT id, nome, valor FROM movatak_planos WHERE cliente_id = $1 ORDER BY valor ASC NULLS LAST, id ASC', [req.params.id]);
-    const cob = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({
-      ativo: !!r.rows[0].questionario_ativo,
-      intro: r.rows[0].questionario_intro || '',
-      final: r.rows[0].questionario_final || '',
-      intro_imagem: r.rows[0].questionario_intro_imagem || '',
-      final_imagem: r.rows[0].questionario_final_imagem || '',
-      passos: r.rows[0].questionario_passos || [],
-      recomendacao: r.rows[0].questionario_recomendacao || [],
-      planos: rp.rows,
-      cobertura_total: cob.rows[0].total
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao } = req.body || {};
-    await query(
-      `UPDATE movatak_clientes
-          SET questionario_ativo = COALESCE($1, questionario_ativo),
-              questionario_intro = $2,
-              questionario_final = $3,
-              questionario_intro_imagem = $4,
-              questionario_final_imagem = $5,
-              questionario_passos = $6::jsonb,
-              questionario_recomendacao = $7::jsonb
-        WHERE id = $8`,
-      [
-        typeof ativo === 'boolean' ? ativo : null,
-        intro || null,
-        final || null,
-        intro_imagem || null,
-        final_imagem || null,
-        JSON.stringify(Array.isArray(passos) ? passos : []),
-        JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
-        req.params.id
-      ]
-    );
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query('SELECT cep FROM movatak_cobertura_cep WHERE cliente_id = $1 ORDER BY cep ASC', [req.params.id]);
-    res.json({ total: r.rows.length, ceps: r.rows.map(x => x.cep) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const modo = (req.body && req.body.modo) || 'substituir';
-    const lista = String((req.body && req.body.ceps) || '')
-      .split(/[\n,;\s]+/)
-      .map(s => s.replace(/\D/g, ''))
-      .filter(Boolean)
-      .filter((v, i, a) => a.indexOf(v) === i);
-    if (modo === 'substituir') {
-      await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    }
-    let inseridos = 0;
-    for (const cep of lista) {
-      const r = await query(
-        `INSERT INTO movatak_cobertura_cep (cliente_id, cep) VALUES ($1, $2)
-         ON CONFLICT (cliente_id, cep) DO NOTHING`,
-        [req.params.id, cep]
-      );
-      inseridos += r.rowCount || 0;
-    }
-    const tot = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({ ok: true, inseridos, total: tot.rows[0].total });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 app.get('/movatak/health', (req, res) => {
   res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
 });
@@ -3654,5 +3205,4 @@ app.get('/movatak/version', (req, res) => {
 const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
-  garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
 });
