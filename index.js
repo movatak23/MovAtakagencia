@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.2.0-questionario';
+const MOVATAK_VERSION = 'v2.3.0-quest-imagens';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -13,7 +13,7 @@ const crypto = require('crypto');
 
 const path = require('path');
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '12mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token');
@@ -162,6 +162,13 @@ const ZAPI_BASE = 'https://api.z-api.io/instances';
 async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
   await axios.post(url, { phone: telefone, message: mensagem }, {
+    headers: { 'Client-Token': clientToken }
+  });
+}
+
+async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-image`;
+  await axios.post(url, { phone: telefone, image: imageUrl, caption: caption || '' }, {
     headers: { 'Client-Token': clientToken }
   });
 }
@@ -2893,6 +2900,8 @@ async function garantirEstruturaQuestionario() {
     ADD COLUMN IF NOT EXISTS questionario_ativo BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS questionario_intro TEXT,
     ADD COLUMN IF NOT EXISTS questionario_final TEXT,
+    ADD COLUMN IF NOT EXISTS questionario_intro_imagem TEXT,
+    ADD COLUMN IF NOT EXISTS questionario_final_imagem TEXT,
     ADD COLUMN IF NOT EXISTS questionario_passos JSONB DEFAULT '[]'::jsonb,
     ADD COLUMN IF NOT EXISTS questionario_recomendacao JSONB DEFAULT '[]'::jsonb`).catch(() => null);
 
@@ -2921,6 +2930,34 @@ async function garantirEstruturaQuestionario() {
 
 function normalizarCep(cep) {
   return String(cep || '').replace(/\D/g, '');
+}
+
+// Envia mensagem do questionário: com imagem (legenda junto) quando houver, senão texto.
+async function enviarMsgQuestionario(cliente, telefone, texto, imagem) {
+  if (imagem && String(imagem).trim()) {
+    return zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, String(imagem).trim(), texto);
+  }
+  return zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
+}
+
+// Upload de imagem para o Supabase Storage. Retorna a URL pública.
+async function uploadSupabase(buffer, contentType, ext) {
+  const base = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_KEY;
+  const bucket = process.env.SUPABASE_BUCKET || 'movatak';
+  if (!base || !key) throw new Error('Storage não configurado: defina SUPABASE_URL e SUPABASE_SERVICE_KEY no Railway.');
+  const nome = 'quest/' + Date.now() + '_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
+  const url = `${base.replace(/\/$/, '')}/storage/v1/object/${bucket}/${nome}`;
+  await axios.post(url, buffer, {
+    headers: {
+      'Authorization': 'Bearer ' + key,
+      'Content-Type': contentType,
+      'x-upsert': 'true'
+    },
+    maxBodyLength: Infinity,
+    maxContentLength: Infinity
+  });
+  return `${base.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${nome}`;
 }
 
 async function cepTemCobertura(clienteId, cep) {
@@ -3043,11 +3080,17 @@ async function iniciarQuestionario(cliente, lead) {
       [cliente.id, lead.id, lead.telefone]
     );
 
-    // 2) intro + primeira pergunta (mesma mensagem para não poluir)
-    const introBase = (cliente.questionario_intro && String(cliente.questionario_intro).trim())
+    // 2) introdução (opcional, texto e/ou imagem)
+    const introTxt = (cliente.questionario_intro && String(cliente.questionario_intro).trim())
       ? String(cliente.questionario_intro).replace(/{nome}/g, nome)
-      : 'Pra te indicar o plano ideal, vou te fazer algumas perguntas rápidas. 👇';
-    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, introBase + '\n\n' + montarTextoPergunta(passos[0]));
+      : '';
+    const introImg = cliente.questionario_intro_imagem || '';
+    if (introTxt || introImg) {
+      await enviarMsgQuestionario(cliente, lead.telefone, introTxt || ' ', introImg);
+    }
+
+    // 3) primeira pergunta
+    await enviarMsgQuestionario(cliente, lead.telefone, montarTextoPergunta(passos[0]), passos[0].imagem);
 
     await registrarEventoLead(lead.id, cliente.id, 'questionario_iniciado', 'Questionário consultivo iniciado', { total_perguntas: passos.length });
   } catch (e) {
@@ -3070,7 +3113,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
       const dica = interp.motivo === 'cep_invalido'
         ? 'Não consegui ler o CEP. Me envia os 8 números, ex: 50000000.'
         : 'Não entendi sua resposta.';
-      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo));
+      await enviarMsgQuestionario(cliente, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo), passo.imagem);
       return;
     }
 
@@ -3100,8 +3143,9 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
         `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, atualizado_em=NOW() WHERE id=$3`,
         [proxIdx, JSON.stringify(respostas), estado.id]
       );
-      const txt = (notaCep ? notaCep + '\n\n' : '') + montarTextoPergunta(passos[proxIdx]);
-      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, txt);
+      const prox = passos[proxIdx];
+      const txt = (notaCep ? notaCep + '\n\n' : '') + montarTextoPergunta(prox);
+      await enviarMsgQuestionario(cliente, lead.telefone, txt, prox.imagem);
     }
   } catch (e) {
     console.error('[questionario][processar] erro:', e.message);
@@ -3125,7 +3169,7 @@ async function finalizarQuestionario(cliente, lead, respostas) {
       ? cliente.questionario_final
       : 'Prontinho{nome}! Com base nas suas respostas, o plano ideal pra você é: {plano}. Um consultor já vai falar com você pra finalizar. 🙌';
     const finalMsg = finalTpl.replace(/{nome}/g, nome).replace(/{plano}/g, planoTxt);
-    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, finalMsg);
+    await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
 
     const resumoLinhas = passos
       .filter(p => respostas[p.id] !== undefined)
@@ -3484,11 +3528,27 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
 // ============================================================
 // API — Questionário consultivo (config por cliente + cobertura CEP)
 // ============================================================
+app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
+  try {
+    const dataUrl = (req.body && req.body.dataUrl) || '';
+    const m = /^data:(image\/(png|jpe?g|webp));base64,(.+)$/i.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: 'Imagem inválida. Envie PNG, JPG ou WEBP.' });
+    const contentType = m[1].toLowerCase();
+    const ext = m[2].toLowerCase() === 'jpeg' ? 'jpg' : m[2].toLowerCase();
+    const buffer = Buffer.from(m[3], 'base64');
+    if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 8MB).' });
+    const url = await uploadSupabase(buffer, contentType, ext);
+    res.json({ ok: true, url });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const r = await query(
-      `SELECT questionario_ativo, questionario_intro, questionario_final, questionario_passos, questionario_recomendacao
+      `SELECT questionario_ativo, questionario_intro, questionario_final,
+              questionario_intro_imagem, questionario_final_imagem,
+              questionario_passos, questionario_recomendacao
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -3499,6 +3559,8 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
       ativo: !!r.rows[0].questionario_ativo,
       intro: r.rows[0].questionario_intro || '',
       final: r.rows[0].questionario_final || '',
+      intro_imagem: r.rows[0].questionario_intro_imagem || '',
+      final_imagem: r.rows[0].questionario_final_imagem || '',
       passos: r.rows[0].questionario_passos || [],
       recomendacao: r.rows[0].questionario_recomendacao || [],
       planos: rp.rows,
@@ -3510,19 +3572,23 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
 app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
-    const { ativo, intro, final, passos, recomendacao } = req.body || {};
+    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao } = req.body || {};
     await query(
       `UPDATE movatak_clientes
           SET questionario_ativo = COALESCE($1, questionario_ativo),
               questionario_intro = $2,
               questionario_final = $3,
-              questionario_passos = $4::jsonb,
-              questionario_recomendacao = $5::jsonb
-        WHERE id = $6`,
+              questionario_intro_imagem = $4,
+              questionario_final_imagem = $5,
+              questionario_passos = $6::jsonb,
+              questionario_recomendacao = $7::jsonb
+        WHERE id = $8`,
       [
         typeof ativo === 'boolean' ? ativo : null,
         intro || null,
         final || null,
+        intro_imagem || null,
+        final_imagem || null,
         JSON.stringify(Array.isArray(passos) ? passos : []),
         JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
         req.params.id

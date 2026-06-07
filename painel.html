@@ -1096,8 +1096,11 @@ async function abrirQuestionario(id) {
       tipo: p.tipo || 'texto',
       pergunta: p.pergunta || '',
       pergunta_curta: p.pergunta_curta || '',
-      opcoes: Array.isArray(p.opcoes) ? p.opcoes : []
+      opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
+      imagem: p.imagem || ''
     }));
+    questState.introImagem = r.intro_imagem || '';
+    questState.finalImagem = r.final_imagem || '';
     questState.regras = (r.recomendacao || []).map(g => ({
       plano_id: g.plano_id != null ? String(g.plano_id) : '',
       condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
@@ -1108,6 +1111,8 @@ async function abrirQuestionario(id) {
     document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
     renderQuestPassos();
     renderQuestRegras();
+    renderQuestImg('intro');
+    renderQuestImg('final');
     carregarCobertura(id);
   } catch (e) {
     document.getElementById('quest-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -1144,6 +1149,7 @@ function renderQuestPassos() {
         <input type="text" class="fu-textarea quest-mini" placeholder="ID p/ regras (ex: pessoas)" value="${escAttr(p.id)}" oninput="questSetPasso(${i},'id',this.value)">
         <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
       </div>
+      ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
     </div>`;
   }).join('');
 }
@@ -1219,7 +1225,8 @@ async function salvarQuestionario() {
         tipo: p.tipo,
         pergunta: p.pergunta.trim(),
         pergunta_curta: (p.pergunta_curta || '').trim(),
-        opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : []
+        opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
+        imagem: p.imagem || ''
       }));
     const recomendacao = questState.regras
       .filter(g => g.plano_id)
@@ -1233,6 +1240,8 @@ async function salvarQuestionario() {
         ativo: document.getElementById('quest-ativo').checked,
         intro: document.getElementById('quest-intro').value,
         final: document.getElementById('quest-final').value,
+        intro_imagem: questState.introImagem || '',
+        final_imagem: questState.finalImagem || '',
         passos,
         recomendacao
       })
@@ -1275,6 +1284,52 @@ async function limparCobertura() {
     await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', { method: 'DELETE' });
     document.getElementById('quest-cob-total').textContent = '0 CEPs cadastrados';
   } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
+}
+
+function imgControl(url, uploadCall, removeCall) {
+  if (url) {
+    return `<div class="quest-img"><img src="${escAttr(url)}"><button class="quest-imglink" onclick="${removeCall}">remover imagem</button></div>`;
+  }
+  return `<label class="quest-imgbtn">📎 Adicionar imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="${uploadCall}"></label>`;
+}
+async function subirImagem(file) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('falha ao ler arquivo'));
+    r.readAsDataURL(file);
+  });
+  const r = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  return r.url;
+}
+async function questUploadPasso(i, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    questState.passos[i].imagem = await subirImagem(f);
+    document.getElementById('quest-err').textContent = '';
+    renderQuestPassos();
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveImgPasso(i) { questState.passos[i].imagem = ''; renderQuestPassos(); }
+function renderQuestImg(tipo) {
+  const url = tipo === 'intro' ? questState.introImagem : questState.finalImagem;
+  const el = document.getElementById('quest-' + tipo + '-img');
+  if (el) el.innerHTML = imgControl(url, `questUploadMidia('${tipo}',this)`, `questRemoveMidia('${tipo}')`);
+}
+async function questUploadMidia(tipo, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    const url = await subirImagem(f);
+    if (tipo === 'intro') questState.introImagem = url; else questState.finalImagem = url;
+    document.getElementById('quest-err').textContent = '';
+    renderQuestImg(tipo);
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveMidia(tipo) {
+  if (tipo === 'intro') questState.introImagem = ''; else questState.finalImagem = '';
+  renderQuestImg(tipo);
 }
 
 function escAttr(s) {
@@ -1361,6 +1416,11 @@ function escAttr(s) {
 #modal-quest .quest-del{color:var(--red)}
 #modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
 #modal-quest .quest-switch input{width:18px;height:18px}
+#modal-quest .quest-img{display:flex;align-items:center;gap:10px;margin-top:6px}
+#modal-quest .quest-img img{height:46px;border-radius:8px;border:1px solid var(--border2);object-fit:cover}
+#modal-quest .quest-imglink{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px}
+#modal-quest .quest-imgbtn{display:inline-block;margin-top:6px;font-size:12px;color:var(--text2);border:1px dashed var(--border2);border-radius:8px;padding:7px 12px;cursor:pointer}
+#modal-quest .quest-imgbtn:hover{color:var(--text);border-color:var(--accent)}
 </style>
 
 <div class="modal-overlay" id="modal-quest">
@@ -1376,6 +1436,7 @@ function escAttr(s) {
 
     <label class="fu-label" style="margin-top:0">Introdução (enviada após as boas-vindas)</label>
     <textarea class="fu-textarea" id="quest-intro" rows="2" placeholder="Pra te indicar o plano ideal, vou te fazer algumas perguntas rápidas. 👇"></textarea>
+    <div id="quest-intro-img"></div>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Perguntas</label>
     <div class="fu-hint" style="margin-bottom:10px">A ordem aqui é a ordem enviada. O <strong>ID</strong> é o nome do campo usado nas regras de recomendação.</div>
@@ -1389,6 +1450,7 @@ function escAttr(s) {
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
     <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você. 🙌"></textarea>
+    <div id="quest-final-img"></div>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Cobertura por CEP</label>
     <div class="fu-hint" style="margin-bottom:8px"><span id="quest-cob-total" style="color:var(--accent);font-weight:700">0 CEPs cadastrados</span>. Cole os CEPs atendidos (um por linha ou separados por vírgula). Aceita CEP completo ou prefixo (ex: 50000 cobre toda a faixa).</div>
