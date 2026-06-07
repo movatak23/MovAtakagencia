@@ -718,6 +718,7 @@ function renderClientes(clientes) {
       <td>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button>
+        <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Questionário</button>
       </td>
     </tr>`;
   }).join('');
@@ -1063,6 +1064,277 @@ async function carregarRanking(id) {
 
 // Auto refresh a cada 2 minutos
 setInterval(() => { if (secret) carregarTudo(); }, 120000);
+
+// ============================================================
+// QUESTIONÁRIO CONSULTIVO — editor por cliente
+// ============================================================
+let questState = { clienteId: null, passos: [], regras: [], planos: [] };
+let questSeq = 0;
+
+const QUEST_TIPOS = [
+  { v: 'texto',   t: 'Texto livre' },
+  { v: 'opcoes',  t: 'Opções (numeradas)' },
+  { v: 'sim_nao', t: 'Sim ou Não' },
+  { v: 'cep',     t: 'CEP (verifica cobertura)' }
+];
+const QUEST_OPS = [
+  { v: '=',        t: 'igual a' },
+  { v: 'contains', t: 'contém' },
+  { v: '>=',       t: 'maior ou igual' },
+  { v: '<=',       t: 'menor ou igual' }
+];
+
+async function abrirQuestionario(id) {
+  questState = { clienteId: id, passos: [], regras: [], planos: [] };
+  document.getElementById('quest-err').textContent = '';
+  document.getElementById('modal-quest').classList.add('open');
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/questionario');
+    questState.planos = r.planos || [];
+    questState.passos = (r.passos || []).map(p => ({
+      id: p.id || ('q' + (++questSeq)),
+      tipo: p.tipo || 'texto',
+      pergunta: p.pergunta || '',
+      pergunta_curta: p.pergunta_curta || '',
+      opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
+      imagem: p.imagem || ''
+    }));
+    questState.introImagem = r.intro_imagem || '';
+    questState.finalImagem = r.final_imagem || '';
+    questState.regras = (r.recomendacao || []).map(g => ({
+      plano_id: g.plano_id != null ? String(g.plano_id) : '',
+      condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
+    }));
+    document.getElementById('quest-ativo').checked = !!r.ativo;
+    document.getElementById('quest-intro').value = r.intro || '';
+    document.getElementById('quest-final').value = r.final || '';
+    document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
+    renderQuestPassos();
+    renderQuestRegras();
+    renderQuestImg('intro');
+    renderQuestImg('final');
+    carregarCobertura(id);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+function fecharQuestionario() {
+  document.getElementById('modal-quest').classList.remove('open');
+}
+
+function renderQuestPassos() {
+  const wrap = document.getElementById('quest-passos');
+  if (!questState.passos.length) {
+    wrap.innerHTML = '<div class="fu-hint">Nenhuma pergunta. Adicione a primeira abaixo.</div>';
+    return;
+  }
+  wrap.innerHTML = questState.passos.map((p, i) => {
+    const tipoSel = QUEST_TIPOS.map(o => `<option value="${o.v}" ${p.tipo === o.v ? 'selected' : ''}>${o.t}</option>`).join('');
+    const opcoesField = p.tipo === 'opcoes'
+      ? `<input type="text" class="fu-textarea quest-mini" placeholder="Opções separadas por vírgula. Ex: Trabalho, Estudo, Jogos" value="${escAttr(p.opcoes.join(', '))}" oninput="questSetPasso(${i},'opcoes',this.value)">`
+      : '';
+    return `<div class="quest-card">
+      <div class="quest-card-head">
+        <span class="quest-num">#${i + 1}</span>
+        <select class="quest-mini" onchange="questSetPasso(${i},'tipo',this.value)">${tipoSel}</select>
+        <span style="flex:1"></span>
+        <button class="quest-iconbtn" onclick="questMovePasso(${i},-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="quest-iconbtn" onclick="questMovePasso(${i},1)" ${i === questState.passos.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="quest-iconbtn quest-del" onclick="questRemovePasso(${i})">✕</button>
+      </div>
+      <input type="text" class="fu-textarea quest-mini" placeholder="Pergunta enviada ao lead" value="${escAttr(p.pergunta)}" oninput="questSetPasso(${i},'pergunta',this.value)">
+      ${opcoesField}
+      <div class="quest-row2">
+        <input type="text" class="fu-textarea quest-mini" placeholder="ID p/ regras (ex: pessoas)" value="${escAttr(p.id)}" oninput="questSetPasso(${i},'id',this.value)">
+        <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
+      </div>
+      ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
+    </div>`;
+  }).join('');
+}
+
+function questSetPasso(i, campo, valor) {
+  if (!questState.passos[i]) return;
+  if (campo === 'opcoes') {
+    questState.passos[i].opcoes = valor.split(',').map(s => s.trim()).filter(Boolean);
+  } else {
+    questState.passos[i][campo] = valor;
+  }
+  if (campo === 'tipo') renderQuestPassos();
+}
+function questAddPasso() {
+  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [] });
+  renderQuestPassos();
+}
+function questRemovePasso(i) { questState.passos.splice(i, 1); renderQuestPassos(); }
+function questMovePasso(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= questState.passos.length) return;
+  const t = questState.passos[i]; questState.passos[i] = questState.passos[j]; questState.passos[j] = t;
+  renderQuestPassos();
+}
+
+function renderQuestRegras() {
+  const wrap = document.getElementById('quest-regras');
+  const planoOpts = '<option value="">Selecione o plano</option>' +
+    questState.planos.map(p => `<option value="${p.id}">${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + p.valor : ''}</option>`).join('');
+  if (!questState.regras.length) {
+    wrap.innerHTML = '<div class="fu-hint">Nenhuma regra. A primeira regra que bater define o plano recomendado. Deixe uma regra sem condições no fim como padrão.</div>';
+    return;
+  }
+  wrap.innerHTML = questState.regras.map((g, gi) => {
+    const conds = (g.condicoes || []).map((c, ci) => {
+      const opOpts = QUEST_OPS.map(o => `<option value="${o.v}" ${c.op === o.v ? 'selected' : ''}>${o.t}</option>`).join('');
+      return `<div class="quest-cond">
+        <select class="quest-mini" onchange="questSetCond(${gi},${ci},'campo',this.value)"><option value="">campo</option>${questState.passos.map(p => `<option value="${escAttr(p.id)}" ${c.campo === p.id ? 'selected' : ''}>${escAttr(p.id)}</option>`).join('')}</select>
+        <select class="quest-mini" style="max-width:140px" onchange="questSetCond(${gi},${ci},'op',this.value)">${opOpts}</select>
+        <input type="text" class="fu-textarea quest-mini" placeholder="valor" value="${escAttr(c.valor)}" oninput="questSetCond(${gi},${ci},'valor',this.value)">
+        <button class="quest-iconbtn quest-del" onclick="questRemoveCond(${gi},${ci})">✕</button>
+      </div>`;
+    }).join('');
+    return `<div class="quest-card">
+      <div class="quest-card-head">
+        <span class="quest-num">Regra ${gi + 1}</span>
+        <select class="quest-mini" onchange="questSetRegra(${gi},'plano_id',this.value)">${planoOpts.replace(`value="${g.plano_id}"`, `value="${g.plano_id}" selected`)}</select>
+        <span style="flex:1"></span>
+        <button class="quest-iconbtn quest-del" onclick="questRemoveRegra(${gi})">✕</button>
+      </div>
+      <div class="fu-hint" style="margin:4px 0 8px">Todas as condições precisam bater (E). Sem condições = padrão.</div>
+      ${conds}
+      <button class="btn-add-small" style="margin-top:6px" onclick="questAddCond(${gi})">+ Condição</button>
+    </div>`;
+  }).join('');
+}
+function questSetRegra(gi, campo, valor) { if (questState.regras[gi]) questState.regras[gi][campo] = valor; }
+function questAddRegra() { questState.regras.push({ plano_id: '', condicoes: [] }); renderQuestRegras(); }
+function questRemoveRegra(gi) { questState.regras.splice(gi, 1); renderQuestRegras(); }
+function questAddCond(gi) { questState.regras[gi].condicoes.push({ campo: '', op: '=', valor: '' }); renderQuestRegras(); }
+function questRemoveCond(gi, ci) { questState.regras[gi].condicoes.splice(ci, 1); renderQuestRegras(); }
+function questSetCond(gi, ci, campo, valor) { if (questState.regras[gi] && questState.regras[gi].condicoes[ci]) questState.regras[gi].condicoes[ci][campo] = valor; }
+
+async function salvarQuestionario() {
+  const btn = document.getElementById('btn-quest-save');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  document.getElementById('quest-err').textContent = '';
+  try {
+    const passos = questState.passos
+      .filter(p => (p.pergunta || '').trim())
+      .map(p => ({
+        id: (p.id || '').trim() || ('q' + (++questSeq)),
+        tipo: p.tipo,
+        pergunta: p.pergunta.trim(),
+        pergunta_curta: (p.pergunta_curta || '').trim(),
+        opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
+        imagem: p.imagem || ''
+      }));
+    const recomendacao = questState.regras
+      .filter(g => g.plano_id)
+      .map(g => ({
+        plano_id: g.plano_id,
+        condicoes: (g.condicoes || []).filter(c => c.campo).map(c => ({ campo: c.campo, op: c.op || '=', valor: c.valor }))
+      }));
+    await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ativo: document.getElementById('quest-ativo').checked,
+        intro: document.getElementById('quest-intro').value,
+        final: document.getElementById('quest-final').value,
+        intro_imagem: questState.introImagem || '',
+        final_imagem: questState.finalImagem || '',
+        passos,
+        recomendacao
+      })
+    });
+    btn.textContent = '✓ Salvo';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar questionário'; }, 1500);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro ao salvar: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Salvar questionário';
+  }
+}
+
+async function carregarCobertura(id) {
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/cobertura');
+    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
+  } catch (e) { /* silencioso */ }
+}
+async function salvarCobertura() {
+  const btn = document.getElementById('btn-cob-save');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const modo = document.querySelector('input[name="cob-modo"]:checked').value;
+    const r = await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', {
+      method: 'POST',
+      body: JSON.stringify({ modo, ceps: document.getElementById('quest-ceps').value })
+    });
+    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
+    document.getElementById('quest-ceps').value = '';
+    btn.textContent = '✓ ' + (r.inseridos || 0) + ' adicionados';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar CEPs'; }, 1800);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro nos CEPs: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Salvar CEPs';
+  }
+}
+async function limparCobertura() {
+  if (!confirm('Apagar todos os CEPs cadastrados deste cliente?')) return;
+  try {
+    await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', { method: 'DELETE' });
+    document.getElementById('quest-cob-total').textContent = '0 CEPs cadastrados';
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
+}
+
+function imgControl(url, uploadCall, removeCall) {
+  if (url) {
+    return `<div class="quest-img"><img src="${escAttr(url)}"><button class="quest-imglink" onclick="${removeCall}">remover imagem</button></div>`;
+  }
+  return `<label class="quest-imgbtn">📎 Adicionar imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="${uploadCall}"></label>`;
+}
+async function subirImagem(file) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('falha ao ler arquivo'));
+    r.readAsDataURL(file);
+  });
+  const r = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  return r.url;
+}
+async function questUploadPasso(i, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    questState.passos[i].imagem = await subirImagem(f);
+    document.getElementById('quest-err').textContent = '';
+    renderQuestPassos();
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveImgPasso(i) { questState.passos[i].imagem = ''; renderQuestPassos(); }
+function renderQuestImg(tipo) {
+  const url = tipo === 'intro' ? questState.introImagem : questState.finalImagem;
+  const el = document.getElementById('quest-' + tipo + '-img');
+  if (el) el.innerHTML = imgControl(url, `questUploadMidia('${tipo}',this)`, `questRemoveMidia('${tipo}')`);
+}
+async function questUploadMidia(tipo, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    const url = await subirImagem(f);
+    if (tipo === 'intro') questState.introImagem = url; else questState.finalImagem = url;
+    document.getElementById('quest-err').textContent = '';
+    renderQuestImg(tipo);
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveMidia(tipo) {
+  if (tipo === 'intro') questState.introImagem = ''; else questState.finalImagem = '';
+  renderQuestImg(tipo);
+}
+
+function escAttr(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 </script>
 
 <div class="modal-overlay" id="modal-fu">
@@ -1126,6 +1398,75 @@ setInterval(() => { if (secret) carregarTudo(); }, 120000);
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharFU()">Cancelar</button>
       <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar mensagens</button>
+    </div>
+  </div>
+</div>
+<style>
+#modal-quest .quest-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px}
+#modal-quest .quest-card-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+#modal-quest .quest-num{font-size:12px;font-weight:700;color:var(--accent);font-family:var(--mono)}
+#modal-quest .quest-mini{min-height:auto!important;padding:9px 12px!important;resize:none;font-size:13px;margin:4px 0}
+#modal-quest select.quest-mini{background:var(--bg2);color:var(--text);border:1px solid var(--border2);border-radius:8px;max-width:200px}
+#modal-quest .quest-row2{display:flex;gap:8px}
+#modal-quest .quest-row2 .quest-mini{flex:1}
+#modal-quest .quest-cond{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+#modal-quest .quest-cond .quest-mini{flex:1}
+#modal-quest .quest-iconbtn{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;color:var(--text2);width:28px;height:28px;cursor:pointer;font-size:13px}
+#modal-quest .quest-iconbtn:disabled{opacity:.3;cursor:default}
+#modal-quest .quest-del{color:var(--red)}
+#modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+#modal-quest .quest-switch input{width:18px;height:18px}
+#modal-quest .quest-img{display:flex;align-items:center;gap:10px;margin-top:6px}
+#modal-quest .quest-img img{height:46px;border-radius:8px;border:1px solid var(--border2);object-fit:cover}
+#modal-quest .quest-imglink{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px}
+#modal-quest .quest-imgbtn{display:inline-block;margin-top:6px;font-size:12px;color:var(--text2);border:1px dashed var(--border2);border-radius:8px;padding:7px 12px;cursor:pointer}
+#modal-quest .quest-imgbtn:hover{color:var(--text);border-color:var(--accent)}
+</style>
+
+<div class="modal-overlay" id="modal-quest">
+  <div class="modal modal-fu">
+    <h3>Questionário consultivo</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> nas mensagens e <strong>{plano}</strong> na mensagem final.</p>
+
+    <div class="quest-switch">
+      <input type="checkbox" id="quest-ativo">
+      <label for="quest-ativo" style="font-size:14px;color:var(--text)">Ativar questionário para este cliente</label>
+    </div>
+    <div class="fu-hint" style="margin-top:-8px;margin-bottom:16px">Desligado, o lead segue no fluxo normal (boas-vindas + follow-up), sem perguntas.</div>
+
+    <label class="fu-label" style="margin-top:0">Introdução (enviada após as boas-vindas)</label>
+    <textarea class="fu-textarea" id="quest-intro" rows="2" placeholder="Pra te indicar o plano ideal, vou te fazer algumas perguntas rápidas. 👇"></textarea>
+    <div id="quest-intro-img"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Perguntas</label>
+    <div class="fu-hint" style="margin-bottom:10px">A ordem aqui é a ordem enviada. O <strong>ID</strong> é o nome do campo usado nas regras de recomendação.</div>
+    <div id="quest-passos"></div>
+    <button class="btn-add-small" style="margin-top:4px" onclick="questAddPasso()">+ Adicionar pergunta</button>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Recomendação de plano</label>
+    <div class="fu-hint" style="margin-bottom:10px">A primeira regra cujas condições baterem define o plano. Deixe uma regra sem condições no fim como padrão.</div>
+    <div id="quest-regras"></div>
+    <button class="btn-add-small" style="margin-top:4px" onclick="questAddRegra()">+ Adicionar regra</button>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
+    <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você. 🙌"></textarea>
+    <div id="quest-final-img"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Cobertura por CEP</label>
+    <div class="fu-hint" style="margin-bottom:8px"><span id="quest-cob-total" style="color:var(--accent);font-weight:700">0 CEPs cadastrados</span>. Cole os CEPs atendidos (um por linha ou separados por vírgula). Aceita CEP completo ou prefixo (ex: 50000 cobre toda a faixa).</div>
+    <textarea class="fu-textarea" id="quest-ceps" rows="4" style="font-family:var(--mono)" placeholder="50000000&#10;50010000&#10;52000"></textarea>
+    <div style="display:flex;align-items:center;gap:16px;margin:8px 0 4px;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="substituir" checked> Substituir lista</label>
+      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="adicionar"> Adicionar à lista</label>
+      <span style="flex:1"></span>
+      <button class="btn-add-small" id="btn-cob-save" onclick="salvarCobertura()">Salvar CEPs</button>
+      <button class="btn-add-small" style="border-color:var(--red);color:var(--red)" onclick="limparCobertura()">Limpar tudo</button>
+    </div>
+
+    <div class="login-err" id="quest-err" style="margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
+      <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar questionário</button>
     </div>
   </div>
 </div>
