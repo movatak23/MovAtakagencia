@@ -212,7 +212,7 @@ tr:hover td{background:var(--bg3)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 
-.modal-fu { max-width: 1120px; width: calc(100vw - 48px); }
+.modal-fu { max-width: 560px; }
 .fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
 .fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
 .fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
@@ -258,13 +258,6 @@ tr:hover td{background:var(--bg3)}
 tr.cliente-row{cursor:pointer}
 tr.cliente-row.selecionado td{background:var(--bg4)}
 tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
-
-.perm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
-.perm-item{display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:12px;color:var(--text2)}
-.perm-item input{width:auto;accent-color:var(--accent)}
-.vend-access-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
-@media(max-width:700px){.perm-grid,.vend-access-grid{grid-template-columns:1fr}}
-
 </style>
 </head>
 <body>
@@ -305,9 +298,9 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     <div class="periodo-bar">
       <h2>Visão geral</h2>
       <div class="periodo-btns">
-        <button onclick="setPeriodo(0)" id="p0" class="active">Hoje</button>
+        <button onclick="setPeriodo(0)" id="p0">Hoje</button>
         <button onclick="setPeriodo(7)" id="p7">7 dias</button>
-        <button onclick="setPeriodo(30)" id="p30">30 dias</button>
+        <button onclick="setPeriodo(30)" id="p30" class="active">30 dias</button>
         <button onclick="setPeriodo(90)" id="p90">90 dias</button>
       </div>
     </div>
@@ -367,9 +360,6 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </table>
       </div>
     </div>
-    <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.1.6-conversao-data-fix</span> · backend <span id="versao-backend">—</span>
-    </div>
   </main>
 </div>
 
@@ -386,7 +376,10 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label>WHATSAPP BUSINESS</label>
         <input type="text" id="f-whatsapp" placeholder="5581999990000">
       </div>
-      <input type="hidden" id="f-trigger" value="">
+      <div class="form-field">
+        <label>FRASE GATILHO DO ANÚNCIO</label>
+        <input type="text" id="f-trigger" placeholder="vim pelo anuncio">
+      </div>
       <div class="form-field">
         <label>Z-API INSTANCE ID</label>
         <input type="text" id="f-instance" placeholder="ID da instância">
@@ -407,20 +400,6 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label>PLANOS (separados por vírgula)</label>
         <input type="text" id="f-planos" placeholder="Basic, Pro, Premium">
       </div>
-      <div class="form-field full" id="permissoes-cliente-box">
-        <label>ACESSOS DO CLIENTE NO PORTAL</label>
-        <div class="perm-grid">
-          <label class="perm-item"><input type="checkbox" id="perm-ver-cpl" checked> Ver CPL</label>
-          <label class="perm-item"><input type="checkbox" id="perm-ver-vendedores" checked> Ver vendedores</label>
-          <label class="perm-item"><input type="checkbox" id="perm-ver-campanhas" checked> Ver campanhas</label>
-          <label class="perm-item"><input type="checkbox" id="perm-ver-eventos" checked> Ver movimentações</label>
-          <label class="perm-item"><input type="checkbox" id="perm-editar-vendedores"> Editar/cadastrar vendedores</label>
-          <label class="perm-item"><input type="checkbox" id="perm-editar-followup"> Ajustar mensagens de follow-up</label>
-          <label class="perm-item"><input type="checkbox" id="perm-editar-campanhas"> Cadastrar campanhas/origens</label>
-          <label class="perm-item"><input type="checkbox" id="perm-exportar-csv" checked> Exportar CSV</label>
-        </div>
-        <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
-      </div>
     </div>
     <div id="token-resultado" style="display:none">
       <div class="token-box">
@@ -439,36 +418,11 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.7-default-hoje';
 const SENHA_KEY  = 'mvtk_painel_secret';
-try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
 let secret = '';
-let periodoAtual = 0;
+let periodoAtual = 30;
 let tokenGerado  = '';
-let templatesFollowupCache = [];
-
-function getPermissoesPortal() {
-  const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
-  return {
-    ver_dashboard: true,
-    ver_cpl: g('perm-ver-cpl'),
-    ver_vendedores: g('perm-ver-vendedores'),
-    ver_campanhas: g('perm-ver-campanhas'),
-    ver_eventos: g('perm-ver-eventos'),
-    editar_vendedores: g('perm-editar-vendedores'),
-    editar_followup: g('perm-editar-followup'),
-    editar_campanhas: g('perm-editar-campanhas'),
-    exportar_csv: g('perm-exportar-csv')
-  };
-}
-function setPermissoesPortal(p = {}) {
-  const def = { ver_cpl:true, ver_vendedores:true, ver_campanhas:true, ver_eventos:true, editar_vendedores:false, editar_followup:false, editar_campanhas:false, exportar_csv:true, ...(p || {}) };
-  const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
-  set('perm-ver-cpl', def.ver_cpl); set('perm-ver-vendedores', def.ver_vendedores); set('perm-ver-campanhas', def.ver_campanhas); set('perm-ver-eventos', def.ver_eventos);
-  set('perm-editar-vendedores', def.editar_vendedores); set('perm-editar-followup', def.editar_followup); set('perm-editar-campanhas', def.editar_campanhas); set('perm-exportar-csv', def.exportar_csv);
-}
-
 
 // ── Login ──────────────────────────────────────────────────
 function fazerLogin() {
@@ -495,24 +449,6 @@ function iniciar() {
   document.getElementById('app').classList.add('visible');
   document.getElementById('login-err').textContent = '';
   carregarTudo();
-  verificarVersao();
-}
-
-// Compara versão do painel com a do backend — alerta se divergir
-async function verificarVersao() {
-  try {
-    const r = await api('/movatak/version');
-    const elBack = document.getElementById('versao-backend');
-    elBack.textContent = r.version || '—';
-    if (r.version && r.version !== PAINEL_VERSION) {
-      elBack.style.color = 'var(--amber)';
-      elBack.textContent = r.version + ' (painel desatualizado — Ctrl+Shift+R)';
-    } else {
-      elBack.style.color = 'var(--green)';
-    }
-  } catch(e) {
-    document.getElementById('versao-backend').textContent = 'offline';
-  }
 }
 
 // Verificar sessão salva
@@ -530,26 +466,10 @@ async function api(path, opts = {}) {
     }
   });
   if (res.status === 401) { sair(); throw new Error('Sessão expirada.'); }
-  if (!res.ok) {
-    let detalhe = '';
-    try {
-      const err = await res.json();
-      detalhe = err.error ? ': ' + err.error : '';
-    } catch (_) {}
-    throw new Error(`Erro ${res.status}${detalhe}`);
-  }
+  if (!res.ok) throw new Error(`Erro ${res.status}`);
   return res.json();
 }
 
-
-function escapeHtml(value) {
-  return String(value == null ? '' : value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
-}
 // ── Período ────────────────────────────────────────────────
 function setPeriodo(d) {
   periodoAtual = d;
@@ -798,6 +718,7 @@ function renderClientes(clientes) {
       <td>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button>
+        <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Questionário</button>
       </td>
     </tr>`;
   }).join('');
@@ -821,7 +742,6 @@ function abrirModal() {
   ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos'].forEach(id => {
     document.getElementById('f-' + id).value = '';
   });
-  setPermissoesPortal();
 }
 
 // Abrir modal em modo edição — carrega dados do cliente
@@ -848,7 +768,6 @@ async function abrirEdicao(id) {
     document.getElementById('f-trigger').value  = c.trigger_msg || '';
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
-    setPermissoesPortal(c.permissoes_portal || {});
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -859,14 +778,14 @@ async function abrirEdicao(id) {
 async function salvarEdicao() {
   const nome          = document.getElementById('f-nome').value.trim();
   const whatsapp      = document.getElementById('f-whatsapp').value.trim();
-  const trigger_msg   = (document.getElementById('f-trigger')?.value || '').trim();
+  const trigger_msg   = document.getElementById('f-trigger').value.trim();
   const zapi_instance = document.getElementById('f-instance').value.trim();
   const zapi_token    = document.getElementById('f-token').value.trim();
   const zapi_ct       = document.getElementById('f-client-token').value.trim();
   const cpl           = document.getElementById('f-cpl').value.trim();
 
-  if (!nome || !whatsapp || !zapi_instance) {
-    document.getElementById('modal-err').textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.';
+  if (!nome || !whatsapp || !trigger_msg || !zapi_instance) {
+    document.getElementById('modal-err').textContent = 'Nome, WhatsApp, Instance ID e frase-gatilho são obrigatórios.';
     return;
   }
 
@@ -879,8 +798,7 @@ async function salvarEdicao() {
       body: JSON.stringify({
         nome, whatsapp, zapi_instance, trigger_msg,
         zapi_token, zapi_client_token: zapi_ct,
-        teto_cpl: cpl ? parseFloat(cpl) : null,
-        permissoes_portal: getPermissoesPortal()
+        teto_cpl: cpl ? parseFloat(cpl) : null
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
@@ -900,15 +818,15 @@ function fecharModal() {
 async function salvarCliente() {
   const nome         = document.getElementById('f-nome').value.trim();
   const whatsapp     = document.getElementById('f-whatsapp').value.trim();
-  const trigger_msg  = (document.getElementById('f-trigger')?.value || '').trim();
+  const trigger_msg  = document.getElementById('f-trigger').value.trim();
   const zapi_instance= document.getElementById('f-instance').value.trim();
   const zapi_token   = document.getElementById('f-token').value.trim();
   const zapi_ct      = document.getElementById('f-client-token').value.trim();
   const cpl          = document.getElementById('f-cpl').value.trim();
   const planosTxt    = document.getElementById('f-planos').value.trim();
 
-  if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_ct) {
-    document.getElementById('modal-err').textContent = 'Preencha os campos obrigatórios: nome, WhatsApp, instância, token e client-token.';
+  if (!nome || !whatsapp || !trigger_msg || !zapi_instance || !zapi_token || !zapi_ct) {
+    document.getElementById('modal-err').textContent = 'Preencha todos os campos obrigatórios.';
     return;
   }
 
@@ -926,8 +844,7 @@ async function salvarCliente() {
         nome, whatsapp, zapi_instance, zapi_token,
         zapi_client_token: zapi_ct, trigger_msg,
         teto_cpl: cpl ? parseFloat(cpl) : null,
-        planos,
-        permissoes_portal: getPermissoesPortal()
+        planos
       })
     });
 
@@ -963,40 +880,24 @@ async function abrirFU(id) {
   document.getElementById('modal-fu').classList.add('open');
   try {
     const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
-    // Carregar novo formato (2 blocos) se existir
-    if (msgs.followup_v2) {
-      document.getElementById('fu1-msg1').value = msgs.followup_v2.fu1?.msg1 || '';
-      document.getElementById('fu1-msg2').value = msgs.followup_v2.fu1?.msg2 || '';
-      document.getElementById('fu2-msg1').value = msgs.followup_v2.fu2?.msg1 || '';
-      document.getElementById('fu2-msg2').value = msgs.followup_v2.fu2?.msg2 || '';
-      document.getElementById('fu2-msg3').value = msgs.followup_v2.fu2?.msg3 || '';
-    } else {
-      // Compatibilidade com formato antigo (4 mensagens) — preenche FU1 e deixa FU2 vazio
-      document.getElementById('fu1-msg1').value = msgs.msg1 || '';
-      document.getElementById('fu1-msg2').value = msgs.msg2 || '';
-      document.getElementById('fu2-msg1').value = '';
-      document.getElementById('fu2-msg2').value = '';
-      document.getElementById('fu2-msg3').value = '';
-    }
+    document.getElementById('fu-msg1').value = msgs.msg1 || '';
+    document.getElementById('fu-msg2').value = msgs.msg2 || '';
+    document.getElementById('fu-msg3').value = msgs.msg3 || '';
+    document.getElementById('fu-msg4').value = msgs.msg4 || '';
     document.getElementById('fu-boas-vindas').value = msgs.boas_vindas_msg || '';
     document.getElementById('fu-verba').value = msgs.verba_diaria || '';
     document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
     document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
-    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
     // Carregar vendedores
     carregarVendedores(id);
     // Carregar comandos de automação
     carregarComandos(id);
     // Carregar gráfico de performance
     carregarRanking(id);
-    // Carregar status operacional e fila do follow-up
-    carregarOperacao(id);
-    carregarFilaFollowup(id);
-    carregarCampanhas(id);
-    carregarTemplatesFollowup();
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
-    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
   }
 }
 function fecharFU() {
@@ -1004,14 +905,12 @@ function fecharFU() {
   fuId = null;
 }
 async function salvarFU() {
-  const fu1_msg1 = document.getElementById('fu1-msg1').value.trim();
-  const fu1_msg2 = document.getElementById('fu1-msg2').value.trim();
-  const fu2_msg1 = document.getElementById('fu2-msg1').value.trim();
-  const fu2_msg2 = document.getElementById('fu2-msg2').value.trim();
-  const fu2_msg3 = document.getElementById('fu2-msg3').value.trim();
-  // Validação: pelo menos uma mensagem do FU1
-  if (!fu1_msg1 && !fu1_msg2) {
-    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem no Follow up 1.';
+  const msg1 = document.getElementById('fu-msg1').value.trim();
+  const msg2 = document.getElementById('fu-msg2').value.trim();
+  const msg3 = document.getElementById('fu-msg3').value.trim();
+  const msg4 = document.getElementById('fu-msg4').value.trim();
+  if (!msg1 || !msg2 || !msg3 || !msg4) {
+    document.getElementById('fu-err').textContent = 'Preencha todas as 4 mensagens.';
     return;
   }
   document.getElementById('btn-fu-save').textContent = 'Salvando...';
@@ -1021,33 +920,18 @@ async function salvarFU() {
     const verba_diaria = document.getElementById('fu-verba').value.trim();
     const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
     const trigger_msg = document.getElementById('fu-trigger').value.trim();
-    
-    // Salvar follow up com estrutura dos 2 blocos
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
-      body: JSON.stringify({
-        followup_v2: {
-          fu1: { msg1: fu1_msg1, msg2: fu1_msg2 },
-          fu2: { msg1: fu2_msg1, msg2: fu2_msg2, msg3: fu2_msg3 }
-        },
-        boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg
-      })
+      body: JSON.stringify({ msg1, msg2, msg3, msg4, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg })
     });
-    
     // Salvar comandos de automação
-    // Aceita comandos separados por vírgula, ponto e vírgula ou quebra de linha.
-    const parseCmds = (id) => {
-      const el = document.getElementById(id);
-      return (el?.value || '')
-        .split(/[,;\n]+/)
-        .map(s => s.trim().toLowerCase())
-        .filter(Boolean);
-    };
+    const parseCmds = (id) => (document.getElementById(id).value || '')
+      .split(',').map(s => s.trim()).filter(Boolean);
     const resCmd = await fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/comandos', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', 'x-movatak-secret': secret },
       body: JSON.stringify({
-        followup: [],
+        followup:   parseCmds('fu-cmd-followup'),
         convertido: parseCmds('fu-cmd-convertido'),
         descartar:  parseCmds('fu-cmd-descartar'),
         desfazer:   parseCmds('fu-cmd-desfazer')
@@ -1056,16 +940,14 @@ async function salvarFU() {
     if (!resCmd.ok) {
       const err = await resCmd.json().catch(() => ({}));
       document.getElementById('fu-err').textContent = err.error || 'Erro ao salvar comandos.';
-      document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+      document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
       return;
     }
     document.getElementById('btn-fu-save').textContent = 'Salvo!';
-    carregarOperacao(fuId);
-    carregarFilaFollowup(fuId);
-    setTimeout(() => { document.getElementById('btn-fu-save').textContent = 'Salvar alterações'; }, 1200);
+    setTimeout(fecharFU, 1000);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
-    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+    document.getElementById('btn-fu-save').textContent = 'Salvar mensagens';
   }
 }
 const _modalFu = document.getElementById('modal-fu');
@@ -1092,35 +974,22 @@ async function carregarVendedores(id) {
         <input type="text" class="fu-textarea" style="flex-basis:100%;min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px"
           id="vend-cmd-${v.id}" value="${v.comando || ''}" placeholder="Comando deste vendedor (ex: #joao)"
           onchange="salvarComandoVendedor(${v.id})">
-        <div class="vend-access-grid">
-          <input type="email" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-email-${v.id}" value="${v.email_acesso || ''}" placeholder="Email de acesso do vendedor">
-          <input type="password" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-senha-${v.id}" placeholder="Nova senha (opcional)">
-        </div>
-        <div style="display:flex;align-items:center;gap:8px;width:100%;font-size:11px;color:var(--text3);font-family:var(--mono)">
-          <button class="btn-add-small" style="padding:6px 10px;font-size:11px" onclick="salvarAcessoVendedor(${v.id})">Salvar acesso</button>
-          <span>Token: ${v.acesso_token || 'gerado após salvar'} · senha: ${v.tem_senha ? 'configurada' : 'não configurada'}</span>
-        </div>
       </div>
     `).join('');
   } catch(e) {
-    document.getElementById('fu-vendedores-list').innerHTML = `<div style="font-size:13px;color:var(--red)">Erro ao carregar vendedores: ${e.message}</div>`;
-    document.getElementById('fu-err').textContent = 'Erro ao carregar vendedores. Verifique se a migração v2.0.1 foi executada no PostgreSQL.';
+    document.getElementById('fu-vendedores-list').innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar vendedores.</div>';
   }
 }
 
 async function adicionarVendedor() {
   const nome = document.getElementById('fu-novo-vendedor').value.trim();
-  const email_acesso = (document.getElementById('fu-novo-vendedor-email') || {}).value ? document.getElementById('fu-novo-vendedor-email').value.trim() : '';
-  const senha_acesso = (document.getElementById('fu-novo-vendedor-senha') || {}).value ? document.getElementById('fu-novo-vendedor-senha').value.trim() : '';
   if (!nome) return;
   try {
     await api('/movatak/admin/clientes/' + fuId + '/vendedores', {
       method: 'POST',
-      body: JSON.stringify({ nome, email_acesso, senha_acesso })
+      body: JSON.stringify({ nome })
     });
     document.getElementById('fu-novo-vendedor').value = '';
-    if (document.getElementById('fu-novo-vendedor-email')) document.getElementById('fu-novo-vendedor-email').value = '';
-    if (document.getElementById('fu-novo-vendedor-senha')) document.getElementById('fu-novo-vendedor-senha').value = '';
     carregarVendedores(fuId);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao adicionar vendedor: ' + e.message;
@@ -1138,26 +1007,17 @@ async function removerVendedor(vendedorId) {
 
 // ── Comandos de automação ──────────────────────────────────
 async function carregarComandos(id) {
-  const setCampo = (campoId, valor) => {
-    const el = document.getElementById(campoId);
-    if (!el) return;
-    el.value = Array.isArray(valor) ? valor.join(', ') : (valor || '');
-  };
-
   try {
     const c = await api('/movatak/admin/clientes/' + id + '/comandos');
-
-    // O HTML atual não possui campo visível para comando de followup.
-    // Por isso NÃO devemos tentar preencher fu-cmd-followup, pois esse elemento não existe
-    // e quebrava o carregamento dos demais comandos.
-    setCampo('fu-cmd-convertido', c.convertido || []);
-    setCampo('fu-cmd-descartar',  c.descartar  || []);
-    setCampo('fu-cmd-desfazer',   c.desfazer   || []);
+    document.getElementById('fu-cmd-followup').value   = (c.followup   || []).join(', ');
+    document.getElementById('fu-cmd-convertido').value = (c.convertido || []).join(', ');
+    document.getElementById('fu-cmd-descartar').value  = (c.descartar  || []).join(', ');
+    document.getElementById('fu-cmd-desfazer').value   = (c.desfazer   || []).join(', ');
   } catch(e) {
-    setCampo('fu-cmd-convertido', []);
-    setCampo('fu-cmd-descartar', []);
-    setCampo('fu-cmd-desfazer', []);
-    document.getElementById('fu-err').textContent = 'Erro ao carregar comandos: ' + e.message;
+    document.getElementById('fu-cmd-followup').value = '';
+    document.getElementById('fu-cmd-convertido').value = '';
+    document.getElementById('fu-cmd-descartar').value = '';
+    document.getElementById('fu-cmd-desfazer').value = '';
   }
 }
 
@@ -1170,23 +1030,6 @@ async function salvarComandoVendedor(vendedorId) {
     });
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao salvar comando do vendedor.';
-  }
-}
-
-
-async function salvarAcessoVendedor(vendedorId) {
-  const email_acesso = document.getElementById('vend-email-' + vendedorId).value.trim();
-  const senha_acesso = document.getElementById('vend-senha-' + vendedorId).value.trim();
-  const comando = document.getElementById('vend-cmd-' + vendedorId).value.trim();
-  try {
-    await api('/movatak/admin/vendedores/' + vendedorId + '/acesso', {
-      method: 'PATCH',
-      body: JSON.stringify({ email_acesso, senha_acesso, comando })
-    });
-    document.getElementById('fu-err').textContent = 'Acesso do vendedor salvo.';
-    carregarVendedores(fuId);
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao salvar acesso do vendedor: ' + e.message;
   }
 }
 
@@ -1219,604 +1062,411 @@ async function carregarRanking(id) {
   }
 }
 
-
-// ── Operação e fila do follow-up ───────────────────────────
-function fmtData(iso) {
-  if (!iso) return '—';
-  try { return new Date(iso).toLocaleString('pt-BR'); }
-  catch(e) { return iso; }
-}
-
-async function carregarOperacao(id) {
-  const wrap = document.getElementById('fu-operacao-box');
-  if (!wrap) return;
-  wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando status...</div>';
-  try {
-    const r = await api('/movatak/admin/clientes/' + id + '/operacao');
-    const leads = r.leads || {};
-    const fila = r.fila || {};
-    const cards = [
-      ['Leads', leads.total_leads || 0],
-      ['Atendimento', leads.em_atendimento || 0],
-      ['FU ativo', leads.em_followup || 0],
-      ['Clientes', leads.clientes || 0],
-      ['FU1 pendente', fila.pendentes_fu1 || 0],
-      ['FU2 pendente', fila.pendentes_fu2 || 0],
-      ['Atrasadas', fila.pendentes_atrasadas || 0],
-      ['Pausadas', fila.pausadas || 0]
-    ];
-    wrap.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin-bottom:12px">
-        ${cards.map(([label, val]) => `
-          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px">
-            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">${label}</div>
-            <div style="font-size:20px;font-weight:800;color:var(--text)">${val}</div>
-          </div>
-        `).join('')}
-      </div>
-      <div style="font-size:12px;color:var(--text2);line-height:1.6">
-        <strong>Último lead:</strong> ${r.ultimo_lead ? `${r.ultimo_lead.nome || 'Sem nome'} · ${r.ultimo_lead.telefone} · ${fmtData(r.ultimo_lead.criado_em)}` : '—'}<br>
-        <strong>Próxima mensagem:</strong> ${r.proxima_mensagem ? `FU${r.proxima_mensagem.sequencia_fu} msg${r.proxima_mensagem.etapa_seq} · ${r.proxima_mensagem.telefone} · ${fmtData(r.proxima_mensagem.proximo_envio)}` : '—'}<br>
-        <strong>Último envio:</strong> ${fmtData(fila.ultimo_envio_em)}<br>
-        <strong>Último webhook:</strong> ${fmtData((r.cliente || {}).ultimo_webhook_em)}<br>
-        <strong>Último erro Z-API:</strong> ${(r.cliente || {}).ultimo_erro_zapi ? `${(r.cliente || {}).ultimo_erro_zapi} · ${fmtData((r.cliente || {}).ultimo_erro_zapi_em)}` : '—'}<br>
-        <strong>Relatório diário:</strong> ${r.relatorio_diario_ativo ? 'ativo' : 'desativado no Railway'}
-      </div>`;
-  } catch(e) {
-    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar operação: ' + e.message + '</div>';
-  }
-}
-
-async function carregarFilaFollowup(id) {
-  const wrap = document.getElementById('fu-fila-box');
-  if (!wrap) return;
-  wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando fila...</div>';
-  try {
-    const rows = await api('/movatak/admin/clientes/' + id + '/fila-followup?limit=60');
-    if (!rows.length) {
-      wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhuma mensagem na fila.</div>';
-      return;
-    }
-    wrap.innerHTML = `
-      <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:10px">
-        <table style="font-size:12px">
-          <thead>
-            <tr>
-              <th>Lead</th><th>FU</th><th>Próximo envio</th><th>Status</th><th>Ação</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows.map(r => `
-              <tr>
-                <td><strong>${r.nome || 'Sem nome'}</strong><br><span class="td-mono">${r.telefone || ''}</span></td>
-                <td class="td-mono">FU${r.sequencia_fu || 1} · msg${r.etapa_seq}</td>
-                <td class="td-mono">${fmtData(r.proximo_envio)}</td>
-                <td><span class="badge ${r.status === 'pendente' ? 'badge-green' : 'badge-gray'}">${r.status}</span></td>
-                <td>
-                  ${r.status === 'pendente'
-                    ? `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${r.lead_id})">Pausar</button>`
-                    : `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="reativarLeadFU(${r.lead_id})">Reativar FU2</button>`}
-                  <button class="btn-cancel" style="padding:6px 8px;font-size:11px;margin-top:4px" onclick="carregarHistoricoLead(${r.lead_id})">Histórico</button>
-                </td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>`;
-  } catch(e) {
-    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar fila: ' + e.message + '</div>';
-  }
-}
-
-async function carregarHistoricoLead(leadId) {
-  const box = document.getElementById('fu-historico-box');
-  if (!box) return;
-  box.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando histórico...</div>';
-  try {
-    const r = await api('/movatak/admin/leads/' + leadId + '/historico');
-    const lead = r.lead || {};
-    const eventos = r.eventos || [];
-    box.innerHTML = `
-      <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg2);margin-top:12px">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px">
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--text)">${lead.nome || 'Sem nome'} · ${lead.telefone || ''}</div>
-            <div style="font-size:12px;color:var(--text2)">Etapa: ${lead.etapa || '—'} · Vendedor: ${lead.vendedor_nome || '—'}</div>
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
-            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="marcarLeadCliente(${lead.id})">Cliente</button>
-            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="descartarLeadPainel(${lead.id})">Descartar</button>
-            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${lead.id})">Pausar FU</button>
-            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="document.getElementById('fu-historico-box').innerHTML=''">Fechar</button>
-          </div>
-        </div>
-        <div style="max-height:260px;overflow:auto">
-          ${eventos.length ? eventos.map(ev => `
-            <div style="border-left:2px solid var(--accent);padding:0 0 12px 10px;margin-left:4px">
-              <div style="font-size:12px;color:var(--text);font-weight:700">${ev.tipo}</div>
-              <div style="font-size:12px;color:var(--text2);line-height:1.4">${ev.descricao || ''}</div>
-              <div style="font-size:11px;color:var(--text3);font-family:var(--mono)">${fmtData(ev.criado_em)}</div>
-            </div>
-          `).join('') : '<div style="font-size:13px;color:var(--text3)">Sem eventos registrados ainda. Eventos novos aparecerão após aplicar a migração v1.8.0.</div>'}
-        </div>
-      </div>`;
-  } catch(e) {
-    box.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar histórico: ' + e.message + '</div>';
-  }
-}
-
-async function enviarRelatorioDiarioAgora() {
-  try {
-    const r = await api('/movatak/admin/clientes/' + fuId + '/relatorio-diario/enviar', {
-      method: 'POST', body: JSON.stringify({})
-    });
-    document.getElementById('fu-err').textContent = 'Relatório enviado para o WhatsApp do dono.';
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao enviar relatório: ' + e.message;
-  }
-}
-
-function exportarLeadsCSV() {
-  if (!fuId) return;
-  const url = API_BASE + '/movatak/admin/clientes/' + fuId + '/leads.csv';
-  fetch(url, { headers: { 'x-movatak-secret': secret } })
-    .then(r => { if (!r.ok) throw new Error('Erro ' + r.status); return r.blob(); })
-    .then(blob => {
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'leads-movatak.csv';
-      document.body.appendChild(a); a.click(); a.remove();
-    })
-    .catch(e => { document.getElementById('fu-err').textContent = 'Erro ao exportar CSV: ' + e.message; });
-}
-
-async function pausarLeadFU(leadId) {
-  try {
-    await api('/movatak/admin/leads/' + leadId + '/followup/pausar', { method: 'PATCH', body: JSON.stringify({}) });
-    carregarOperacao(fuId);
-    carregarFilaFollowup(fuId);
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao pausar lead: ' + e.message;
-  }
-}
-
-async function reativarLeadFU(leadId) {
-  try {
-    await api('/movatak/admin/leads/' + leadId + '/followup/reativar', {
-      method: 'PATCH',
-      body: JSON.stringify({ sequencia_fu: 2, enviar_imediato: true })
-    });
-    carregarOperacao(fuId);
-    carregarFilaFollowup(fuId);
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao reativar lead: ' + e.message;
-  }
-}
-
-async function testarGatilhoAtual() {
-  const texto = document.getElementById('fu-trigger-teste').value.trim();
-  const box = document.getElementById('fu-trigger-resultado');
-  if (!texto) { box.textContent = 'Digite uma mensagem para testar.'; return; }
-  try {
-    const r = await api('/movatak/admin/clientes/' + fuId + '/testar-gatilho', {
-      method: 'POST',
-      body: JSON.stringify({ texto })
-    });
-    box.innerHTML = r.bateu
-      ? '<span style="color:var(--green)">Gatilho reconhecido. Esse texto dispara o FU1.</span>'
-      : '<span style="color:var(--red)">Gatilho não reconhecido. Ajuste a frase-gatilho.</span>';
-  } catch(e) {
-    box.textContent = 'Erro no teste: ' + e.message;
-  }
-}
-
-
-async function testarZapiAgora() {
-  try {
-    const telefone = prompt('Telefone para receber o teste Z-API. Deixe em branco para usar o WhatsApp do dono ou o admin Movatak.') || '';
-    await api('/movatak/admin/clientes/' + fuId + '/testar-zapi', {
-      method: 'POST',
-      body: JSON.stringify({ telefone })
-    });
-    document.getElementById('fu-err').textContent = 'Teste Z-API enviado com sucesso.';
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro no teste Z-API: ' + e.message;
-  }
-}
-
-async function carregarTemplatesFollowup() {
-  const sel = document.getElementById('fu-template-select');
-  try {
-    const rows = await api('/movatak/admin/templates-followup?cliente_id=' + fuId);
-    templatesFollowupCache = rows || [];
-    const options = '<option value="">Escolha um modelo pronto</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}${t.tipo === 'cliente' ? ' (seu)' : ''}</option>`).join('');
-    if (sel) sel.innerHTML = options;
-    document.querySelectorAll('.campanha-template-select').forEach(csel => {
-      const atual = csel.dataset.value || csel.value || '';
-      csel.innerHTML = '<option value="">Sem template</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
-      csel.value = atual;
-    });
-    const campSel = document.getElementById('fu-campanha-template');
-    if (campSel) campSel.innerHTML = '<option value="">Template vinculado</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
-  } catch(e) {
-    if (sel) sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
-  }
-}
-
-async function aplicarTemplateFollowup() {
-  const sel = document.getElementById('fu-template-select');
-  const template = sel ? sel.value : '';
-  if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template primeiro.'; return; }
-  if (!confirm('Aplicar este template vai preencher as mensagens do follow-up, boas-vindas, comandos e, se o modelo tiver, a frase-gatilho. Continuar?')) return;
-  try {
-    await api('/movatak/admin/clientes/' + fuId + '/aplicar-template', {
-      method: 'POST',
-      body: JSON.stringify({ template })
-    });
-    document.getElementById('fu-err').textContent = 'Template aplicado. Reabrindo configurações...';
-    await abrirFU(fuId);
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao aplicar template: ' + e.message;
-  }
-}
-
-async function criarTemplateFollowup() {
-  const box = document.getElementById('fu-template-create-box');
-  if (!box) return;
-  box.style.display = box.style.display === 'none' || !box.style.display ? 'block' : 'none';
-  const input = document.getElementById('fu-template-nome');
-  if (box.style.display === 'block' && input) input.focus();
-}
-
-async function cancelarCriarTemplateFollowup() {
-  const box = document.getElementById('fu-template-create-box');
-  if (box) box.style.display = 'none';
-  const input = document.getElementById('fu-template-nome');
-  if (input) input.value = '';
-}
-
-async function salvarTemplateFollowupAtual() {
-  const statusEl = document.getElementById('fu-template-status');
-  const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Salvar modelo'));
-  const nome = (document.getElementById('fu-template-nome')?.value || '').trim();
-  if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome do template.'; if(statusEl) statusEl.textContent=''; return; }
-
-  const comandosFromInput = (id) => (document.getElementById(id)?.value || '')
-    .split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
-
-  const followup_v2 = {
-    fu1: {
-      msg1: document.getElementById('fu1-msg1')?.value.trim() || '',
-      msg2: document.getElementById('fu1-msg2')?.value.trim() || ''
-    },
-    fu2: {
-      msg1: document.getElementById('fu2-msg1')?.value.trim() || '',
-      msg2: document.getElementById('fu2-msg2')?.value.trim() || '',
-      msg3: document.getElementById('fu2-msg3')?.value.trim() || ''
-    }
-  };
-
-  if (!followup_v2.fu1.msg1 && !followup_v2.fu1.msg2 && !followup_v2.fu2.msg1 && !followup_v2.fu2.msg2 && !followup_v2.fu2.msg3) {
-    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem do FU1 ou FU2 antes de criar o template.';
-    if(statusEl) statusEl.textContent='';
-    return;
-  }
-
-  try {
-    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Salvando template...'; }
-    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
-    const res = await api('/movatak/admin/clientes/' + fuId + '/templates-followup', {
-      method: 'POST',
-      body: JSON.stringify({
-        nome,
-        trigger_msg: document.getElementById('fu-trigger')?.value.trim() || '',
-        boas_vindas_msg: document.getElementById('fu-boas-vindas')?.value.trim() || '',
-        followup_v2,
-        comandos: {
-          convertido: comandosFromInput('fu-cmd-convertido'),
-          descartar: comandosFromInput('fu-cmd-descartar'),
-          desfazer: comandosFromInput('fu-cmd-desfazer')
-        }
-      })
-    });
-    document.getElementById('fu-err').textContent = '';
-    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Template criado com sucesso.'; }
-    await carregarTemplatesFollowup();
-    const sel = document.getElementById('fu-template-select');
-    if (sel && res.id) sel.value = res.id;
-    cancelarCriarTemplateFollowup();
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao criar template: ' + e.message;
-    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao salvar template.'; }
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Salvar modelo'; }
-  }
-}
-async function carregarCampanhas(id) {
-  const box = document.getElementById('fu-campanhas-box');
-  if (!box) return;
-  box.innerHTML = '<div style="font-size:13px;color:var(--text3);margin-top:10px">Carregando campanhas...</div>';
-  try {
-    const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
-    box.innerHTML = rows.length ? `
-      <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:14px;background:var(--bg2)">
-        <table style="font-size:12px;min-width:1180px;width:100%">
-          <thead>
-            <tr>
-              <th style="min-width:190px">Campanha</th>
-              <th style="min-width:300px">Frase-gatilho</th>
-              <th style="min-width:170px">Template</th>
-              <th style="min-width:125px">Investimento</th>
-              <th>Leads</th>
-              <th>Vendas</th>
-              <th>Conv.</th>
-              <th>CPL</th>
-              <th>CPV</th>
-              <th>Status</th>
-              <th style="min-width:90px">Ações</th>
-            </tr>
-          </thead>
-          <tbody>${rows.map(c => `
-            <tr>
-              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong></td>
-              <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}${c.gatilho_compartilhado ? '<div style="margin-top:6px;color:var(--amber);font-family:var(--sans);font-size:11px">Gatilho compartilhado com ' + c.campanhas_mesmo_gatilho + ' campanhas. Métrica por gatilho, não por campanha única.</div>' : ''}</td>
-              <td style="white-space:normal">${escapeHtml(c.template_nome || '—')}</td>
-              <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
-              <td class="td-mono">${c.leads || 0}</td>
-              <td class="td-green">${c.vendas || 0}</td>
-              <td>${c.conversao || '0.0'}%</td>
-              <td class="td-mono">${c.cpl ? 'R$ ' + c.cpl : '—'}</td>
-              <td class="td-mono">${c.custo_venda ? 'R$ ' + c.custo_venda : '—'}</td>
-              <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
-              <td><button class="btn-remove" title="Excluir campanha" onclick="excluirCampanha(${c.id})">×</button></td>
-            </tr>`).join('')}</tbody>
-        </table>
-      </div>` : '<div style="font-size:13px;color:var(--text3);margin-top:10px">Nenhuma campanha cadastrada ainda.</div>';
-  } catch(e) {
-    box.innerHTML = '<div style="font-size:13px;color:var(--red);margin-top:10px">Erro ao carregar campanhas: ' + e.message + '</div>';
-  }
-}
-
-
-async function excluirCampanha(campanhaId) {
-  if (!confirm('Excluir esta campanha/origem? Ela será removida da tela e deixará de atribuir novos leads.')) return;
-  const statusEl = document.getElementById('fu-campanha-status');
-  try {
-    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Excluindo campanha...'; }
-    await api('/movatak/admin/campanhas/' + campanhaId, { method: 'DELETE' });
-    await carregarCampanhas(fuId);
-    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha excluída.'; }
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao excluir campanha: ' + e.message;
-    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao excluir campanha.'; }
-  }
-}
-
-async function excluirTemplateFollowupSelecionado() {
-  const sel = document.getElementById('fu-template-select');
-  const template = sel ? sel.value : '';
-  const statusEl = document.getElementById('fu-template-status');
-  if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template personalizado para excluir.'; return; }
-  if (!template.startsWith('custom:')) {
-    document.getElementById('fu-err').textContent = 'Templates padrão não podem ser excluídos. Apenas templates personalizados deste cliente.';
-    return;
-  }
-  const id = template.replace('custom:', '').replace(/\D/g, '');
-  if (!id) return;
-  if (!confirm('Excluir este template personalizado?')) return;
-  try {
-    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Excluindo template...'; }
-    await api('/movatak/admin/templates-followup/' + id, { method: 'DELETE' });
-    await carregarTemplatesFollowup(fuId);
-    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Template excluído.'; }
-    document.getElementById('fu-err').textContent = '';
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao excluir template: ' + e.message;
-    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao excluir template.'; }
-  }
-}
-
-async function adicionarCampanha(btn) {
-  const statusEl = document.getElementById('fu-campanha-status');
-  const nome = document.getElementById('fu-campanha-nome').value.trim();
-  const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
-  const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
-  const investimento_valor = document.getElementById('fu-campanha-investimento').value.trim();
-  const template_id = document.getElementById('fu-campanha-template').value;
-  if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
-  if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
-  if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
-  try {
-    if (btn) { btn.disabled = true; btn.textContent = 'Adicionando...'; }
-    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Cadastrando campanha...'; }
-    await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
-      method: 'POST',
-      body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
-    });
-    ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => document.getElementById(id).value = '');
-    document.getElementById('fu-campanha-template').value = '';
-    await carregarCampanhas(fuId);
-    document.getElementById('fu-err').textContent = '';
-    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha cadastrada com gatilho, investimento e template vinculados.'; }
-  } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao cadastrar campanha: ' + e.message;
-    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao cadastrar campanha.'; }
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Adicionar'; }
-  }
-}
-
-async function marcarLeadCliente(leadId) {
-  try {
-    await api('/movatak/admin/leads/' + leadId + '/cliente', { method: 'PATCH', body: JSON.stringify({}) });
-    await carregarHistoricoLead(leadId); carregarOperacao(fuId); carregarFilaFollowup(fuId);
-  } catch(e) { document.getElementById('fu-err').textContent = 'Erro ao marcar cliente: ' + e.message; }
-}
-
-async function descartarLeadPainel(leadId) {
-  if (!confirm('Descartar este lead?')) return;
-  try {
-    await api('/movatak/admin/leads/' + leadId + '/descartar', { method: 'PATCH', body: JSON.stringify({}) });
-    await carregarHistoricoLead(leadId); carregarOperacao(fuId); carregarFilaFollowup(fuId);
-  } catch(e) { document.getElementById('fu-err').textContent = 'Erro ao descartar lead: ' + e.message; }
-}
-
 // Auto refresh a cada 2 minutos
 setInterval(() => { if (secret) carregarTudo(); }, 120000);
+
+// ============================================================
+// QUESTIONÁRIO CONSULTIVO — editor por cliente
+// ============================================================
+let questState = { clienteId: null, passos: [], regras: [], planos: [] };
+let questSeq = 0;
+
+const QUEST_TIPOS = [
+  { v: 'texto',   t: 'Texto livre' },
+  { v: 'opcoes',  t: 'Opções (numeradas)' },
+  { v: 'sim_nao', t: 'Sim ou Não' },
+  { v: 'cep',     t: 'CEP (verifica cobertura)' }
+];
+const QUEST_OPS = [
+  { v: '=',        t: 'igual a' },
+  { v: 'contains', t: 'contém' },
+  { v: '>=',       t: 'maior ou igual' },
+  { v: '<=',       t: 'menor ou igual' }
+];
+
+async function abrirQuestionario(id) {
+  questState = { clienteId: id, passos: [], regras: [], planos: [] };
+  document.getElementById('quest-err').textContent = '';
+  document.getElementById('modal-quest').classList.add('open');
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/questionario');
+    questState.planos = r.planos || [];
+    questState.passos = (r.passos || []).map(p => ({
+      id: p.id || ('q' + (++questSeq)),
+      tipo: p.tipo || 'texto',
+      pergunta: p.pergunta || '',
+      pergunta_curta: p.pergunta_curta || '',
+      opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
+      imagem: p.imagem || ''
+    }));
+    questState.introImagem = r.intro_imagem || '';
+    questState.finalImagem = r.final_imagem || '';
+    questState.regras = (r.recomendacao || []).map(g => ({
+      plano_id: g.plano_id != null ? String(g.plano_id) : '',
+      condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
+    }));
+    document.getElementById('quest-ativo').checked = !!r.ativo;
+    document.getElementById('quest-intro').value = r.intro || '';
+    document.getElementById('quest-final').value = r.final || '';
+    document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
+    renderQuestPassos();
+    renderQuestRegras();
+    renderQuestImg('intro');
+    renderQuestImg('final');
+    carregarCobertura(id);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+function fecharQuestionario() {
+  document.getElementById('modal-quest').classList.remove('open');
+}
+
+function renderQuestPassos() {
+  const wrap = document.getElementById('quest-passos');
+  if (!questState.passos.length) {
+    wrap.innerHTML = '<div class="fu-hint">Nenhuma pergunta. Adicione a primeira abaixo.</div>';
+    return;
+  }
+  wrap.innerHTML = questState.passos.map((p, i) => {
+    const tipoSel = QUEST_TIPOS.map(o => `<option value="${o.v}" ${p.tipo === o.v ? 'selected' : ''}>${o.t}</option>`).join('');
+    const opcoesField = p.tipo === 'opcoes'
+      ? `<input type="text" class="fu-textarea quest-mini" placeholder="Opções separadas por vírgula. Ex: Trabalho, Estudo, Jogos" value="${escAttr(p.opcoes.join(', '))}" oninput="questSetPasso(${i},'opcoes',this.value)">`
+      : '';
+    return `<div class="quest-card">
+      <div class="quest-card-head">
+        <span class="quest-num">#${i + 1}</span>
+        <select class="quest-mini" onchange="questSetPasso(${i},'tipo',this.value)">${tipoSel}</select>
+        <span style="flex:1"></span>
+        <button class="quest-iconbtn" onclick="questMovePasso(${i},-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="quest-iconbtn" onclick="questMovePasso(${i},1)" ${i === questState.passos.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="quest-iconbtn quest-del" onclick="questRemovePasso(${i})">✕</button>
+      </div>
+      <input type="text" class="fu-textarea quest-mini" placeholder="Pergunta enviada ao lead" value="${escAttr(p.pergunta)}" oninput="questSetPasso(${i},'pergunta',this.value)">
+      ${opcoesField}
+      <div class="quest-row2">
+        <input type="text" class="fu-textarea quest-mini" placeholder="ID p/ regras (ex: pessoas)" value="${escAttr(p.id)}" oninput="questSetPasso(${i},'id',this.value)">
+        <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
+      </div>
+      ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
+    </div>`;
+  }).join('');
+}
+
+function questSetPasso(i, campo, valor) {
+  if (!questState.passos[i]) return;
+  if (campo === 'opcoes') {
+    questState.passos[i].opcoes = valor.split(',').map(s => s.trim()).filter(Boolean);
+  } else {
+    questState.passos[i][campo] = valor;
+  }
+  if (campo === 'tipo') renderQuestPassos();
+}
+function questAddPasso() {
+  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [] });
+  renderQuestPassos();
+}
+function questRemovePasso(i) { questState.passos.splice(i, 1); renderQuestPassos(); }
+function questMovePasso(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= questState.passos.length) return;
+  const t = questState.passos[i]; questState.passos[i] = questState.passos[j]; questState.passos[j] = t;
+  renderQuestPassos();
+}
+
+function renderQuestRegras() {
+  const wrap = document.getElementById('quest-regras');
+  const planoOpts = '<option value="">Selecione o plano</option>' +
+    questState.planos.map(p => `<option value="${p.id}">${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + p.valor : ''}</option>`).join('');
+  if (!questState.regras.length) {
+    wrap.innerHTML = '<div class="fu-hint">Nenhuma regra. A primeira regra que bater define o plano recomendado. Deixe uma regra sem condições no fim como padrão.</div>';
+    return;
+  }
+  wrap.innerHTML = questState.regras.map((g, gi) => {
+    const conds = (g.condicoes || []).map((c, ci) => {
+      const opOpts = QUEST_OPS.map(o => `<option value="${o.v}" ${c.op === o.v ? 'selected' : ''}>${o.t}</option>`).join('');
+      return `<div class="quest-cond">
+        <select class="quest-mini" onchange="questSetCond(${gi},${ci},'campo',this.value)"><option value="">campo</option>${questState.passos.map(p => `<option value="${escAttr(p.id)}" ${c.campo === p.id ? 'selected' : ''}>${escAttr(p.id)}</option>`).join('')}</select>
+        <select class="quest-mini" style="max-width:140px" onchange="questSetCond(${gi},${ci},'op',this.value)">${opOpts}</select>
+        <input type="text" class="fu-textarea quest-mini" placeholder="valor" value="${escAttr(c.valor)}" oninput="questSetCond(${gi},${ci},'valor',this.value)">
+        <button class="quest-iconbtn quest-del" onclick="questRemoveCond(${gi},${ci})">✕</button>
+      </div>`;
+    }).join('');
+    return `<div class="quest-card">
+      <div class="quest-card-head">
+        <span class="quest-num">Regra ${gi + 1}</span>
+        <select class="quest-mini" onchange="questSetRegra(${gi},'plano_id',this.value)">${planoOpts.replace(`value="${g.plano_id}"`, `value="${g.plano_id}" selected`)}</select>
+        <span style="flex:1"></span>
+        <button class="quest-iconbtn quest-del" onclick="questRemoveRegra(${gi})">✕</button>
+      </div>
+      <div class="fu-hint" style="margin:4px 0 8px">Todas as condições precisam bater (E). Sem condições = padrão.</div>
+      ${conds}
+      <button class="btn-add-small" style="margin-top:6px" onclick="questAddCond(${gi})">+ Condição</button>
+    </div>`;
+  }).join('');
+}
+function questSetRegra(gi, campo, valor) { if (questState.regras[gi]) questState.regras[gi][campo] = valor; }
+function questAddRegra() { questState.regras.push({ plano_id: '', condicoes: [] }); renderQuestRegras(); }
+function questRemoveRegra(gi) { questState.regras.splice(gi, 1); renderQuestRegras(); }
+function questAddCond(gi) { questState.regras[gi].condicoes.push({ campo: '', op: '=', valor: '' }); renderQuestRegras(); }
+function questRemoveCond(gi, ci) { questState.regras[gi].condicoes.splice(ci, 1); renderQuestRegras(); }
+function questSetCond(gi, ci, campo, valor) { if (questState.regras[gi] && questState.regras[gi].condicoes[ci]) questState.regras[gi].condicoes[ci][campo] = valor; }
+
+async function salvarQuestionario() {
+  const btn = document.getElementById('btn-quest-save');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  document.getElementById('quest-err').textContent = '';
+  try {
+    const passos = questState.passos
+      .filter(p => (p.pergunta || '').trim())
+      .map(p => ({
+        id: (p.id || '').trim() || ('q' + (++questSeq)),
+        tipo: p.tipo,
+        pergunta: p.pergunta.trim(),
+        pergunta_curta: (p.pergunta_curta || '').trim(),
+        opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
+        imagem: p.imagem || ''
+      }));
+    const recomendacao = questState.regras
+      .filter(g => g.plano_id)
+      .map(g => ({
+        plano_id: g.plano_id,
+        condicoes: (g.condicoes || []).filter(c => c.campo).map(c => ({ campo: c.campo, op: c.op || '=', valor: c.valor }))
+      }));
+    await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ativo: document.getElementById('quest-ativo').checked,
+        intro: document.getElementById('quest-intro').value,
+        final: document.getElementById('quest-final').value,
+        intro_imagem: questState.introImagem || '',
+        final_imagem: questState.finalImagem || '',
+        passos,
+        recomendacao
+      })
+    });
+    btn.textContent = '✓ Salvo';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar questionário'; }, 1500);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro ao salvar: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Salvar questionário';
+  }
+}
+
+async function carregarCobertura(id) {
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/cobertura');
+    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
+  } catch (e) { /* silencioso */ }
+}
+async function salvarCobertura() {
+  const btn = document.getElementById('btn-cob-save');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const modo = document.querySelector('input[name="cob-modo"]:checked').value;
+    const r = await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', {
+      method: 'POST',
+      body: JSON.stringify({ modo, ceps: document.getElementById('quest-ceps').value })
+    });
+    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
+    document.getElementById('quest-ceps').value = '';
+    btn.textContent = '✓ ' + (r.inseridos || 0) + ' adicionados';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar CEPs'; }, 1800);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro nos CEPs: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Salvar CEPs';
+  }
+}
+async function limparCobertura() {
+  if (!confirm('Apagar todos os CEPs cadastrados deste cliente?')) return;
+  try {
+    await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', { method: 'DELETE' });
+    document.getElementById('quest-cob-total').textContent = '0 CEPs cadastrados';
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
+}
+
+function imgControl(url, uploadCall, removeCall) {
+  if (url) {
+    return `<div class="quest-img"><img src="${escAttr(url)}"><button class="quest-imglink" onclick="${removeCall}">remover imagem</button></div>`;
+  }
+  return `<label class="quest-imgbtn">📎 Adicionar imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="${uploadCall}"></label>`;
+}
+async function subirImagem(file) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('falha ao ler arquivo'));
+    r.readAsDataURL(file);
+  });
+  const r = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  return r.url;
+}
+async function questUploadPasso(i, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    questState.passos[i].imagem = await subirImagem(f);
+    document.getElementById('quest-err').textContent = '';
+    renderQuestPassos();
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveImgPasso(i) { questState.passos[i].imagem = ''; renderQuestPassos(); }
+function renderQuestImg(tipo) {
+  const url = tipo === 'intro' ? questState.introImagem : questState.finalImagem;
+  const el = document.getElementById('quest-' + tipo + '-img');
+  if (el) el.innerHTML = imgControl(url, `questUploadMidia('${tipo}',this)`, `questRemoveMidia('${tipo}')`);
+}
+async function questUploadMidia(tipo, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    const url = await subirImagem(f);
+    if (tipo === 'intro') questState.introImagem = url; else questState.finalImagem = url;
+    document.getElementById('quest-err').textContent = '';
+    renderQuestImg(tipo);
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveMidia(tipo) {
+  if (tipo === 'intro') questState.introImagem = ''; else questState.finalImagem = '';
+  renderQuestImg(tipo);
+}
+
+function escAttr(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 </script>
 
 <div class="modal-overlay" id="modal-fu">
   <div class="modal modal-fu">
-    <h3 id="fu-titulo">Configuração de Follow Up</h3>
-    <p style="font-size:13px;color:var(--text2);margin-bottom:20px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
+    <h3 id="fu-titulo">Mensagens de Follow Up</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
 
-    <!-- BLOCO 1: TEMPLATE DE CAMPANHA/FOLLOW-UP -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Template de campanha/follow-up</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Escolha primeiro um modelo pronto. Ao aplicar, ele preenche automaticamente FU1, FU2, boas-vindas e comandos. Depois você ajusta cada campo abaixo.</div>
-      <label class="fu-label">Template pronto</label>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1"></select>
-        <button class="btn-add-small" onclick="aplicarTemplateFollowup()">Aplicar template</button>
-        <button class="btn-add-small" onclick="criarTemplateFollowup()">+ Criar template</button>
-        <button class="btn-cancel" style="padding:8px 14px" onclick="excluirTemplateFollowupSelecionado()">Excluir template</button>
-      </div>
-      <div id="fu-template-create-box" style="display:none;margin-top:12px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px">
-        <label class="fu-label" style="margin-top:0">Nome do novo template</label>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input type="text" class="fu-textarea" id="fu-template-nome" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Ex: DTF UV - Black Friday, Provedor - Reativação">
-          <button class="btn-add-small" onclick="salvarTemplateFollowupAtual()">Salvar modelo</button>
-          <button class="btn-cancel" style="padding:8px 14px" onclick="cancelarCriarTemplateFollowup()">Cancelar</button>
-        </div>
-        <div class="fu-hint">O template será criado com os textos atuais deste cliente. Preencha ou ajuste os campos antes de salvar.</div>
-      </div>
-      <div class="fu-hint">Aplicar substitui as mensagens atuais. Criar template salva os campos atuais como modelo reutilizável.</div>
-      <div id="fu-template-status" class="fu-hint" style="margin-top:8px"></div>
+    <label class="fu-label" style="margin-top:0">Frase-gatilho do tráfego <span class="fu-tag">cria o lead</span></label>
+    <input type="text" class="fu-textarea" id="fu-trigger" style="min-height:auto;padding:12px 14px;resize:none" placeholder="vim pelo anuncio">
+    <div class="fu-hint">Quando o lead manda uma mensagem contendo esse texto, ele é registrado automaticamente.</div>
+
+    <label class="fu-label">D+1 — Mensagem 1 <span class="fu-tag">1 dia após</span></label>
+    <textarea class="fu-textarea" id="fu-msg1" rows="3"></textarea>
+    <div class="fu-hint">Enviada 1 dia após a etiqueta Follow Up ser aplicada.</div>
+    <label class="fu-label">D+3 — Mensagem 2 <span class="fu-tag">3 dias após</span></label>
+    <textarea class="fu-textarea" id="fu-msg2" rows="3"></textarea>
+    <label class="fu-label">D+7 — Mensagem 3 <span class="fu-tag">7 dias após</span></label>
+    <textarea class="fu-textarea" id="fu-msg3" rows="3"></textarea>
+    <label class="fu-label">D+14 — Mensagem 4 <span class="fu-tag">14 dias após</span></label>
+    <textarea class="fu-textarea" id="fu-msg4" rows="3"></textarea>
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem de boas-vindas <span class="fu-tag">quando vira cliente</span></label>
+    <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
+    <div class="fu-hint">Enviada automaticamente quando a etiqueta "Cliente" é aplicada. Use {nome} para personalizar.</div>
+
+    <label class="fu-label" style="margin-top:16px">Verba diária de mídia (R$)</label>
+    <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
+    <div class="fu-hint">Usada para calcular o CPL real automaticamente.</div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">WhatsApp do dono para alertas</label>
+    <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
+    <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comandos de automação</label>
+    <div class="fu-hint" style="margin-bottom:10px">Texto que, embutido numa mensagem enviada pela equipe, dispara a ação. Separe múltiplos comandos por vírgula.</div>
+
+    <label class="fu-label">Comando — Follow Up <span class="fu-tag">ativa a sequência</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-followup" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#followup, #aguardando">
+
+    <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
+
+    <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
+
+    <label class="fu-label">Comando — Desfazer venda <span class="fu-tag">reverte conversão</span></label>
+    <input type="text" class="fu-textarea" id="fu-cmd-desfazer" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#estornar, #desfazer">
+    <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
+
+    <label class="fu-label" style="margin-top:16px">Vendedores</label>
+    <div class="fu-hint" style="margin-bottom:8px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
+    <div class="vendedor-list" id="fu-vendedores-list"></div>
+    <div class="add-vendedor-row">
+      <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
+      <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
     </div>
 
-    <!-- Campo legado oculto: a atribuição principal agora vem dos gatilhos cadastrados em Campanhas e Origens. -->
-    <input type="hidden" id="fu-trigger" value="">
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Performance dos vendedores</label>
+    <div id="fu-ranking-chart" style="margin-top:10px"></div>
 
-    <!-- BLOCO 2: FOLLOW UP 1 -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Follow up 1 — Boas-vindas imediata</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Enviadas imediatamente quando o lead chega. Se não responder em 1 hora, vai para o Follow up 2.</div>
-      <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
-      <textarea class="fu-textarea" id="fu1-msg1" rows="3" placeholder="Ex: Olá {nome}! Bem-vindo(a). Você está disponível para prosseguirmos?"></textarea>
-      <label class="fu-label">Mensagem 2 <span class="fu-tag">imediata</span></label>
-      <textarea class="fu-textarea" id="fu1-msg2" rows="3" placeholder="Deixe em branco se não quiser enviar uma segunda mensagem"></textarea>
-    </div>
-
-    <!-- BLOCO 3: FOLLOW UP 2 -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Follow up 2 — Reativação</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Ativado automaticamente se o lead não responder em 1 hora. Mensagens: imediata, D+1, D+3. Campos em branco não são enviados.</div>
-      <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
-      <textarea class="fu-textarea" id="fu2-msg1" rows="3" placeholder="Deixe em branco se não quiser usar este follow up"></textarea>
-      <label class="fu-label">Mensagem 2 <span class="fu-tag">D+1</span></label>
-      <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
-      <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
-      <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
-    </div>
-
-    <!-- BLOCO 4: BOAS-VINDAS AO CLIENTE -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">4. Mensagem de boas-vindas ao virar cliente</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Enviada automaticamente quando o lead responde ou você marca como cliente.</div>
-      <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
-    </div>
-
-    <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">5. Investimento consolidado</div>
-      <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
-      <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
-      <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
-      <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
-      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
-      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
-    </div>
-
-    <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Campanhas e origens</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
-      <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
-      <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
-        <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
-        <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
-        <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
-        <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
-        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado</option></select>
-        <button class="btn-add-small" onclick="adicionarCampanha(this)">Adicionar</button>
-      </div>
-      <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
-      <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
-      <div id="fu-campanhas-box"></div>
-    </div>
-
-    <!-- BLOCO 8: STATUS OPERACIONAL -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Status operacional</div>
-      <div id="fu-operacao-box"></div>
-      <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" class="fu-textarea" id="fu-trigger-teste" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Cole aqui a mensagem recebida do anúncio">
-        <button class="btn-add-small" onclick="testarGatilhoAtual()">Testar</button>
-      </div>
-      <div class="fu-hint" id="fu-trigger-resultado"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
-        <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
-        <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
-      </div>
-      <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
-    </div>
-
-    <!-- BLOCO 8: FILA DE FOLLOW-UP -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Fila de follow-up</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Mostra mensagens pendentes, enviadas e pausadas. Use para auditar se o fluxo realmente entrou na fila.</div>
-      <div id="fu-fila-box"></div>
-      <div id="fu-historico-box"></div>
-    </div>
-
-    <!-- BLOCO 9: COMANDOS -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Comandos de automação</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Texto embutido numa mensagem enviada pela equipe que dispara a ação. Separe múltiplos comandos por vírgula.</div>
-      <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
-      <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
-      <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
-      <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
-      <label class="fu-label">Comando — Desfazer venda <span class="fu-tag">reverte conversão</span></label>
-      <input type="text" class="fu-textarea" id="fu-cmd-desfazer" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#estornar, #desfazer">
-      <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
-    </div>
-
-    <!-- BLOCO 10: VENDEDORES -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Vendedores</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
-      <div class="vendedor-list" id="fu-vendedores-list"></div>
-      <div class="add-vendedor-row">
-        <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
-        <input type="email" class="fu-textarea" id="fu-novo-vendedor-email" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Email de acesso">
-        <input type="password" class="fu-textarea" id="fu-novo-vendedor-senha" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Senha">
-        <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
-      </div>
-    </div>
-
-    <!-- BLOCO 11: PERFORMANCE -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">11. Performance dos vendedores</div>
-      <div id="fu-ranking-chart" style="margin-top:10px"></div>
-    </div>
-
-    <div class="login-err" id="fu-err" style="margin-bottom:12px"></div>
+    <div class="login-err" id="fu-err" style="margin-top:12px"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharFU()">Cancelar</button>
-      <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar alterações</button>
+      <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar mensagens</button>
+    </div>
+  </div>
+</div>
+<style>
+#modal-quest .quest-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px}
+#modal-quest .quest-card-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+#modal-quest .quest-num{font-size:12px;font-weight:700;color:var(--accent);font-family:var(--mono)}
+#modal-quest .quest-mini{min-height:auto!important;padding:9px 12px!important;resize:none;font-size:13px;margin:4px 0}
+#modal-quest select.quest-mini{background:var(--bg2);color:var(--text);border:1px solid var(--border2);border-radius:8px;max-width:200px}
+#modal-quest .quest-row2{display:flex;gap:8px}
+#modal-quest .quest-row2 .quest-mini{flex:1}
+#modal-quest .quest-cond{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+#modal-quest .quest-cond .quest-mini{flex:1}
+#modal-quest .quest-iconbtn{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;color:var(--text2);width:28px;height:28px;cursor:pointer;font-size:13px}
+#modal-quest .quest-iconbtn:disabled{opacity:.3;cursor:default}
+#modal-quest .quest-del{color:var(--red)}
+#modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+#modal-quest .quest-switch input{width:18px;height:18px}
+#modal-quest .quest-img{display:flex;align-items:center;gap:10px;margin-top:6px}
+#modal-quest .quest-img img{height:46px;border-radius:8px;border:1px solid var(--border2);object-fit:cover}
+#modal-quest .quest-imglink{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px}
+#modal-quest .quest-imgbtn{display:inline-block;margin-top:6px;font-size:12px;color:var(--text2);border:1px dashed var(--border2);border-radius:8px;padding:7px 12px;cursor:pointer}
+#modal-quest .quest-imgbtn:hover{color:var(--text);border-color:var(--accent)}
+</style>
+
+<div class="modal-overlay" id="modal-quest">
+  <div class="modal modal-fu">
+    <h3>Questionário consultivo</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> nas mensagens e <strong>{plano}</strong> na mensagem final.</p>
+
+    <div class="quest-switch">
+      <input type="checkbox" id="quest-ativo">
+      <label for="quest-ativo" style="font-size:14px;color:var(--text)">Ativar questionário para este cliente</label>
+    </div>
+    <div class="fu-hint" style="margin-top:-8px;margin-bottom:16px">Desligado, o lead segue no fluxo normal (boas-vindas + follow-up), sem perguntas.</div>
+
+    <label class="fu-label" style="margin-top:0">Introdução (enviada após as boas-vindas)</label>
+    <textarea class="fu-textarea" id="quest-intro" rows="2" placeholder="Pra te indicar o plano ideal, vou te fazer algumas perguntas rápidas. 👇"></textarea>
+    <div id="quest-intro-img"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Perguntas</label>
+    <div class="fu-hint" style="margin-bottom:10px">A ordem aqui é a ordem enviada. O <strong>ID</strong> é o nome do campo usado nas regras de recomendação.</div>
+    <div id="quest-passos"></div>
+    <button class="btn-add-small" style="margin-top:4px" onclick="questAddPasso()">+ Adicionar pergunta</button>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Recomendação de plano</label>
+    <div class="fu-hint" style="margin-bottom:10px">A primeira regra cujas condições baterem define o plano. Deixe uma regra sem condições no fim como padrão.</div>
+    <div id="quest-regras"></div>
+    <button class="btn-add-small" style="margin-top:4px" onclick="questAddRegra()">+ Adicionar regra</button>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
+    <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você. 🙌"></textarea>
+    <div id="quest-final-img"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Cobertura por CEP</label>
+    <div class="fu-hint" style="margin-bottom:8px"><span id="quest-cob-total" style="color:var(--accent);font-weight:700">0 CEPs cadastrados</span>. Cole os CEPs atendidos (um por linha ou separados por vírgula). Aceita CEP completo ou prefixo (ex: 50000 cobre toda a faixa).</div>
+    <textarea class="fu-textarea" id="quest-ceps" rows="4" style="font-family:var(--mono)" placeholder="50000000&#10;50010000&#10;52000"></textarea>
+    <div style="display:flex;align-items:center;gap:16px;margin:8px 0 4px;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="substituir" checked> Substituir lista</label>
+      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="adicionar"> Adicionar à lista</label>
+      <span style="flex:1"></span>
+      <button class="btn-add-small" id="btn-cob-save" onclick="salvarCobertura()">Salvar CEPs</button>
+      <button class="btn-add-small" style="border-color:var(--red);color:var(--red)" onclick="limparCobertura()">Limpar tudo</button>
+    </div>
+
+    <div class="login-err" id="quest-err" style="margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
+      <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar questionário</button>
     </div>
   </div>
 </div>
