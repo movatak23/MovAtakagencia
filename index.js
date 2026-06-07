@@ -760,31 +760,6 @@ cron.schedule('*/10 * * * *', async () => {
     for (const row of r.rows) {
       try {
         if (row.etapa !== 'followup') continue;
-
-        // Verificar se lead já é cliente ativo no Rastreiobot
-        try {
-          const telLimpo = String(row.telefone || '').replace(/\D/g, '');
-          const checkAtivo = await axios.get(
-            `${RASTREIOBOT_URL}/cliente-ativo/${telLimpo}`,
-            { timeout: 5000 }
-          );
-          if (checkAtivo.data?.ativo) {
-            await query(
-              `UPDATE movatak_leads SET etapa = 'cliente', atualizado_em = NOW() WHERE id = $1`,
-              [row.lead_id]
-            );
-            await query(
-              `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-              [row.lead_id]
-            );
-            await registrarEventoLead(row.lead_id, row.cliente_id, 'convertido_rastreiobot', 'Lead convertido automaticamente — rastreio identificado no Rastreiobot');
-            console.log(`[cron] Lead ${row.lead_id} já é cliente (rastreio detectado) — followup pausado`);
-            continue;
-          }
-        } catch(e) {
-          // Falha na consulta não bloqueia o envio
-          console.error(`[cron] Erro ao verificar cliente-ativo:`, e.message);
-        }
         
         const fu_data = followupDataDaLinha(row);
         const seq_key = 'fu' + (row.sequencia_fu || 1);
