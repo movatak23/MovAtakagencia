@@ -1092,17 +1092,16 @@ async function abrirFU(id) {
     document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
     document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
-    // Carregar vendedores
+    // Carregar templates primeiro (garante que o select de campanha já tem opções quando Editar é clicado)
+    await carregarTemplatesFollowup();
+    // Carregar campanhas depois (Editar só aparece quando as opções já estão prontas)
+    carregarCampanhas(id);
+    // Demais seções em paralelo (não dependem do select de templates)
     carregarVendedores(id);
-    // Carregar comandos de automação
     carregarComandos(id);
-    // Carregar gráfico de performance
     carregarRanking(id);
-    // Carregar status operacional e fila do follow-up
     carregarOperacao(id);
     carregarFilaFollowup(id);
-    carregarCampanhas(id);
-    carregarTemplatesFollowup();
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
@@ -1546,7 +1545,11 @@ async function carregarTemplatesFollowup() {
       csel.value = atual;
     });
     const campSel = document.getElementById('fu-campanha-template');
-    if (campSel) campSel.innerHTML = '<option value="">Template vinculado</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
+    if (campSel) {
+      const prevVal = editandoCampanhaId ? campSel.value : '';
+      campSel.innerHTML = '<option value="">Template vinculado</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
+      if (prevVal) campSel.value = prevVal;
+    }
   } catch(e) {
     if (sel) sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
   }
@@ -1779,6 +1782,7 @@ function editarCampanha(id) {
   if (targetVal && campSel.value !== targetVal) {
     const opt = document.createElement('option');
     opt.value = targetVal;
+    opt.setAttribute('data-fallback', '1');
     opt.textContent = c.template_nome || ('Template #' + targetVal);
     campSel.appendChild(opt);
     campSel.value = targetVal;
@@ -1794,7 +1798,12 @@ function editarCampanha(id) {
 function cancelarEdicaoCampanha() {
   editandoCampanhaId = null;
   ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-  const t = document.getElementById('fu-campanha-template'); if (t) t.value = '';
+  const t = document.getElementById('fu-campanha-template');
+  if (t) {
+    // Remove opções injetadas como fallback (não são do cache oficial)
+    Array.from(t.querySelectorAll('option[data-fallback]')).forEach(o => o.remove());
+    t.value = '';
+  }
   const tipo = document.getElementById('fu-campanha-investimento-tipo'); if (tipo) tipo.value = 'diario';
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Adicionar';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = 'none';
