@@ -422,6 +422,18 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </div>
         <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
       </div>
+      <div class="form-field full" id="planos-section" style="display:none">
+        <label>PLANOS / PACOTES (usados na recomendação)</label>
+        <div class="fu-hint" style="margin-bottom:8px">A recomendação soma a pontuação das perguntas de "opções numeradas" e sugere o plano de maior <strong>nota mínima</strong> que o lead alcançar. Cadastre do menor (nota baixa) para o maior (nota alta).</div>
+        <div id="planos-lista"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
+          <input type="text" id="plano-novo-nome" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2;min-width:140px" placeholder="Nome do plano">
+          <input type="number" id="plano-novo-valor" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="R$">
+          <input type="number" id="plano-novo-nota" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="Nota mín.">
+          <button class="btn-add-small" onclick="adicionarPlano()">Adicionar plano</button>
+        </div>
+        <div id="plano-status" class="fu-hint" style="margin-top:6px"></div>
+      </div>
     </div>
     <div id="token-resultado" style="display:none">
       <div class="token-box">
@@ -798,7 +810,7 @@ function renderClientes(clientes) {
       <td class="td-mono" style="font-size:13px">—</td>
       <td>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
-        <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Follow Up</button>
+        <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Início/Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Questionário</button>
       </td>
     </tr>`;
@@ -817,6 +829,7 @@ function abrirModal() {
   document.getElementById('lbl-token').textContent = 'Z-API TOKEN';
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
   document.getElementById('f-planos').closest('.form-field').style.display = '';
+  document.getElementById('planos-section').style.display = 'none';
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Cadastrar';
   btn.onclick = salvarCliente;
@@ -835,8 +848,11 @@ async function abrirEdicao(id) {
   document.getElementById('modal-titulo').textContent = 'Editar cliente';
   document.getElementById('lbl-token').textContent = 'Z-API TOKEN (deixe vazio para manter)';
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN (deixe vazio para manter)';
-  // Planos não são editados aqui
+  // Planos: editados aqui (modo edição), com valor e nota mínima
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
+  document.getElementById('planos-section').style.display = '';
+  planosClienteId = id;
+  carregarPlanos(id);
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Carregando...';
   btn.onclick = salvarEdicao;
@@ -891,6 +907,52 @@ async function salvarEdicao() {
     document.getElementById('modal-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-salvar').textContent = 'Salvar alterações';
   }
+}
+
+let planosClienteId = null;
+async function carregarPlanos(id) {
+  const box = document.getElementById('planos-lista');
+  if (!box) return;
+  box.innerHTML = '<div class="fu-hint">Carregando planos...</div>';
+  try {
+    const planos = await api('/movatak/admin/clientes/' + id + '/planos');
+    if (!planos.length) { box.innerHTML = '<div class="fu-hint">Nenhum plano cadastrado ainda.</div>'; return; }
+    box.innerHTML = planos.map(p => `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+        <input type="text" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2" value="${escAttr(p.nome)}" onchange="patchPlano(${p.id},'nome',this.value)">
+        <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.valor != null ? p.valor : ''}" placeholder="R$" onchange="patchPlano(${p.id},'valor',this.value)">
+        <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.nota_minima || 0}" placeholder="Nota mín." onchange="patchPlano(${p.id},'nota_minima',this.value)">
+        <button class="btn-remove" title="Excluir plano" onclick="removerPlano(${p.id})">×</button>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro ao carregar planos: ' + e.message + '</div>';
+  }
+}
+async function adicionarPlano() {
+  const nome = document.getElementById('plano-novo-nome').value.trim();
+  const valor = document.getElementById('plano-novo-valor').value.trim();
+  const nota_minima = document.getElementById('plano-novo-nota').value.trim();
+  const st = document.getElementById('plano-status');
+  if (!nome) { st.style.color = 'var(--red)'; st.textContent = 'Informe o nome do plano.'; return; }
+  try {
+    await api('/movatak/admin/clientes/' + planosClienteId + '/planos', { method: 'POST', body: JSON.stringify({ nome, valor, nota_minima }) });
+    ['plano-novo-nome','plano-novo-valor','plano-novo-nota'].forEach(id => document.getElementById(id).value = '');
+    st.style.color = 'var(--green)'; st.textContent = 'Plano adicionado.';
+    carregarPlanos(planosClienteId);
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+}
+async function patchPlano(id, campo, valor) {
+  try {
+    await api('/movatak/admin/planos/' + id, { method: 'PATCH', body: JSON.stringify({ [campo]: valor }) });
+    if (campo === 'nota_minima' || campo === 'valor') carregarPlanos(planosClienteId);
+  } catch (e) {
+    const st = document.getElementById('plano-status'); if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }
+  }
+}
+async function removerPlano(id) {
+  if (!confirm('Excluir este plano?')) return;
+  try { await api('/movatak/admin/planos/' + id, { method: 'DELETE' }); carregarPlanos(planosClienteId); }
+  catch (e) { const st = document.getElementById('plano-status'); if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao excluir: ' + e.message; } }
 }
 
 function fecharModal() {
@@ -1714,12 +1776,6 @@ const QUEST_TIPOS = [
   { v: 'sim_nao', t: 'Sim ou Não' },
   { v: 'cep',     t: 'CEP (verifica cobertura)' }
 ];
-const QUEST_OPS = [
-  { v: '=',        t: 'igual a' },
-  { v: 'contains', t: 'contém' },
-  { v: '>=',       t: 'maior ou igual' },
-  { v: '<=',       t: 'menor ou igual' }
-];
 
 async function abrirQuestionario(id) {
   questState = { clienteId: id, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
@@ -1816,41 +1872,23 @@ function questMovePasso(i, dir) {
 
 function renderQuestRegras() {
   const wrap = document.getElementById('quest-regras');
-  const planoOpts = '<option value="">Selecione o plano</option>' +
-    questState.planos.map(p => `<option value="${p.id}">${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + p.valor : ''}</option>`).join('');
-  if (!questState.regras.length) {
-    wrap.innerHTML = '<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhuma regra. A primeira regra que bater define o plano. Deixe uma regra sem condições no fim como padrão.</div>';
-    return;
-  }
-  wrap.innerHTML = questState.regras.map((g, gi) => {
-    const conds = (g.condicoes || []).map((c, ci) => {
-      const opOpts = QUEST_OPS.map(o => `<option value="${o.v}" ${c.op === o.v ? 'selected' : ''}>${o.t}</option>`).join('');
-      return `<div class="quest-cond">
-        <select class="quest-mini" onchange="questSetCond(${gi},${ci},'campo',this.value)"><option value="">campo</option>${questState.passos.map(p => `<option value="${escAttr(p.id)}" ${c.campo === p.id ? 'selected' : ''}>${escAttr(p.id)}</option>`).join('')}</select>
-        <select class="quest-mini" style="max-width:140px" onchange="questSetCond(${gi},${ci},'op',this.value)">${opOpts}</select>
-        <input type="text" class="fu-textarea quest-mini" placeholder="valor" value="${escAttr(c.valor)}" oninput="questSetCond(${gi},${ci},'valor',this.value)">
-        <button class="quest-iconbtn quest-del" onclick="questRemoveCond(${gi},${ci})">✕</button>
-      </div>`;
-    }).join('');
-    return `<div class="quest-card">
-      <div class="quest-card-head">
-        <span class="quest-num">Regra ${gi + 1}</span>
-        <select class="quest-mini" onchange="questSetRegra(${gi},'plano_id',this.value)">${planoOpts.replace(`value="${g.plano_id}"`, `value="${g.plano_id}" selected`)}</select>
-        <span style="flex:1"></span>
-        <button class="quest-iconbtn quest-del" onclick="questRemoveRegra(${gi})">✕</button>
-      </div>
-      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin:4px 0 8px">Todas as condições precisam bater (E). Sem condições = padrão.</div>
-      ${conds}
-      <button class="btn-add-small" style="margin-top:6px;padding:6px 12px;font-size:12px" onclick="questAddCond(${gi})">+ Condição</button>
-    </div>`;
-  }).join('');
+  if (!wrap) return;
+  const passosOpcoes = questState.passos.filter(p => p.tipo === 'opcoes');
+  const maxScore = passosOpcoes.reduce((s, p) => s + (Array.isArray(p.opcoes) ? p.opcoes.length : 0), 0);
+  const planosHtml = (questState.planos || []).length
+    ? questState.planos.map(p => `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <span>${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + p.valor : ''}</span>
+        <span style="color:var(--accent);font-family:var(--mono)">nota mín. ${p.nota_minima || 0}</span>
+      </div>`).join('')
+    : '<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhum plano cadastrado. Cadastre os planos na tela de edição do cliente (botão Editar).</div>';
+  wrap.innerHTML = `
+    <div class="fu-hint" style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:10px">
+      A recomendação é <strong>automática por pontuação</strong>. Cada pergunta de "Opções numeradas" pontua pela posição da opção escolhida: a 1ª vale 1, a 2ª vale 2, e assim por diante (a última vale o nº de opções). A soma define o plano: o lead recebe o de <strong>maior nota mínima</strong> que alcançar.
+      <br>Pontuação máxima com as perguntas atuais: <strong style="color:var(--accent)">${maxScore}</strong>.
+    </div>
+    <div class="quest-card">${planosHtml}</div>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:8px">Cadastre os planos e ajuste a "nota mínima" de cada um na tela de <strong>edição do cliente</strong>.</div>`;
 }
-function questSetRegra(gi, campo, valor) { if (questState.regras[gi]) questState.regras[gi][campo] = valor; }
-function questAddRegra() { questState.regras.push({ plano_id: '', condicoes: [] }); renderQuestRegras(); }
-function questRemoveRegra(gi) { questState.regras.splice(gi, 1); renderQuestRegras(); }
-function questAddCond(gi) { questState.regras[gi].condicoes.push({ campo: '', op: '=', valor: '' }); renderQuestRegras(); }
-function questRemoveCond(gi, ci) { questState.regras[gi].condicoes.splice(ci, 1); renderQuestRegras(); }
-function questSetCond(gi, ci, campo, valor) { if (questState.regras[gi] && questState.regras[gi].condicoes[ci]) questState.regras[gi].condicoes[ci][campo] = valor; }
 
 function imgControl(url, uploadCall, removeCall) {
   if (url) {
@@ -1918,12 +1956,6 @@ async function salvarQuestionario() {
         imagem: p.imagem || '',
         aguardar: p.aguardar !== false
       }));
-    const recomendacao = questState.regras
-      .filter(g => g.plano_id)
-      .map(g => ({
-        plano_id: g.plano_id,
-        condicoes: (g.condicoes || []).filter(c => c.campo).map(c => ({ campo: c.campo, op: c.op || '=', valor: c.valor }))
-      }));
     await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
       method: 'PATCH',
       body: JSON.stringify({
@@ -1933,7 +1965,7 @@ async function salvarQuestionario() {
         intro_imagem: questState.introImagem || '',
         final_imagem: questState.finalImagem || '',
         passos,
-        recomendacao
+        recomendacao: []
       })
     });
     btn.textContent = '✓ Salvo';
@@ -2045,7 +2077,7 @@ function escAttr(s) {
 
     <!-- BLOCO 2: FOLLOW UP 1 -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Follow up 1 — Boas-vindas imediata</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Boas Vindas - Lead</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Enviadas imediatamente quando o lead chega. Se não responder em 1 hora, vai para o Follow up 2.</div>
       <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
       <textarea class="fu-textarea" id="fu1-msg1" rows="3" placeholder="Ex: Olá {nome}! Bem-vindo(a). Você está disponível para prosseguirmos?"></textarea>
@@ -2214,9 +2246,8 @@ function escAttr(s) {
     <button class="btn-add-small" style="margin-top:4px" onclick="questAddPasso()">+ Adicionar pergunta</button>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Recomendação de plano</label>
-    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">A primeira regra cujas condições baterem define o plano. Deixe uma regra sem condições no fim como padrão.</div>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Automática por pontuação das perguntas de "opções numeradas". Os planos e suas notas mínimas são cadastrados na edição do cliente.</div>
     <div id="quest-regras"></div>
-    <button class="btn-add-small" style="margin-top:4px" onclick="questAddRegra()">+ Adicionar regra</button>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
     <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você."></textarea>
