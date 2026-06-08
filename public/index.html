@@ -452,7 +452,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.2.2-funil-janela-auth-fix';
+const PAINEL_VERSION = 'v2.2.3-funil-janela-auth-race-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -536,10 +536,34 @@ async function verificarVersao() {
 }
 
 // Verificar sessão salva
-const savedSecret = sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY);
+function recuperarSecretFunilJanela() {
+  let auth = '';
+  try { auth = sessionStorage.getItem(SENHA_KEY) || ''; } catch(e) {}
+  try { if (!auth) auth = localStorage.getItem(SENHA_LOCAL_KEY) || ''; } catch(e) {}
+
+  // Fallback robusto para janela/aba nova: o painel pai grava o segredo em window.name.
+  // Isso evita a corrida onde a nova aba inicia antes do localStorage/sessionStorage ser copiado.
+  try {
+    if (!auth && ehPaginaFunilAtendimento() && String(window.name || '').indexOf('movatak_funil_auth:') === 0) {
+      const raw = window.name.replace('movatak_funil_auth:', '');
+      const payload = JSON.parse(atob(raw));
+      if (payload && payload.secret && (!payload.ts || (Date.now() - Number(payload.ts)) < 120000)) {
+        auth = String(payload.secret);
+        window.name = '';
+      }
+    }
+  } catch(e) {}
+
+  if (auth) {
+    try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
+    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+  }
+  return auth;
+}
+
+const savedSecret = recuperarSecretFunilJanela();
 if (savedSecret) {
   secret = savedSecret;
-  sessionStorage.setItem(SENHA_KEY, savedSecret);
   iniciar();
 }
 
@@ -2145,17 +2169,30 @@ async function iniciarPaginaFunilAtendimento() {
 }
 
 async function abrirFunilAtendimento(id, nome) {
+  const auth = (() => {
+    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    catch(e) { return secret || ''; }
+  })();
+
+  // Grava ANTES de abrir a nova aba. A versão anterior gravava depois do window.open,
+  // criando uma corrida: a aba podia carregar sem autenticação e não iniciava o funil.
+  if (auth) {
+    try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
+    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+  }
+
   const url = new URL(window.location.href);
   url.searchParams.set('funil', '1');
   url.searchParams.set('clienteId', String(id));
   url.searchParams.set('clienteNome', nome || '');
+
   const win = window.open(url.toString(), '_blank');
   if (win) {
     try {
-      const auth = sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret;
       if (auth) {
-        localStorage.setItem(SENHA_LOCAL_KEY, auth);
+        win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
         win.sessionStorage.setItem(SENHA_KEY, auth);
+        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
       }
     } catch(e) {}
   } else {
