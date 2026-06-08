@@ -422,15 +422,6 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </div>
         <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
       </div>
-      <div class="form-field full" id="acoes-section" style="display:none">
-        <label>AÇÕES AUTOMÁTICAS AO FINAL DO FLUXO</label>
-        <div class="fu-hint" style="margin-bottom:10px">Executadas pelo WhatsApp do cliente ao término do questionário consultivo.</div>
-        <div class="perm-grid">
-          <label class="perm-item"><input type="checkbox" id="acao-arquivar"> Arquivar chat do lead</label>
-          <label class="perm-item"><input type="checkbox" id="acao-nao-lido"> Marcar como não lido</label>
-        </div>
-        <div class="fu-hint">Ambas atuam no número WhatsApp Business do cliente via Z-API.</div>
-      </div>
       <div class="form-field full" id="planos-section" style="display:none">
         <label>PLANOS / PACOTES (usados na recomendação)</label>
         <div class="fu-hint" style="margin-bottom:8px">A recomendação soma a pontuação das perguntas de "opções numeradas" e sugere o plano de maior <strong>nota mínima</strong> que o lead alcançar. Cadastre do menor (nota baixa) para o maior (nota alta).</div>
@@ -883,7 +874,6 @@ function abrirModal() {
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
   document.getElementById('f-planos').closest('.form-field').style.display = '';
   document.getElementById('planos-section').style.display = 'none';
-  document.getElementById('acoes-section').style.display = 'none';
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Cadastrar';
   btn.onclick = salvarCliente;
@@ -905,7 +895,6 @@ async function abrirEdicao(id) {
   // Planos: editados aqui (modo edição), com valor e nota mínima
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
   document.getElementById('planos-section').style.display = '';
-  document.getElementById('acoes-section').style.display = '';
   planosClienteId = id;
   carregarPlanos(id);
   const btn = document.getElementById('btn-salvar');
@@ -922,8 +911,6 @@ async function abrirEdicao(id) {
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
     setPermissoesPortal(c.permissoes_portal || {});
-    document.getElementById('acao-arquivar').checked = !!c.acao_arquivar_ao_final;
-    document.getElementById('acao-nao-lido').checked = !!c.acao_marcar_nao_lido;
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -955,9 +942,7 @@ async function salvarEdicao() {
         nome, whatsapp, zapi_instance, trigger_msg,
         zapi_token, zapi_client_token: zapi_ct,
         teto_cpl: cpl ? parseFloat(cpl) : null,
-        permissoes_portal: getPermissoesPortal(),
-        acao_arquivar_ao_final: document.getElementById('acao-arquivar').checked,
-        acao_marcar_nao_lido: document.getElementById('acao-nao-lido').checked
+        permissoes_portal: getPermissoesPortal()
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
@@ -1831,7 +1816,14 @@ async function descartarLeadPainel(leadId) {
 }
 
 // Auto refresh a cada 2 minutos
-setInterval(() => { if (secret) carregarTudo(); }, 120000);
+setInterval(() => {
+  if (!secret) return;
+  if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+    carregarFunilAtendimento();
+  } else {
+    carregarTudo();
+  }
+}, 120000);
 
 // ============================================================
 // QUESTIONÁRIO CONSULTIVO — editor por cliente
@@ -1870,6 +1862,8 @@ async function abrirQuestionario(id) {
       condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
     }));
     document.getElementById('quest-ativo').checked = !!r.ativo;
+    document.getElementById('quest-acao-arquivar').checked = !!r.acao_arquivar_ao_final;
+    document.getElementById('quest-acao-nao-lido').checked = !!r.acao_marcar_nao_lido;
     document.getElementById('quest-intro').value = r.intro || '';
     document.getElementById('quest-final').value = r.final || '';
     document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
@@ -2043,7 +2037,9 @@ async function salvarQuestionario() {
         intro_imagem: questState.introImagem || '',
         final_imagem: questState.finalImagem || '',
         passos,
-        recomendacao: []
+        recomendacao: [],
+        acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
+        acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked
       })
     });
     btn.textContent = '✓ Salvo';
@@ -2107,7 +2103,13 @@ async function executarReset() {
     msg.textContent = r.removidos > 0
       ? '✓ ' + r.removidos + ' lead(s) apagado(s). Mande a frase-gatilho de novo pra testar.'
       : 'Nenhum lead encontrado com esse número (já está limpo).';
-    if (secret) carregarTudo();
+    if (secret) {
+      if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+        carregarFunilAtendimento();
+      } else {
+        carregarTudo();
+      }
+    }
   } catch (e) {
     msg.style.color = 'var(--red)'; msg.textContent = 'Erro: ' + e.message;
   } finally {
@@ -2290,7 +2292,7 @@ function renderFunilAtendimento() {
     const leads = col.leads || [];
     const sync = col.zapi_tag_id
       ? '<span class="funil-sync ok">WhatsApp OK</span>'
-      : (col.zapi_sync_erro ? '<span class="funil-sync erro" title="' + escAttr(col.zapi_sync_erro) + '">Sem sync</span>' : '<span class="funil-sync pendente">CRM</span>');
+      : '<span class="funil-sync pendente">Sem sync</span>';
     return `<div class="funil-col" data-coluna="${col.id}" ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)" ondrop="funilDrop(event, ${col.id})">
       <div class="funil-col-head">
         <div>
@@ -2330,6 +2332,7 @@ function renderFunilAtendimento() {
   }).join('');
 
   board.innerHTML = htmlEtapas + htmlVendedores;
+  enableDragScroll(board);
   const sec = document.getElementById('funil-vendedores-section');
   if (sec) sec.style.display = 'none';
 }
@@ -2404,6 +2407,24 @@ async function reatribuirVendedor(leadId, vendedorId) {
   } catch (e) {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao reatribuir: ' + e.message; }
   }
+}
+
+function enableDragScroll(el) {
+  if (!el || el._dragScrollEnabled) return;
+  el._dragScrollEnabled = true;
+  let isDown = false, startX = 0, scrollLeft = 0;
+  el.addEventListener('mousedown', e => {
+    if (e.target.closest('[draggable="true"]')) return;
+    isDown = true; startX = e.pageX - el.offsetLeft; scrollLeft = el.scrollLeft;
+    el.classList.add('drag-scrolling'); e.preventDefault();
+  });
+  el.addEventListener('mouseleave', () => { isDown = false; el.classList.remove('drag-scrolling'); });
+  el.addEventListener('mouseup',    () => { isDown = false; el.classList.remove('drag-scrolling'); });
+  el.addEventListener('mousemove', e => {
+    if (!isDown) return;
+    e.preventDefault();
+    el.scrollLeft = scrollLeft - (e.pageX - el.offsetLeft - startX);
+  });
 }
 
 function renderFunilCard(lead, colunaAtualId) {
@@ -2808,7 +2829,8 @@ async function sincronizarColunaWhatsapp(colunaId) {
 .funil-page-head p{font-size:13px;color:var(--text2)}
 .funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px}
 .funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:260px;outline:none}
-.funil-page .funil-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,300px);gap:12px;overflow-x:auto;padding-bottom:14px;align-items:start;min-height:65vh}
+.funil-page .funil-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,300px);gap:12px;overflow-x:auto;padding-bottom:14px;align-items:start;min-height:65vh;cursor:grab}
+.funil-page .funil-board.drag-scrolling{cursor:grabbing;user-select:none}
 .funil-page .funil-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:12px;min-height:300px}
 .funil-page .funil-col-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}
 .funil-page .funil-col-head strong{font-size:13px;display:block}
@@ -2912,6 +2934,13 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <span style="flex:1"></span>
       <button class="btn-add-small" id="btn-cob-save" onclick="salvarCobertura()">Salvar CEPs</button>
       <button class="btn-add-small" style="background:transparent;border:1px solid var(--red);color:var(--red)" onclick="limparCobertura()">Limpar tudo</button>
+    </div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Ações automáticas ao final do fluxo</label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Executadas no WhatsApp Business do cliente via Z-API após o lead concluir o questionário.</div>
+    <div class="perm-grid">
+      <label class="perm-item"><input type="checkbox" id="quest-acao-arquivar"> Arquivar chat do lead</label>
+      <label class="perm-item"><input type="checkbox" id="quest-acao-nao-lido"> Marcar como não lido</label>
     </div>
 
     <div class="login-err" id="quest-err" style="margin-top:12px"></div>
