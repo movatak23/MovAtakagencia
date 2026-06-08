@@ -1697,7 +1697,8 @@ async function abrirQuestionario(id) {
       pergunta: p.pergunta || '',
       pergunta_curta: p.pergunta_curta || '',
       opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
-      imagem: p.imagem || ''
+      imagem: p.imagem || '',
+      aguardar: p.aguardar !== false
     }));
     questState.introImagem = r.intro_imagem || '';
     questState.finalImagem = r.final_imagem || '';
@@ -1750,6 +1751,7 @@ function renderQuestPassos() {
         <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
       </div>
       ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
+      <label class="quest-aguardar"><input type="checkbox" ${p.aguardar !== false ? 'checked' : ''} onchange="questSetPasso(${i},'aguardar',this.checked)"> Aguardar resposta do lead <span class="quest-aguardar-hint">(desmarque p/ só enviar material e seguir)</span></label>
     </div>`;
   }).join('');
 }
@@ -1764,7 +1766,7 @@ function questSetPasso(i, campo, valor) {
   if (campo === 'tipo') renderQuestPassos();
 }
 function questAddPasso() {
-  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '' });
+  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', aguardar: true });
   renderQuestPassos();
 }
 function questRemovePasso(i) { questState.passos.splice(i, 1); renderQuestPassos(); }
@@ -1815,9 +1817,13 @@ function questSetCond(gi, ci, campo, valor) { if (questState.regras[gi] && quest
 
 function imgControl(url, uploadCall, removeCall) {
   if (url) {
-    return `<div class="quest-img"><img src="${escAttr(url)}"><button class="quest-imglink" onclick="${removeCall}">remover imagem</button></div>`;
+    const ehVideo = /\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(url);
+    const preview = ehVideo
+      ? `<video src="${escAttr(url)}" muted style="height:46px;border-radius:8px;border:1px solid var(--border2)"></video>`
+      : `<img src="${escAttr(url)}">`;
+    return `<div class="quest-img">${preview}<button class="quest-imglink" onclick="${removeCall}">remover ${ehVideo ? 'vídeo' : 'imagem'}</button></div>`;
   }
-  return `<label class="quest-imgbtn">📎 Adicionar imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onchange="${uploadCall}"></label>`;
+  return `<label class="quest-imgbtn">📎 Imagem ou vídeo<input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" hidden onchange="${uploadCall}"></label>`;
 }
 async function subirImagem(file) {
   const dataUrl = await new Promise((res, rej) => {
@@ -1872,7 +1878,8 @@ async function salvarQuestionario() {
         pergunta: p.pergunta.trim(),
         pergunta_curta: (p.pergunta_curta || '').trim(),
         opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
-        imagem: p.imagem || ''
+        imagem: p.imagem || '',
+        aguardar: p.aguardar !== false
       }));
     const recomendacao = questState.regras
       .filter(g => g.plano_id)
@@ -2112,6 +2119,9 @@ function escAttr(s) {
 #modal-quest .quest-imglink{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px}
 #modal-quest .quest-imgbtn{display:inline-block;margin-top:6px;font-size:12px;color:var(--text2);border:1px dashed var(--border2);border-radius:8px;padding:7px 12px;cursor:pointer}
 #modal-quest .quest-imgbtn:hover{color:var(--text);border-color:var(--accent)}
+#modal-quest .quest-aguardar{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);margin-top:10px;cursor:pointer;flex-wrap:wrap}
+#modal-quest .quest-aguardar input{width:16px;height:16px}
+#modal-quest .quest-aguardar-hint{color:var(--text3);font-size:11px}
 </style>
 
 <div class="modal-overlay" id="modal-quest">
