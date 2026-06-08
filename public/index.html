@@ -561,6 +561,7 @@ function recuperarSecretFunilJanela() {
   return auth;
 }
 
+let funilState = { clienteId: null, clienteNome: '', colunas: [] };
 const savedSecret = recuperarSecretFunilJanela();
 if (savedSecret) {
   secret = savedSecret;
@@ -2134,7 +2135,6 @@ function escAttr(s) {
 
 
 // ── Funil de Atendimento ────────────────────────────────────
-let funilState = { clienteId: null, clienteNome: '', colunas: [] };
 
 function formatarDataCurta(v) {
   if (!v) return '—';
@@ -2185,6 +2185,11 @@ async function iniciarPaginaFunilAtendimento() {
         </div>
         <div id="funil-board" class="funil-board">
           <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+        </div>
+        <div id="funil-vendedores-section" style="margin-top:28px;display:none">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Distribuição por Vendedor</div>
+          <div class="fu-hint" style="margin-bottom:10px">Leads atribuídos automaticamente ao final do fluxo. Arraste um lead para outro vendedor para reatribuir.</div>
+          <div id="funil-board-vendedores" class="funil-board"></div>
         </div>
         <div id="funil-status"></div>
         <div class="fu-hint" style="margin-top:12px">
@@ -2241,6 +2246,7 @@ async function carregarFunilAtendimento() {
   try {
     const data = await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil');
     funilState.colunas = data.colunas || [];
+    funilState.colunasVendedores = data.colunasVendedores || [];
     renderFunilAtendimento();
   } catch (e) {
     board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
@@ -2276,6 +2282,78 @@ function renderFunilAtendimento() {
       </div>
     </div>`;
   }).join('');
+  renderFunilVendedores();
+}
+
+function renderFunilVendedores() {
+  const sec = document.getElementById('funil-vendedores-section');
+  const board = document.getElementById('funil-board-vendedores');
+  if (!sec || !board) return;
+  const cols = funilState.colunasVendedores || [];
+  if (!cols.length) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  board.innerHTML = cols.map(col => {
+    const leads = col.leads || [];
+    return `<div class="funil-col" style="border-color:rgba(91,127,255,.35)" data-vendedor-id="${col.vendedor_id}"
+              ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)"
+              ondrop="funilDropVendedor(event,${col.vendedor_id})">
+      <div class="funil-col-head">
+        <div>
+          <strong style="color:var(--accent)">${escapeHtml(col.nome)}</strong>
+          <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="funil-sync pendente" style="background:rgba(91,127,255,.12);color:var(--accent)">Vendedor</span>
+      </div>
+      <div class="funil-cards">
+        ${leads.length
+          ? leads.map(l => renderFunilCardVendedor(l, col.vendedor_id)).join('')
+          : '<div class="funil-empty">Sem leads atribuídos.</div>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderFunilCardVendedor(lead, vendedorAtualId) {
+  const nome = lead.nome || 'Lead sem nome';
+  const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}</div>` : '';
+  const etapa = lead.etapa ? `<div class="funil-card-line" style="color:var(--text3)">${escapeHtml(lead.etapa)}</div>` : '';
+  const opts = (funilState.colunasVendedores || []).map(c =>
+    `<option value="${c.vendedor_id}" ${Number(c.vendedor_id) === Number(vendedorAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`
+  ).join('');
+  return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}"
+    ondragstart="funilDragStart(event,${lead.id})" ondragend="funilDragEnd(event)">
+    <div class="funil-card-top"><strong>${escapeHtml(nome)}</strong></div>
+    <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
+    ${plano}${etapa}
+    <div class="funil-card-actions">
+      <button onclick="abrirWhatsLead('${String(lead.telefone || '').replace(/'/g, '')}')">WhatsApp</button>
+      <select onchange="reatribuirVendedor(${lead.id},this.value)">${opts}</select>
+    </div>
+  </div>`;
+}
+
+async function funilDropVendedor(ev, vendedorId) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.remove('drag-over');
+  const leadId = (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || funilLeadArrastando;
+  if (!leadId || !vendedorId) return;
+  await reatribuirVendedor(Number(leadId), Number(vendedorId));
+}
+
+async function reatribuirVendedor(leadId, vendedorId) {
+  const status = document.getElementById('funil-status');
+  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Atribuindo vendedor...'; }
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/vendedor', {
+      method: 'PATCH',
+      body: JSON.stringify({ vendedor_id: Number(vendedorId) })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Lead reatribuído.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao reatribuir: ' + e.message; }
+  }
 }
 
 function renderFunilCard(lead, colunaAtualId) {
