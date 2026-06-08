@@ -3195,16 +3195,16 @@ async function finalizarQuestionario(cliente, lead, respostas) {
     await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
 
     const resumoLinhas = passos
-      .filter(p => respostas[p.id] !== undefined)
-      .map(p => `• ${p.pergunta_curta || p.pergunta}: ${respostas[p.id]}`);
+      .filter(p => p.pergunta_curta && String(p.pergunta_curta).trim() && respostas[p.id] !== undefined)
+      .map(p => `${String(p.pergunta_curta).trim()}: ${respostas[p.id]}`);
     const cobTxt = (respostas._cobertura === true) ? 'SIM' : (respostas._cobertura === false ? 'NÃO (verificar)' : '—');
     const resumo =
-      '🔔 Lead qualificado pelo questionário!\n' +
+      '🔔 Lead qualificado!\n' +
       `Nome: ${lead.nome || '—'}\n` +
-      `Fone: ${lead.telefone}\n` +
-      (respostas._cep ? `CEP: ${respostas._cep} | Cobertura: ${cobTxt}\n` : '') +
-      (resumoLinhas.length ? resumoLinhas.join('\n') + '\n' : '') +
-      `Plano sugerido: ${rec.plano ? rec.plano.nome : '— (definir manualmente)'}`;
+      `Fone: ${lead.telefone}` +
+      (resumoLinhas.length ? '\n' + resumoLinhas.join('\n') : '') +
+      (respostas._cep ? `\nCEP: ${respostas._cep} | Cobertura: ${cobTxt}` : '') +
+      (rec.plano ? `\nPlano sugerido: ${rec.plano.nome}` : '');
 
     const destino = cliente.whatsapp_dono || MOVATAK_ADMIN_WA;
     if (destino) {
