@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.3.0-quest-imagens';
+const MOVATAK_VERSION = 'v2.4.0-planos-pontuacao';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2919,6 +2919,19 @@ async function garantirEstruturaQuestionario() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
+async function garantirEstruturaPlanos() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_planos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    nome TEXT NOT NULL,
+    valor NUMERIC,
+    nota_minima INTEGER DEFAULT 0,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`ALTER TABLE movatak_planos ADD COLUMN IF NOT EXISTS valor NUMERIC`).catch(() => null);
+  await query(`ALTER TABLE movatak_planos ADD COLUMN IF NOT EXISTS nota_minima INTEGER DEFAULT 0`).catch(() => null);
+}
+
 function normalizarCep(cep) {
   return String(cep || '').replace(/\D/g, '');
 }
@@ -3013,45 +3026,36 @@ function interpretarResposta(passo, texto) {
   return { ok: true, valor: t }; // texto livre
 }
 
-function avaliarCondicao(cond, respostas) {
-  if (!cond || !cond.campo) return false;
-  const bruto = respostas[cond.campo];
-  if (bruto === undefined || bruto === null) return false;
-  const op = cond.op || '=';
-  const alvo = cond.valor;
-  if (op === '>=' || op === '<=' || op === '>' || op === '<') {
-    const a = parseFloat(String(bruto).replace(/[^\d.,-]/g, '').replace(',', '.'));
-    const b = parseFloat(alvo);
-    if (isNaN(a) || isNaN(b)) return false;
-    if (op === '>=') return a >= b;
-    if (op === '<=') return a <= b;
-    if (op === '>') return a > b;
-    return a < b;
+// Pontuação: cada pergunta "opções numeradas" pontua pela posição da opção
+// escolhida (1ª = 1 ... última = N). A soma define o plano pela nota mínima.
+function calcularPontuacao(cliente, respostas) {
+  const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
+  let total = 0;
+  for (const p of passos) {
+    if (p.tipo === 'opcoes' && respostas[p.id] !== undefined) {
+      const ops = Array.isArray(p.opcoes) ? p.opcoes : [];
+      const idx = ops.findIndex(o => String(o).trim().toLowerCase() === String(respostas[p.id]).trim().toLowerCase());
+      if (idx >= 0) total += (idx + 1);
+    }
   }
-  if (op === 'contains') {
-    return String(bruto).toLowerCase().includes(String(alvo).toLowerCase());
-  }
-  return String(bruto).trim().toLowerCase() === String(alvo).trim().toLowerCase();
+  return total;
 }
 
 async function calcularRecomendacao(cliente, respostas) {
   try {
-    const regras = Array.isArray(cliente.questionario_recomendacao) ? cliente.questionario_recomendacao : [];
-    const rp = await query('SELECT id, nome, valor FROM movatak_planos WHERE cliente_id = $1 ORDER BY valor ASC NULLS LAST, id ASC', [cliente.id]);
+    const total = calcularPontuacao(cliente, respostas);
+    await garantirEstruturaPlanos();
+    const rp = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [cliente.id]);
     const planos = rp.rows || [];
-    const planoPorId = id => planos.find(p => String(p.id) === String(id)) || null;
-    for (const regra of regras) {
-      const conds = Array.isArray(regra.condicoes) ? regra.condicoes : [];
-      const bate = conds.every(c => avaliarCondicao(c, respostas));
-      if (bate) {
-        const plano = planoPorId(regra.plano_id);
-        if (plano) return { plano, regra };
-      }
+    if (!planos.length) return { plano: null, total };
+    let escolhido = planos[0]; // padrão: menor faixa
+    for (const pl of planos) {
+      if ((pl.nota_minima || 0) <= total) escolhido = pl;
     }
-    return { plano: null, regra: null };
+    return { plano: escolhido, total };
   } catch (e) {
     console.error('[questionario][recomendacao] erro:', e.message);
-    return { plano: null, regra: null };
+    return { plano: null, total: 0 };
   }
 }
 
@@ -3606,6 +3610,59 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
 // Health check + Versão
 // ============================================================
 // ============================================================
+// API — Planos/Pacotes por cliente (usados na recomendação por pontuação)
+// ============================================================
+app.get('/movatak/admin/clientes/:id/planos', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaPlanos();
+    const r = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [req.params.id]);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/planos', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaPlanos();
+    const { nome, valor, nota_minima } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do plano.' });
+    const r = await query(
+      'INSERT INTO movatak_planos (cliente_id, nome, valor, nota_minima) VALUES ($1, $2, $3, $4) RETURNING id, nome, valor, nota_minima',
+      [req.params.id, String(nome).trim(), (valor !== '' && valor != null) ? parseMoedaParaNumero(valor) : null, parseInt(nota_minima, 10) || 0]
+    );
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaPlanos();
+    const { nome, valor, nota_minima } = req.body || {};
+    await query(
+      `UPDATE movatak_planos
+          SET nome = COALESCE($1, nome),
+              valor = CASE WHEN $2::text IS NULL THEN valor ELSE $2::numeric END,
+              nota_minima = COALESCE($3, nota_minima)
+        WHERE id = $4`,
+      [
+        nome ? String(nome).trim() : null,
+        (valor !== undefined && valor !== '' && valor !== null) ? parseMoedaParaNumero(valor) : null,
+        (nota_minima !== undefined && nota_minima !== '') ? (parseInt(nota_minima, 10) || 0) : null,
+        req.params.id
+      ]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaPlanos();
+    await query('DELETE FROM movatak_planos WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
 // API — Questionário consultivo (config por cliente + cobertura CEP)
 // ============================================================
 app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
@@ -3638,7 +3695,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
       [req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const rp = await query('SELECT id, nome, valor FROM movatak_planos WHERE cliente_id = $1 ORDER BY valor ASC NULLS LAST, id ASC', [req.params.id]);
+    const rp = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [req.params.id]);
     const cob = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
     res.json({
       ativo: !!r.rows[0].questionario_ativo,
@@ -3761,4 +3818,5 @@ const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
   garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
+  garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
 });
