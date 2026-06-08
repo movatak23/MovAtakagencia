@@ -3725,6 +3725,27 @@ app.delete('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Reset de lead para testes: apaga o lead e tudo ligado a ele, por telefone.
+app.post('/movatak/admin/reset-lead', authMovatak, async (req, res) => {
+  try {
+    const tel = String((req.body && req.body.telefone) || '').replace(/\D/g, '');
+    if (tel.length < 8) return res.status(400).json({ error: 'Telefone inválido.' });
+    const sel = `SELECT id FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1`;
+    const found = await query(sel, [tel]);
+    const removidos = found.rows.length;
+    if (removidos) {
+      await query(`DELETE FROM movatak_followup WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
+      await query(`DELETE FROM movatak_mensagens WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
+      await query(`DELETE FROM movatak_lead_eventos WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
+      await query(`DELETE FROM movatak_etiqueta_log WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
+      await query(`DELETE FROM movatak_questionario_estado WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
+      await query(`DELETE FROM movatak_questionario_estado WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1`, [tel]).catch(() => null);
+      await query(`DELETE FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1`, [tel]);
+    }
+    res.json({ ok: true, removidos });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/health', (req, res) => {
   res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
 });
