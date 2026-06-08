@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.4.1-auto-atendimento-delay-centavos';
+const MOVATAK_VERSION = 'v2.5.0-funil-atendimento-operacional';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -209,6 +209,17 @@ async function zapiAtribuirEtiqueta(instance, token, clientToken, telefone, tagI
     await axios.put(url, {}, { headers: { 'Client-Token': clientToken } });
   } catch(e) {
     console.error('[zapiAtribuirEtiqueta]', e.message);
+  }
+}
+
+async function zapiRemoverEtiqueta(instance, token, clientToken, telefone, tagId) {
+  try {
+    if (!tagId) return;
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/chats/${telefone}/tags/${tagId}/remove`;
+    await axios.put(url, {}, { headers: { 'Client-Token': clientToken } });
+  } catch(e) {
+    // Mantém a operação do CRM mesmo se a remoção da lista/tag falhar na Z-API.
+    console.error('[zapiRemoverEtiqueta]', e.message);
   }
 }
 
@@ -3143,6 +3154,7 @@ async function iniciarQuestionario(cliente, lead) {
 
     // pausa o follow-up automático enquanto o questionário roda
     await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
+    await moverLeadParaFunilSlug(cliente.id, lead.id, 'auto_atendimento').catch(e => console.error('[funil][auto_atendimento]', e.message));
 
     // cria estado
     const ins = await query(
@@ -3253,6 +3265,7 @@ async function finalizarQuestionario(cliente, lead, respostas) {
         .catch(e => console.error('[questionario][resumo vendedor]', e.message));
     }
 
+    await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(e => console.error('[funil][em_negociacao]', e.message));
     await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
   } catch (e) {
     console.error('[questionario][finalizar] erro:', e.message);
@@ -3777,6 +3790,294 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+// ============================================================
+// Funil de Atendimento — Kanban de leads + listas/tags WhatsApp
+// ============================================================
+function slugifyFunil(nome) {
+  return String(nome || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '') || ('etapa_' + Date.now());
+}
+
+function etapaSistemaPorSlug(slug) {
+  const mapa = {
+    novo_contato: 'lead',
+    auto_atendimento: 'auto_atendimento',
+    aguardando_resposta: 'followup',
+    em_negociacao: 'negociacao',
+    cliente_fechado: 'cliente',
+    perdido: 'descartado'
+  };
+  return mapa[slug] || slug;
+}
+
+function slugFunilPorEtapa(etapa) {
+  const mapa = {
+    lead: 'novo_contato',
+    auto_atendimento: 'auto_atendimento',
+    followup: 'aguardando_resposta',
+    negociacao: 'em_negociacao',
+    cliente: 'cliente_fechado',
+    descartado: 'perdido'
+  };
+  return mapa[etapa] || 'novo_contato';
+}
+
+function extrairZapiTagId(payload) {
+  if (!payload) return null;
+  return payload.id || payload.tagId || payload.tag_id || payload?.data?.id || payload?.data?.tagId || payload?.tag?.id || null;
+}
+
+async function garantirEstruturaFunil() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_funil_colunas (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    nome TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    ordem INTEGER DEFAULT 0,
+    cor TEXT,
+    etapa_sistema TEXT,
+    sincronizar_whatsapp BOOLEAN DEFAULT true,
+    zapi_tag_id TEXT,
+    zapi_sync_erro TEXT,
+    ativo BOOLEAN DEFAULT true,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+
+  await query(`ALTER TABLE movatak_funil_colunas
+    ADD COLUMN IF NOT EXISTS cor TEXT,
+    ADD COLUMN IF NOT EXISTS etapa_sistema TEXT,
+    ADD COLUMN IF NOT EXISTS sincronizar_whatsapp BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS zapi_tag_id TEXT,
+    ADD COLUMN IF NOT EXISTS zapi_sync_erro TEXT,
+    ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
+
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER`).catch(() => null);
+
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_funil_colunas_cliente_slug ON movatak_funil_colunas(cliente_id, slug)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
+}
+
+async function garantirFunilPadraoCliente(clienteId) {
+  await garantirEstruturaFunil();
+  const padrao = [
+    { nome: 'Novo contato', slug: 'novo_contato', ordem: 1, etapa: 'lead' },
+    { nome: 'Auto Atendimento', slug: 'auto_atendimento', ordem: 2, etapa: 'auto_atendimento' },
+    { nome: 'Aguardando resposta', slug: 'aguardando_resposta', ordem: 3, etapa: 'followup' },
+    { nome: 'Em negociação', slug: 'em_negociacao', ordem: 4, etapa: 'negociacao' },
+    { nome: 'Cliente fechado', slug: 'cliente_fechado', ordem: 5, etapa: 'cliente' },
+    { nome: 'Perdido', slug: 'perdido', ordem: 6, etapa: 'descartado' }
+  ];
+  for (const c of padrao) {
+    await query(
+      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp)
+       VALUES ($1, $2, $3, $4, $5, true)
+       ON CONFLICT (cliente_id, slug) DO NOTHING`,
+      [clienteId, c.nome, c.slug, c.ordem, c.etapa]
+    ).catch(() => null);
+  }
+}
+
+async function sincronizarColunaComWhatsapp(colunaId) {
+  await garantirEstruturaFunil();
+  const r = await query(
+    `SELECT fc.*, c.zapi_instance, c.zapi_token, c.zapi_client_token
+       FROM movatak_funil_colunas fc
+       JOIN movatak_clientes c ON c.id = fc.cliente_id
+      WHERE fc.id = $1`,
+    [colunaId]
+  );
+  if (!r.rows.length) throw new Error('Coluna não encontrada.');
+  const col = r.rows[0];
+  if (col.zapi_tag_id) return col.zapi_tag_id;
+  if (!col.zapi_instance || !col.zapi_token || !col.zapi_client_token) {
+    throw new Error('Z-API não configurada para este cliente.');
+  }
+  const payload = await zapiCriarEtiqueta(col.zapi_instance, col.zapi_token, col.zapi_client_token, col.nome);
+  const tagId = extrairZapiTagId(payload);
+  if (!tagId) throw new Error('A Z-API não retornou o ID da lista/tag criada.');
+  await query(`UPDATE movatak_funil_colunas SET zapi_tag_id=$1, zapi_sync_erro=NULL, atualizado_em=NOW() WHERE id=$2`, [String(tagId), colunaId]);
+  return String(tagId);
+}
+
+async function moverLeadParaFunilSlug(clienteId, leadId, slug) {
+  await garantirFunilPadraoCliente(clienteId);
+  const col = await query(
+    `SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND slug=$2 AND ativo=true LIMIT 1`,
+    [clienteId, slug]
+  );
+  if (!col.rows.length) return;
+  await moverLeadParaColunaFunil(leadId, col.rows[0].id, false);
+}
+
+async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
+  await garantirEstruturaFunil();
+  const r = await query(
+    `SELECT l.id, l.cliente_id, l.telefone, l.nome, l.funil_coluna_id AS coluna_anterior_id,
+            fc.id AS coluna_id, fc.nome AS coluna_nome, fc.slug, fc.etapa_sistema, fc.sincronizar_whatsapp, fc.zapi_tag_id,
+            c.zapi_instance, c.zapi_token, c.zapi_client_token
+       FROM movatak_leads l
+       JOIN movatak_funil_colunas fc ON fc.id = $2 AND fc.cliente_id = l.cliente_id AND fc.ativo = true
+       JOIN movatak_clientes c ON c.id = l.cliente_id
+      WHERE l.id = $1`,
+    [leadId, colunaId]
+  );
+  if (!r.rows.length) throw new Error('Lead ou coluna não encontrados.');
+  const row = r.rows[0];
+  let tagId = row.zapi_tag_id;
+
+  if (row.sincronizar_whatsapp && !tagId) {
+    try {
+      tagId = await sincronizarColunaComWhatsapp(colunaId);
+    } catch (e) {
+      await query(`UPDATE movatak_funil_colunas SET zapi_sync_erro=$1, atualizado_em=NOW() WHERE id=$2`, [String(e.message || e).slice(0, 500), colunaId]).catch(() => null);
+    }
+  }
+
+  const etapa = row.etapa_sistema || etapaSistemaPorSlug(row.slug);
+  if (etapa === 'cliente') {
+    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, convertido_em=COALESCE(convertido_em, NOW()), atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
+    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
+  } else if (etapa === 'descartado') {
+    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
+    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
+  } else {
+    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
+  }
+
+  if (row.sincronizar_whatsapp && tagId && row.zapi_instance && row.zapi_token && row.zapi_client_token && row.telefone) {
+    const tagsAntigas = await query(
+      `SELECT zapi_tag_id FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND zapi_tag_id IS NOT NULL AND id <> $2`,
+      [row.cliente_id, colunaId]
+    ).catch(() => ({ rows: [] }));
+    for (const t of tagsAntigas.rows) {
+      await zapiRemoverEtiqueta(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, t.zapi_tag_id);
+    }
+    await zapiAtribuirEtiqueta(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, tagId);
+  }
+
+  if (registrar) {
+    await registrarEventoLead(leadId, row.cliente_id, 'funil_movido', `Lead movido para ${row.coluna_nome}`, { coluna_id: colunaId, coluna_nome: row.coluna_nome, etapa });
+  }
+  return { ok: true, coluna: { id: colunaId, nome: row.coluna_nome, etapa_sistema: etapa } };
+}
+
+app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    await garantirFunilPadraoCliente(clienteId);
+    const colunasRes = await query(
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro
+         FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true
+        ORDER BY ordem ASC, id ASC`,
+      [clienteId]
+    );
+    const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
+    const colById = new Map(colunas.map(c => [Number(c.id), c]));
+    const colBySlug = new Map(colunas.map(c => [c.slug, c]));
+
+    const leads = await query(
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.criado_em, l.atualizado_em, l.convertido_em,
+              v.nome AS vendedor_nome,
+              p.nome AS plano_nome, p.valor AS plano_valor,
+              COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes
+         FROM movatak_leads l
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+         LEFT JOIN movatak_planos p ON p.id = l.plano_id
+         LEFT JOIN movatak_followup f ON f.lead_id = l.id
+        WHERE l.cliente_id=$1
+        GROUP BY l.id, v.nome, p.nome, p.valor
+        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
+        LIMIT 500`,
+      [clienteId]
+    );
+
+    for (const lead of leads.rows) {
+      let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
+      if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
+      if (!coluna) coluna = colunas[0];
+      if (coluna) coluna.leads.push(lead);
+    }
+    res.json({ colunas });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/funil/colunas', authMovatak, async (req, res) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    await garantirFunilPadraoCliente(clienteId);
+    const nome = String((req.body && req.body.nome) || '').trim();
+    if (!nome) return res.status(400).json({ error: 'Informe o nome da etapa.' });
+    const slugBase = slugifyFunil(nome);
+    const ordemR = await query('SELECT COALESCE(MAX(ordem),0)+1 AS ordem FROM movatak_funil_colunas WHERE cliente_id=$1', [clienteId]);
+    const etapa = etapaSistemaPorSlug(slugBase);
+    const ins = await query(
+      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [clienteId, nome, slugBase, ordemR.rows[0].ordem, etapa, req.body?.sincronizar_whatsapp !== false]
+    );
+    let col = ins.rows[0];
+    if (col.sincronizar_whatsapp) {
+      try {
+        await sincronizarColunaComWhatsapp(col.id);
+        const rr = await query('SELECT * FROM movatak_funil_colunas WHERE id=$1', [col.id]);
+        col = rr.rows[0] || col;
+      } catch (e) {
+        await query(`UPDATE movatak_funil_colunas SET zapi_sync_erro=$1 WHERE id=$2`, [String(e.message || e).slice(0, 500), col.id]).catch(() => null);
+        col.zapi_sync_erro = e.message;
+      }
+    }
+    res.json({ ok: true, coluna: col });
+  } catch (e) {
+    if (String(e.message || '').includes('duplicate')) return res.status(409).json({ error: 'Já existe uma etapa/lista com esse nome.' });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.patch('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaFunil();
+    const { nome, ordem, ativo } = req.body || {};
+    const r = await query(
+      `UPDATE movatak_funil_colunas
+          SET nome = COALESCE($1, nome),
+              ordem = COALESCE($2, ordem),
+              ativo = COALESCE($3, ativo),
+              atualizado_em = NOW()
+        WHERE id = $4
+        RETURNING *`,
+      [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/funil/colunas/:id/sincronizar-whatsapp', authMovatak, async (req, res) => {
+  try {
+    const tagId = await sincronizarColunaComWhatsapp(req.params.id);
+    res.json({ ok: true, zapi_tag_id: tagId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/leads/:id/funil', authMovatak, async (req, res) => {
+  try {
+    const colunaId = parseInt(req.body?.coluna_id, 10);
+    if (!colunaId) return res.status(400).json({ error: 'Informe a coluna de destino.' });
+    const result = await moverLeadParaColunaFunil(req.params.id, colunaId, true);
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
@@ -3856,4 +4157,5 @@ app.listen(PORT, () => {
   console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
   garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
   garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
+  garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
 });
