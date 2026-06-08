@@ -452,7 +452,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.2.0-funil-atendimento-operacional';
+const PAINEL_VERSION = 'v2.2.1-funil-janela-dragdrop';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -507,8 +507,12 @@ function iniciar() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.add('visible');
   document.getElementById('login-err').textContent = '';
-  carregarTudo();
   verificarVersao();
+  if (ehPaginaFunilAtendimento()) {
+    iniciarPaginaFunilAtendimento();
+  } else {
+    carregarTudo();
+  }
 }
 
 // Compara versão do painel com a do backend — alerta se divergir
@@ -2079,13 +2083,62 @@ function abrirWhatsLead(telefone) {
   window.open('https://wa.me/' + tel, '_blank');
 }
 
-async function abrirFunilAtendimento(id, nome) {
-  funilState = { clienteId: id, clienteNome: nome || '', colunas: [] };
-  const modal = document.getElementById('modal-funil-atendimento');
-  const subtitulo = document.getElementById('funil-atendimento-subtitulo');
-  if (subtitulo) subtitulo.textContent = nome ? `Cliente: ${nome}` : 'Organize os leads por etapas e sincronize com as listas do WhatsApp.';
-  if (modal) modal.classList.add('open');
+function ehPaginaFunilAtendimento() {
+  try { return new URLSearchParams(window.location.search).get('funil') === '1'; }
+  catch(e) { return false; }
+}
+
+async function iniciarPaginaFunilAtendimento() {
+  const params = new URLSearchParams(window.location.search);
+  const id = Number(params.get('clienteId'));
+  const nome = params.get('clienteNome') || '';
+  if (!id) return;
+
+  funilState = { clienteId: id, clienteNome: nome, colunas: [] };
+  const headerTitle = document.querySelector('.header-title');
+  const headerSub = document.querySelector('.header-sub');
+  if (headerTitle) headerTitle.textContent = 'Funil de Atendimento';
+  if (headerSub) headerSub.textContent = nome ? 'Cliente: ' + nome : 'Gestão de leads';
+
+  const main = document.querySelector('main');
+  if (main) {
+    main.innerHTML = `
+      <div class="funil-page">
+        <div class="funil-page-head">
+          <div>
+            <h2>Funil de Atendimento</h2>
+            <p id="funil-atendimento-subtitulo">${nome ? 'Cliente: ' + escapeHtml(nome) : 'Organize os leads por etapas e sincronize com as listas do WhatsApp.'}</p>
+          </div>
+          <div class="funil-page-actions">
+            <button class="btn-cancel" onclick="window.close()">Fechar janela</button>
+          </div>
+        </div>
+        <div class="funil-toolbar">
+          <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
+          <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
+          <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
+        </div>
+        <div id="funil-board" class="funil-board">
+          <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+        </div>
+        <div id="funil-status"></div>
+        <div class="fu-hint" style="margin-top:12px">
+          Arraste o lead para outra etapa para mover no CRM. O sistema também tenta aplicar a lista correspondente no WhatsApp via Z-API.
+        </div>
+      </div>`;
+  }
   await carregarFunilAtendimento();
+}
+
+async function abrirFunilAtendimento(id, nome) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('funil', '1');
+  url.searchParams.set('clienteId', String(id));
+  url.searchParams.set('clienteNome', nome || '');
+  const win = window.open(url.toString(), '_blank');
+  if (!win) {
+    window.location.href = url.toString();
+  }
 }
 
 function fecharFunilAtendimento() {
@@ -2121,7 +2174,7 @@ function renderFunilAtendimento() {
     const sync = col.zapi_tag_id
       ? '<span class="funil-sync ok">WhatsApp OK</span>'
       : (col.zapi_sync_erro ? '<span class="funil-sync erro" title="' + escAttr(col.zapi_sync_erro) + '">Sem sync</span>' : '<span class="funil-sync pendente">CRM</span>');
-    return `<div class="funil-col" data-coluna="${col.id}">
+    return `<div class="funil-col" data-coluna="${col.id}" ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)" ondrop="funilDrop(event, ${col.id})">
       <div class="funil-col-head">
         <div>
           <strong>${escapeHtml(col.nome)}</strong>
@@ -2145,7 +2198,7 @@ function renderFunilCard(lead, colunaAtualId) {
   const vendedor = lead.vendedor_nome ? `<div class="funil-card-line">Vendedor: ${escapeHtml(lead.vendedor_nome)}</div>` : '';
   const pend = lead.followups_pendentes ? `<span class="funil-badge">${lead.followups_pendentes} FU</span>` : '';
   const options = (funilState.colunas || []).map(c => `<option value="${c.id}" ${Number(c.id) === Number(colunaAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`).join('');
-  return `<div class="funil-card">
+  return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}" ondragstart="funilDragStart(event, ${lead.id})" ondragend="funilDragEnd(event)">
     <div class="funil-card-top">
       <strong>${escapeHtml(nome)}</strong>${pend}
     </div>
@@ -2157,6 +2210,46 @@ function renderFunilCard(lead, colunaAtualId) {
       <select onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
     </div>
   </div>`;
+}
+
+let funilLeadArrastando = null;
+
+function funilDragStart(ev, leadId) {
+  funilLeadArrastando = leadId;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', String(leadId));
+  }
+  if (ev.currentTarget) ev.currentTarget.classList.add('dragging');
+}
+
+function funilDragEnd(ev) {
+  funilLeadArrastando = null;
+  if (ev.currentTarget) ev.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.funil-col.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function funilDragOver(ev) {
+  ev.preventDefault();
+  const col = ev.currentTarget && ev.currentTarget.classList ? ev.currentTarget : null;
+  if (col) col.classList.add('drag-over');
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+}
+
+function funilDragLeave(ev) {
+  const col = ev.currentTarget;
+  if (!col || !ev.relatedTarget || !col.contains(ev.relatedTarget)) {
+    if (col && col.classList) col.classList.remove('drag-over');
+  }
+}
+
+async function funilDrop(ev, colunaId) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.remove('drag-over');
+  const leadId = (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || funilLeadArrastando;
+  if (!leadId || !colunaId) return;
+  await moverLeadFunil(Number(leadId), Number(colunaId));
 }
 
 async function moverLeadFunil(leadId, colunaId) {
@@ -2410,6 +2503,38 @@ async function sincronizarColunaWhatsapp(colunaId) {
 #modal-funil-atendimento .funil-card-actions select{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:7px;padding:6px;font-size:11px;min-width:0}
 #modal-funil-atendimento .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
 #funil-status{min-height:18px;font-size:12px;color:var(--text2);margin-top:10px}
+
+.funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px)}
+.funil-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px}
+.funil-page-head h2{font-size:24px;font-weight:800;margin-bottom:6px}
+.funil-page-head p{font-size:13px;color:var(--text2)}
+.funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px}
+.funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:260px;outline:none}
+.funil-page .funil-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,300px);gap:12px;overflow-x:auto;padding-bottom:14px;align-items:start;min-height:65vh}
+.funil-page .funil-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:12px;min-height:300px}
+.funil-page .funil-col-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}
+.funil-page .funil-col-head strong{font-size:13px;display:block}
+.funil-page .funil-col-head span{font-size:11px;color:var(--text3);font-family:var(--mono)}
+.funil-page .funil-sync{font-size:10px;border-radius:20px;padding:3px 7px;white-space:nowrap;font-family:var(--mono)}
+.funil-page .funil-sync.ok{background:rgba(0,208,132,.12);color:var(--green)}
+.funil-page .funil-sync.erro{background:rgba(255,90,90,.12);color:var(--red)}
+.funil-page .funil-sync.pendente{background:var(--bg4);color:var(--text2)}
+.funil-page .funil-col-actions{margin-bottom:10px}
+.funil-page .funil-col-actions button,.funil-page .funil-card-actions button{background:transparent;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:11px;padding:6px 8px;cursor:pointer;font-family:var(--sans)}
+.funil-page .funil-col-actions button:hover,.funil-page .funil-card-actions button:hover{color:var(--text);border-color:var(--accent)}
+.funil-page .funil-cards{display:flex;flex-direction:column;gap:8px}
+.funil-page .funil-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+.funil-page .funil-card-top{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:3px}
+.funil-page .funil-card-top strong{font-size:13px}
+.funil-page .funil-badge{font-size:10px;color:var(--amber);border:1px solid rgba(245,166,35,.35);border-radius:20px;padding:2px 6px}
+.funil-page .funil-card-phone{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:6px}
+.funil-page .funil-card-line{font-size:11px;color:var(--text2);margin-top:3px}
+.funil-page .funil-card-actions{display:flex;gap:6px;margin-top:10px;align-items:center}
+.funil-page .funil-card-actions select{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:7px;padding:6px;font-size:11px;min-width:0}
+.funil-page .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
+.funil-card[draggable="true"]{cursor:grab}
+.funil-card.dragging{opacity:.55;cursor:grabbing;border-color:var(--accent)}
+.funil-col.drag-over{border-color:var(--accent)!important;box-shadow:0 0 0 1px rgba(91,127,255,.35) inset}
 
 #modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
 #modal-quest .quest-switch input{width:18px;height:18px}
