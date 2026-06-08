@@ -1772,7 +1772,17 @@ function editarCampanha(id) {
   document.getElementById('fu-campanha-gatilho').value = c.gatilho || '';
   document.getElementById('fu-campanha-investimento-tipo').value = c.investimento_tipo === 'total' ? 'total' : 'diario';
   document.getElementById('fu-campanha-investimento').value = (c.investimento_valor != null ? c.investimento_valor : (c.investimento != null ? c.investimento : ''));
-  document.getElementById('fu-campanha-template').value = c.template_id != null ? String(c.template_id) : '';
+  const campSel = document.getElementById('fu-campanha-template');
+  const targetVal = c.template_id != null ? String(c.template_id) : '';
+  campSel.value = targetVal;
+  // Se a opção não existe no select (cache ainda não carregado ou id não bateu), injeta temporariamente
+  if (targetVal && campSel.value !== targetVal) {
+    const opt = document.createElement('option');
+    opt.value = targetVal;
+    opt.textContent = c.template_nome || ('Template #' + targetVal);
+    campSel.appendChild(opt);
+    campSel.value = targetVal;
+  }
   editandoCampanhaId = id;
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Salvar edição';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = '';
