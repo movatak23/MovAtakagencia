@@ -296,6 +296,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     </div>
     <div class="header-right">
       <span id="header-status" style="font-size:12px;color:var(--text2)"></span>
+      <button class="btn-sair" onclick="abrirReset()" style="border-color:var(--amber);color:var(--amber)">Reset lead</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -1939,6 +1940,35 @@ async function limparCobertura() {
   } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
 }
 
+function abrirReset() {
+  document.getElementById('reset-tel').value = '';
+  document.getElementById('reset-msg').textContent = '';
+  document.getElementById('modal-reset').classList.add('open');
+}
+function fecharReset() {
+  document.getElementById('modal-reset').classList.remove('open');
+}
+async function executarReset() {
+  const tel = (document.getElementById('reset-tel').value || '').replace(/\D/g, '');
+  const msg = document.getElementById('reset-msg');
+  if (tel.length < 8) { msg.style.color = 'var(--red)'; msg.textContent = 'Informe um telefone válido (com DDD).'; return; }
+  if (!confirm('Resetar o número ' + tel + '? Isso apaga o lead e todo o histórico dele.')) return;
+  const btn = document.getElementById('btn-reset-go');
+  btn.disabled = true; btn.textContent = 'Resetando...';
+  try {
+    const r = await api('/movatak/admin/reset-lead', { method: 'POST', body: JSON.stringify({ telefone: tel }) });
+    msg.style.color = 'var(--green)';
+    msg.textContent = r.removidos > 0
+      ? '✓ ' + r.removidos + ' lead(s) apagado(s). Mande a frase-gatilho de novo pra testar.'
+      : 'Nenhum lead encontrado com esse número (já está limpo).';
+    if (secret) carregarTudo();
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = 'Erro: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Resetar lead';
+  }
+}
+
 function escAttr(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -1946,6 +1976,7 @@ function escAttr(s) {
 
 <div class="modal-overlay" id="modal-fu">
   <div class="modal modal-fu">
+    <button class="modal-x" onclick="fecharFU()" title="Fechar">✕</button>
     <h3 id="fu-titulo">Configuração de Follow Up</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:20px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
 
@@ -2126,6 +2157,7 @@ function escAttr(s) {
 
 <div class="modal-overlay" id="modal-quest">
   <div class="modal modal-fu">
+    <button class="modal-x" onclick="fecharQuestionario()" title="Fechar">✕</button>
     <h3>Questionário consultivo</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> nas mensagens e <strong>{plano}</strong> na mensagem final.</p>
 
@@ -2168,6 +2200,25 @@ function escAttr(s) {
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
       <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar questionário</button>
+    </div>
+  </div>
+</div>
+<style>
+.modal-x{position:absolute;top:14px;right:16px;background:transparent;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1;padding:4px;z-index:2}
+.modal-x:hover{color:var(--text)}
+</style>
+
+<div class="modal-overlay" id="modal-reset">
+  <div class="modal" style="max-width:440px">
+    <button class="modal-x" onclick="fecharReset()" title="Fechar">✕</button>
+    <h3>Reset de lead (teste)</h3>
+    <p style="font-size:13px;color:var(--text2);margin:8px 0 16px">Apaga o lead e todo o histórico desse número (follow-up, mensagens, questionário). Use no seu número de teste pra ele voltar a entrar como lead novo.</p>
+    <label class="fu-label" style="margin-top:0">Telefone (com DDD)</label>
+    <input type="text" class="fu-textarea" id="reset-tel" style="min-height:auto;padding:11px 14px;resize:none" placeholder="5581999999999">
+    <div id="reset-msg" style="font-size:13px;margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharReset()">Cancelar</button>
+      <button class="btn-save" id="btn-reset-go" onclick="executarReset()" style="background:var(--amber)">Resetar lead</button>
     </div>
   </div>
 </div>
