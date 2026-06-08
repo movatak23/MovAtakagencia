@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.4.0-planos-pontuacao';
+const MOVATAK_VERSION = 'v2.4.1-auto-atendimento-delay-centavos';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -336,9 +336,42 @@ function followupDataDaLinha(row) {
 
 function parseMoedaParaNumero(v) {
   if (v === undefined || v === null || v === '') return null;
-  const n = parseFloat(String(v).replace(/\./g, '').replace(',', '.'));
+  const raw = String(v).trim().replace(/[R$\s]/g, '');
+  if (!raw) return null;
+
+  // Aceita 99,90 / 99.90 / 1.299,90 / 1,299.90.
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  let normalized = raw;
+
+  if (lastComma >= 0 && lastDot >= 0) {
+    if (lastComma > lastDot) {
+      normalized = raw.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalized = raw.replace(/,/g, '');
+    }
+  } else if (lastComma >= 0) {
+    normalized = raw.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot >= 0) {
+    const parts = raw.split('.');
+    // Quando há mais de um ponto, trata os anteriores como milhar.
+    normalized = parts.length > 2 ? parts.slice(0, -1).join('') + '.' + parts.at(-1) : raw;
+  }
+
+  const n = parseFloat(normalized);
   return Number.isFinite(n) ? n : null;
 }
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function normalizarDelayQuestionario(passo) {
+  const n = parseInt(passo && (passo.delay_segundos ?? passo.delaySegundos ?? passo.delay), 10);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(n, 300); // limite operacional: 5 minutos por mensagem
+}
+
 
 const TEMPLATES_FOLLOWUP = {
   provedor: {
@@ -3078,6 +3111,10 @@ async function avancarQuestionario(cliente, lead, estadoId, respostas, fromIdx, 
     const aguarda = passo.aguardar !== false;
     const corpo = aguarda ? montarTextoPergunta(passo) : (passo.pergunta || '');
     const texto = (pref ? pref + '\n\n' : '') + corpo;
+    const delaySegundos = normalizarDelayQuestionario(passo);
+    if (delaySegundos > 0) {
+      await sleep(delaySegundos * 1000);
+    }
     await enviarMsgQuestionario(cliente, lead.telefone, texto || ' ', passo.imagem);
     pref = '';
     if (aguarda) {
