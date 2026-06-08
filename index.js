@@ -3266,6 +3266,7 @@ async function finalizarQuestionario(cliente, lead, respostas) {
     }
 
     await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(e => console.error('[funil][em_negociacao]', e.message));
+    await atribuirVendedorBalanceado(cliente.id, lead.id).catch(e => console.error('[funil][distribuicao]', e.message));
     await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
   } catch (e) {
     console.error('[questionario][finalizar] erro:', e.message);
@@ -3794,6 +3795,43 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
 // ============================================================
 // Funil de Atendimento — Kanban de leads + listas/tags WhatsApp
 // ============================================================
+// Distribui lead para o vendedor com menor número de leads atribuídos.
+// Em empate, escolhe aleatoriamente entre os empatados.
+async function atribuirVendedorBalanceado(clienteId, leadId) {
+  try {
+    const vRes = await query(
+      `SELECT id FROM movatak_vendedores WHERE cliente_id=$1 AND COALESCE(ativo,true)=true ORDER BY id ASC`,
+      [clienteId]
+    );
+    if (!vRes.rows.length) return null;
+    const counts = await query(
+      `SELECT vendedor_id, COUNT(*)::int AS cnt
+         FROM movatak_leads
+        WHERE cliente_id=$1 AND vendedor_id IS NOT NULL
+        GROUP BY vendedor_id`,
+      [clienteId]
+    );
+    const countMap = {};
+    for (const r of counts.rows) countMap[r.vendedor_id] = r.cnt;
+    let minCnt = Infinity;
+    for (const v of vRes.rows) {
+      const c = countMap[v.id] || 0;
+      if (c < minCnt) minCnt = c;
+    }
+    const candidatos = vRes.rows.filter(v => (countMap[v.id] || 0) === minCnt);
+    const escolhido = candidatos[Math.floor(Math.random() * candidatos.length)];
+    await query(
+      `UPDATE movatak_leads SET vendedor_id=$1, atualizado_em=NOW() WHERE id=$2`,
+      [escolhido.id, leadId]
+    );
+    console.log(`[funil] Lead ${leadId} atribuído ao vendedor ${escolhido.id} (mínimo: ${minCnt} leads)`);
+    return escolhido.id;
+  } catch (e) {
+    console.error('[funil][distribuicao] Erro ao atribuir vendedor:', e.message);
+    return null;
+  }
+}
+
 function slugifyFunil(nome) {
   return String(nome || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -3859,6 +3897,9 @@ async function garantirEstruturaFunil() {
 
   await query(`ALTER TABLE movatak_leads
     ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER`).catch(() => null);
+
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS convertido_em TIMESTAMPTZ`).catch(() => null);
 
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_funil_colunas_cliente_slug ON movatak_funil_colunas(cliente_id, slug)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
@@ -3944,6 +3985,11 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   if (etapa === 'cliente') {
     await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, convertido_em=COALESCE(convertido_em, NOW()), atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
     await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
+    // Distribuição balanceada: só atribui se ainda não tem vendedor
+    const lr = await query(`SELECT vendedor_id FROM movatak_leads WHERE id=$1`, [leadId]);
+    if (lr.rows[0] && !lr.rows[0].vendedor_id) {
+      await atribuirVendedorBalanceado(row.cliente_id, leadId).catch(() => null);
+    }
   } else if (etapa === 'descartado') {
     await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
     await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
@@ -3985,7 +4031,8 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
     const leads = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.criado_em, l.atualizado_em, l.convertido_em,
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id,
+              l.criado_em, l.atualizado_em, l.convertido_em,
               v.nome AS vendedor_nome,
               p.nome AS plano_nome, p.valor AS plano_valor,
               COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes
@@ -4006,7 +4053,20 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       if (!coluna) coluna = colunas[0];
       if (coluna) coluna.leads.push(lead);
     }
-    res.json({ colunas });
+
+    // Colunas de vendedores (sempre as últimas — leads atribuídos de qualquer etapa)
+    const vRes = await query(
+      `SELECT id, nome FROM movatak_vendedores WHERE cliente_id=$1 AND COALESCE(ativo,true)=true ORDER BY nome ASC`,
+      [clienteId]
+    );
+    const colunasVendedores = vRes.rows.map(v => ({
+      id: `vendedor_${v.id}`,
+      vendedor_id: v.id,
+      nome: v.nome,
+      leads: leads.rows.filter(l => l.vendedor_id === v.id)
+    }));
+
+    res.json({ colunas, colunasVendedores });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -4066,6 +4126,17 @@ app.post('/movatak/admin/funil/colunas/:id/sincronizar-whatsapp', authMovatak, a
   try {
     const tagId = await sincronizarColunaComWhatsapp(req.params.id);
     res.json({ ok: true, zapi_tag_id: tagId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => {
+  try {
+    const { vendedor_id } = req.body || {};
+    await query(
+      `UPDATE movatak_leads SET vendedor_id=$1, atualizado_em=NOW() WHERE id=$2`,
+      [vendedor_id || null, req.params.id]
+    );
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
