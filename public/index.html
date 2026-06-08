@@ -428,7 +428,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <div id="planos-lista"></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
           <input type="text" id="plano-novo-nome" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2;min-width:140px" placeholder="Nome do plano">
-          <input type="number" id="plano-novo-valor" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="R$">
+          <input type="text" id="plano-novo-valor" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="R$ 99,90" inputmode="decimal">
           <input type="number" id="plano-novo-nota" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="Nota mín.">
           <button class="btn-add-small" onclick="adicionarPlano()">Adicionar plano</button>
         </div>
@@ -452,7 +452,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.1.7-default-hoje';
+const PAINEL_VERSION = 'v2.1.8-auto-atendimento-delay-centavos';
 const SENHA_KEY  = 'mvtk_painel_secret';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
@@ -811,7 +811,7 @@ function renderClientes(clientes) {
       <td>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Início/Followup</button>
-        <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Questionário</button>
+        <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
       </td>
     </tr>`;
   }).join('');
@@ -920,7 +920,7 @@ async function carregarPlanos(id) {
     box.innerHTML = planos.map(p => `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
         <input type="text" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2" value="${escAttr(p.nome)}" onchange="patchPlano(${p.id},'nome',this.value)">
-        <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.valor != null ? p.valor : ''}" placeholder="R$" onchange="patchPlano(${p.id},'valor',this.value)">
+        <input type="text" inputmode="decimal" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${formatarValorPlanoInput(p.valor)}" placeholder="R$ 99,90" onchange="patchPlano(${p.id},'valor',this.value)">
         <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.nota_minima || 0}" placeholder="Nota mín." onchange="patchPlano(${p.id},'nota_minima',this.value)">
         <button class="btn-remove" title="Excluir plano" onclick="removerPlano(${p.id})">×</button>
       </div>`).join('');
@@ -1791,6 +1791,7 @@ async function abrirQuestionario(id) {
       pergunta_curta: p.pergunta_curta || '',
       opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
       imagem: p.imagem || '',
+      delay_segundos: Math.max(0, parseInt(p.delay_segundos ?? p.delaySegundos ?? 0, 10) || 0),
       aguardar: p.aguardar !== false
     }));
     questState.introImagem = r.intro_imagem || '';
@@ -1843,6 +1844,11 @@ function renderQuestPassos() {
         <input type="text" class="fu-textarea quest-mini" placeholder="ID p/ regras (ex: pessoas)" value="${escAttr(p.id)}" oninput="questSetPasso(${i},'id',this.value)">
         <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
       </div>
+      <div class="quest-delay-row">
+        <label>Espera antes de enviar</label>
+        <input type="number" min="0" step="1" class="fu-textarea quest-mini" value="${escAttr(p.delay_segundos || 0)}" oninput="questSetPasso(${i},'delay_segundos',this.value)">
+        <span>segundos</span>
+      </div>
       ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
       <label class="quest-aguardar"><input type="checkbox" ${p.aguardar !== false ? 'checked' : ''} onchange="questSetPasso(${i},'aguardar',this.checked)"> Aguardar resposta do lead <span class="quest-aguardar-hint">(desmarque p/ só enviar material e seguir)</span></label>
     </div>`;
@@ -1853,13 +1859,15 @@ function questSetPasso(i, campo, valor) {
   if (!questState.passos[i]) return;
   if (campo === 'opcoes') {
     questState.passos[i].opcoes = valor.split(',').map(s => s.trim()).filter(Boolean);
+  } else if (campo === 'delay_segundos') {
+    questState.passos[i].delay_segundos = Math.max(0, parseInt(valor, 10) || 0);
   } else {
     questState.passos[i][campo] = valor;
   }
   if (campo === 'tipo') renderQuestPassos();
 }
 function questAddPasso() {
-  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', aguardar: true });
+  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', delay_segundos: 0, aguardar: true });
   renderQuestPassos();
 }
 function questRemovePasso(i) { questState.passos.splice(i, 1); renderQuestPassos(); }
@@ -1877,7 +1885,7 @@ function renderQuestRegras() {
   const maxScore = passosOpcoes.reduce((s, p) => s + (Array.isArray(p.opcoes) ? p.opcoes.length : 0), 0);
   const planosHtml = (questState.planos || []).length
     ? questState.planos.map(p => `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
-        <span>${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + p.valor : ''}</span>
+        <span>${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + formatarValorPlanoBR(p.valor) : ''}</span>
         <span style="color:var(--accent);font-family:var(--mono)">nota mín. ${p.nota_minima || 0}</span>
       </div>`).join('')
     : '<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhum plano cadastrado. Cadastre os planos na tela de edição do cliente (botão Editar).</div>';
@@ -1954,6 +1962,7 @@ async function salvarQuestionario() {
         pergunta_curta: (p.pergunta_curta || '').trim(),
         opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
         imagem: p.imagem || '',
+        delay_segundos: Math.max(0, parseInt(p.delay_segundos, 10) || 0),
         aguardar: p.aguardar !== false
       }));
     await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
@@ -1969,10 +1978,10 @@ async function salvarQuestionario() {
       })
     });
     btn.textContent = '✓ Salvo';
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar questionário'; }, 1500);
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar Auto Atendimento'; }, 1500);
   } catch (e) {
     document.getElementById('quest-err').textContent = 'Erro ao salvar: ' + e.message;
-    btn.disabled = false; btn.textContent = 'Salvar questionário';
+    btn.disabled = false; btn.textContent = 'Salvar Auto Atendimento';
   }
 }
 
@@ -2035,6 +2044,29 @@ async function executarReset() {
   } finally {
     btn.disabled = false; btn.textContent = 'Resetar lead';
   }
+}
+
+function formatarValorPlanoBR(v) {
+  if (v === null || v === undefined || v === '') return '';
+  const raw = String(v).trim().replace(/[R$\s]/g, '');
+  if (!raw) return '';
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  let normalized = raw;
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot ? raw.replace(/\./g, '').replace(',', '.') : raw.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    normalized = raw.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot >= 0) {
+    const parts = raw.split('.');
+    normalized = parts.length > 2 ? parts.slice(0, -1).join('') + '.' + parts.at(-1) : raw;
+  }
+  const num = Number(normalized);
+  if (!Number.isFinite(num)) return raw;
+  return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function formatarValorPlanoInput(v) {
+  return formatarValorPlanoBR(v);
 }
 
 function escAttr(s) {
@@ -2207,6 +2239,10 @@ function escAttr(s) {
 #modal-quest select.quest-mini{background:var(--bg2);color:var(--text);border:1px solid var(--border2);border-radius:8px;max-width:200px}
 #modal-quest .quest-row2{display:flex;gap:8px}
 #modal-quest .quest-row2 .quest-mini{flex:1}
+#modal-quest .quest-delay-row{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+#modal-quest .quest-delay-row label{font-size:12px;color:var(--text2)}
+#modal-quest .quest-delay-row input{width:90px;flex:0 0 90px!important}
+#modal-quest .quest-delay-row span{font-size:12px;color:var(--text3)}
 #modal-quest .quest-cond{display:flex;gap:6px;align-items:center;margin-bottom:6px}
 #modal-quest .quest-cond .quest-mini{flex:1}
 #modal-quest .quest-iconbtn{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;color:var(--text2);width:28px;height:28px;cursor:pointer;font-size:13px}
@@ -2227,12 +2263,12 @@ function escAttr(s) {
 <div class="modal-overlay" id="modal-quest">
   <div class="modal modal-fu">
     <button class="modal-x" onclick="fecharQuestionario()" title="Fechar">✕</button>
-    <h3>Questionário consultivo</h3>
+    <h3>Auto Atendimento</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> nas mensagens e <strong>{plano}</strong> na mensagem final.</p>
 
     <div class="quest-switch">
       <input type="checkbox" id="quest-ativo">
-      <label for="quest-ativo" style="font-size:14px;color:var(--text)">Ativar questionário para este cliente</label>
+      <label for="quest-ativo" style="font-size:14px;color:var(--text)">Ativar Auto Atendimento para este cliente</label>
     </div>
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:-8px;margin-bottom:16px">Desligado, o lead segue no fluxo normal (boas-vindas + follow-up), sem perguntas.</div>
 
@@ -2267,7 +2303,7 @@ function escAttr(s) {
     <div class="login-err" id="quest-err" style="margin-top:12px"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
-      <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar questionário</button>
+      <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar Auto Atendimento</button>
     </div>
   </div>
 </div>
