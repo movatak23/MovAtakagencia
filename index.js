@@ -34,6 +34,8 @@ function logDebug(...args) {
 // Ajustáveis via Railway sem mexer no código.
 const MOVATAK_REENTRADA_FU1_HORAS = parseInt(process.env.MOVATAK_REENTRADA_FU1_HORAS || '6', 10);
 const MOVATAK_MAX_AUTO_MSG_DIA = parseInt(process.env.MOVATAK_MAX_AUTO_MSG_DIA || '6', 10);
+const MOVATAK_QUEST_LEMBRETE_HORAS = parseInt(process.env.MOVATAK_QUEST_LEMBRETE_HORAS || '6', 10);
+const MOVATAK_QUEST_MAX_LEMBRETES = parseInt(process.env.MOVATAK_QUEST_MAX_LEMBRETES || '1', 10);
 
 const DEFAULT_CLIENTE_PERMISSOES = {
   ver_dashboard: true,
@@ -947,6 +949,11 @@ async function enviarRelatorioDiarioClientes() {
 }
 
 cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/Sao_Paulo' });
+
+// Reativador de questionário: lembrete por inatividade e devolução ao follow-up.
+cron.schedule('*/15 * * * *', async () => {
+  await processarQuestionariosParados();
+});
 
 // ============================================================
 // WEBHOOK — Lead respondeu (parar sequência)
@@ -2892,6 +2899,8 @@ async function garantirEstruturaQuestionario() {
     atualizado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
 
+  await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS lembretes INTEGER DEFAULT 0`).catch(() => null);
+
   await query(`CREATE TABLE IF NOT EXISTS movatak_cobertura_cep (
     id SERIAL PRIMARY KEY,
     cliente_id INTEGER NOT NULL,
@@ -3115,7 +3124,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
       await finalizarQuestionario(cliente, lead, respostas);
     } else {
       await query(
-        `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, atualizado_em=NOW() WHERE id=$3`,
+        `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, lembretes=0, atualizado_em=NOW() WHERE id=$3`,
         [proxIdx, JSON.stringify(respostas), estado.id]
       );
       const prox = passos[proxIdx];
@@ -3167,6 +3176,63 @@ async function finalizarQuestionario(cliente, lead, respostas) {
     await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
   } catch (e) {
     console.error('[questionario][finalizar] erro:', e.message);
+  }
+}
+
+// Lead que travou no meio do questionário: manda lembrete e, se continuar sem
+// responder, encerra e devolve o lead para o follow-up normal.
+async function processarQuestionariosParados() {
+  try {
+    await garantirEstruturaQuestionario();
+    const r = await query(
+      `SELECT q.*, c.zapi_instance, c.zapi_token, c.zapi_client_token,
+              c.questionario_passos, l.nome AS lead_nome, l.etapa AS lead_etapa
+         FROM movatak_questionario_estado q
+         JOIN movatak_clientes c ON c.id = q.cliente_id
+         JOIN movatak_leads l ON l.id = q.lead_id
+        WHERE q.status = 'em_andamento'
+          AND q.atualizado_em < NOW() - make_interval(hours => $1::int)`,
+      [MOVATAK_QUEST_LEMBRETE_HORAS]
+    );
+    for (const est of r.rows) {
+      try {
+        const cliente = {
+          id: est.cliente_id,
+          zapi_instance: est.zapi_instance,
+          zapi_token: est.zapi_token,
+          zapi_client_token: est.zapi_client_token,
+          questionario_passos: est.questionario_passos
+        };
+        const lead = { id: est.lead_id, telefone: est.telefone, nome: est.lead_nome };
+        const passos = Array.isArray(est.questionario_passos) ? est.questionario_passos : [];
+        const passo = passos[est.passo_idx || 0];
+
+        if ((est.lembretes || 0) < MOVATAK_QUEST_MAX_LEMBRETES) {
+          if (passo) {
+            await enviarMsgQuestionario(
+              cliente, lead.telefone,
+              'Ainda quero te ajudar a achar o plano ideal. 😊 Ficou faltando só isso:\n\n' + montarTextoPergunta(passo),
+              passo.imagem
+            );
+          }
+          await query(`UPDATE movatak_questionario_estado SET lembretes = COALESCE(lembretes,0) + 1, atualizado_em = NOW() WHERE id = $1`, [est.id]);
+          await registrarEventoLead(lead.id, est.cliente_id, 'questionario_lembrete', 'Lembrete enviado por inatividade no questionário', { passo_idx: est.passo_idx });
+          console.log(`[questionario][lembrete] enviado -> lead ${lead.id}`);
+        } else {
+          await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [est.id]);
+          if (est.lead_etapa !== 'cliente') {
+            await agendarFollowupV2(lead.id, est.cliente_id, 1, true);
+            await enviarFollowupsPendentesDoLead(lead.id, 1);
+          }
+          await registrarEventoLead(lead.id, est.cliente_id, 'questionario_abandonado', 'Questionário sem resposta; lead devolvido ao follow-up', { passo_idx: est.passo_idx });
+          console.log(`[questionario][abandonado] devolvido ao follow-up -> lead ${lead.id}`);
+        }
+      } catch (e) {
+        console.error('[questionario][parado] erro no estado', est.id, e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[questionario][parados] erro:', e.message);
   }
 }
 
