@@ -190,6 +190,16 @@ async function zapiEtiquetar(instance, token, clientToken, telefone, label) {
 }
 
 
+async function zapiArquivar(instance, token, clientToken, telefone) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/archive-chat`;
+  await axios.post(url, { phone: telefone, archive: true }, { headers: { 'Client-Token': clientToken } });
+}
+
+async function zapiMarcarNaoLido(instance, token, clientToken, telefone) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/mark-message-as-unread`;
+  await axios.post(url, { phone: telefone }, { headers: { 'Client-Token': clientToken } });
+}
+
 const MOVATAK_ADMIN_WA = '558176041948';
 
 async function zapiCriarEtiqueta(instance, token, clientToken, nome) {
@@ -1207,7 +1217,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
     const r = await query(
-      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal
+      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -1222,18 +1232,19 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal } = req.body;
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance) {
       return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
     }
 
     const triggerPadrao = (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : 'USAR_GATILHOS_DAS_CAMPANHAS';
-    // Monta o UPDATE dinamicamente — token/client-token só entram se preenchidos
     const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
     const valores = [nome, whatsapp, zapi_instance, triggerPadrao, teto_cpl ? parseFloat(teto_cpl) : null];
     let idx = 6;
     if (permissoes_portal) { campos.push('permissoes_portal = $' + idx + '::jsonb'); valores.push(JSON.stringify(normalizarPermissoes(permissoes_portal))); idx++; }
+    if (acao_arquivar_ao_final !== undefined) { campos.push('acao_arquivar_ao_final = $' + idx); valores.push(!!acao_arquivar_ao_final); idx++; }
+    if (acao_marcar_nao_lido !== undefined) { campos.push('acao_marcar_nao_lido = $' + idx); valores.push(!!acao_marcar_nao_lido); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
@@ -3267,6 +3278,16 @@ async function finalizarQuestionario(cliente, lead, respostas) {
 
     await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(e => console.error('[funil][em_negociacao]', e.message));
     await atribuirVendedorBalanceado(cliente.id, lead.id).catch(e => console.error('[funil][distribuicao]', e.message));
+
+    if (cliente.acao_arquivar_ao_final) {
+      await zapiArquivar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone)
+        .catch(e => console.error('[zapi][arquivar]', e.message));
+    }
+    if (cliente.acao_marcar_nao_lido) {
+      await zapiMarcarNaoLido(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone)
+        .catch(e => console.error('[zapi][nao_lido]', e.message));
+    }
+
     await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
   } catch (e) {
     console.error('[questionario][finalizar] erro:', e.message);
@@ -3895,6 +3916,8 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
 
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_arquivar_ao_final BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_marcar_nao_lido BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads
     ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER`).catch(() => null);
 
