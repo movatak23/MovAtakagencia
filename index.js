@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.5.0-funil-atendimento-operacional';
+const MOVATAK_VERSION = 'v2.5.2-funil-mensagem-kanban-vendedores-inline';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -4138,6 +4138,45 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
     );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+app.post('/movatak/admin/leads/:id/mensagem-kanban', authMovatak, async (req, res) => {
+  try {
+    const leadId = parseInt(req.params.id, 10);
+    const mensagem = String((req.body && req.body.mensagem) || '').trim();
+    if (!leadId) return res.status(400).json({ error: 'Lead inválido.' });
+    if (!mensagem) return res.status(400).json({ error: 'Digite a mensagem.' });
+    if (mensagem.length > 2000) return res.status(400).json({ error: 'Mensagem muito longa. Limite: 2000 caracteres.' });
+
+    const r = await query(
+      `SELECT l.id, l.cliente_id, l.nome, l.telefone, l.vendedor_id,
+              c.zapi_instance, c.zapi_token, c.zapi_client_token
+         FROM movatak_leads l
+         JOIN movatak_clientes c ON c.id = l.cliente_id
+        WHERE l.id = $1 AND c.ativo = true`,
+      [leadId]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = r.rows[0];
+    if (!lead.telefone) return res.status(400).json({ error: 'Lead sem telefone cadastrado.' });
+    if (!lead.zapi_instance || !lead.zapi_token || !lead.zapi_client_token) {
+      return res.status(400).json({ error: 'Z-API não configurada para este cliente.' });
+    }
+
+    await zapiEnviar(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, mensagem);
+    await registrarEventoLead(
+      lead.id,
+      lead.cliente_id,
+      'mensagem_manual_kanban',
+      'Mensagem manual enviada pelo Funil de Atendimento',
+      { origem: 'funil_kanban', vendedor_id: lead.vendedor_id || null, tamanho: mensagem.length }
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[funil][mensagem-kanban]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.patch('/movatak/admin/leads/:id/funil', authMovatak, async (req, res) => {
