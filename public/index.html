@@ -422,6 +422,15 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </div>
         <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
       </div>
+      <div class="form-field full" id="acoes-section" style="display:none">
+        <label>AÇÕES AUTOMÁTICAS AO FINAL DO FLUXO</label>
+        <div class="fu-hint" style="margin-bottom:10px">Executadas pelo WhatsApp do cliente ao término do questionário consultivo.</div>
+        <div class="perm-grid">
+          <label class="perm-item"><input type="checkbox" id="acao-arquivar"> Arquivar chat do lead</label>
+          <label class="perm-item"><input type="checkbox" id="acao-nao-lido"> Marcar como não lido</label>
+        </div>
+        <div class="fu-hint">Ambas atuam no número WhatsApp Business do cliente via Z-API.</div>
+      </div>
       <div class="form-field full" id="planos-section" style="display:none">
         <label>PLANOS / PACOTES (usados na recomendação)</label>
         <div class="fu-hint" style="margin-bottom:8px">A recomendação soma a pontuação das perguntas de "opções numeradas" e sugere o plano de maior <strong>nota mínima</strong> que o lead alcançar. Cadastre do menor (nota baixa) para o maior (nota alta).</div>
@@ -874,6 +883,7 @@ function abrirModal() {
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
   document.getElementById('f-planos').closest('.form-field').style.display = '';
   document.getElementById('planos-section').style.display = 'none';
+  document.getElementById('acoes-section').style.display = 'none';
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Cadastrar';
   btn.onclick = salvarCliente;
@@ -895,6 +905,7 @@ async function abrirEdicao(id) {
   // Planos: editados aqui (modo edição), com valor e nota mínima
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
   document.getElementById('planos-section').style.display = '';
+  document.getElementById('acoes-section').style.display = '';
   planosClienteId = id;
   carregarPlanos(id);
   const btn = document.getElementById('btn-salvar');
@@ -911,6 +922,8 @@ async function abrirEdicao(id) {
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
     setPermissoesPortal(c.permissoes_portal || {});
+    document.getElementById('acao-arquivar').checked = !!c.acao_arquivar_ao_final;
+    document.getElementById('acao-nao-lido').checked = !!c.acao_marcar_nao_lido;
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -942,7 +955,9 @@ async function salvarEdicao() {
         nome, whatsapp, zapi_instance, trigger_msg,
         zapi_token, zapi_client_token: zapi_ct,
         teto_cpl: cpl ? parseFloat(cpl) : null,
-        permissoes_portal: getPermissoesPortal()
+        permissoes_portal: getPermissoesPortal(),
+        acao_arquivar_ao_final: document.getElementById('acao-arquivar').checked,
+        acao_marcar_nao_lido: document.getElementById('acao-nao-lido').checked
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
