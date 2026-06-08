@@ -212,7 +212,7 @@ tr:hover td{background:var(--bg3)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 
-.modal-fu { max-width: 1120px; width: calc(100vw - 48px); }
+.modal-fu { max-width: 1320px; width: calc(100vw - 32px); }
 .fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
 .fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
 .fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
@@ -960,6 +960,7 @@ document.getElementById('modal').addEventListener('click', e => {
 let fuId = null;
 async function abrirFU(id) {
   fuId = id;
+  cancelarEdicaoCampanha();
   document.getElementById('fu-err').textContent = '';
   document.getElementById('btn-fu-save').textContent = 'Carregando...';
   document.getElementById('modal-fu').classList.add('open');
@@ -1540,6 +1541,7 @@ async function carregarCampanhas(id) {
   box.innerHTML = '<div style="font-size:13px;color:var(--text3);margin-top:10px">Carregando campanhas...</div>';
   try {
     const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
+    fuCampanhas = rows;
     box.innerHTML = rows.length ? `
       <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:14px;background:var(--bg2)">
         <table style="font-size:12px;min-width:1180px;width:100%">
@@ -1570,7 +1572,7 @@ async function carregarCampanhas(id) {
               <td class="td-mono">${c.cpl ? 'R$ ' + c.cpl : '—'}</td>
               <td class="td-mono">${c.custo_venda ? 'R$ ' + c.custo_venda : '—'}</td>
               <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
-              <td><button class="btn-remove" title="Excluir campanha" onclick="excluirCampanha(${c.id})">×</button></td>
+              <td style="white-space:nowrap"><button class="btn-add-small" style="padding:4px 10px;font-size:11px;margin-right:6px" onclick="editarCampanha(${c.id})">Editar</button><button class="btn-remove" title="Excluir campanha" onclick="excluirCampanha(${c.id})">×</button></td>
             </tr>`).join('')}</tbody>
         </table>
       </div>` : '<div style="font-size:13px;color:var(--text3);margin-top:10px">Nenhuma campanha cadastrada ainda.</div>';
@@ -1579,6 +1581,9 @@ async function carregarCampanhas(id) {
   }
 }
 
+
+let fuCampanhas = [];
+let editandoCampanhaId = null;
 
 async function excluirCampanha(campanhaId) {
   if (!confirm('Excluir esta campanha/origem? Ela será removida da tela e deixará de atribuir novos leads.')) return;
@@ -1629,23 +1634,54 @@ async function adicionarCampanha(btn) {
   if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
   if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
   try {
-    if (btn) { btn.disabled = true; btn.textContent = 'Adicionando...'; }
-    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Cadastrando campanha...'; }
-    await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
-      method: 'POST',
-      body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
-    });
-    ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => document.getElementById(id).value = '');
-    document.getElementById('fu-campanha-template').value = '';
+    if (btn) { btn.disabled = true; btn.textContent = editandoCampanhaId ? 'Salvando...' : 'Adicionando...'; }
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = editandoCampanhaId ? 'Salvando alterações...' : 'Cadastrando campanha...'; }
+    if (editandoCampanhaId) {
+      await api('/movatak/admin/campanhas/' + editandoCampanhaId, {
+        method: 'PATCH',
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
+      });
+    } else {
+      await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
+        method: 'POST',
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
+      });
+    }
+    cancelarEdicaoCampanha();
     await carregarCampanhas(fuId);
     document.getElementById('fu-err').textContent = '';
-    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha cadastrada com gatilho, investimento e template vinculados.'; }
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha salva com gatilho, investimento e template vinculados.'; }
   } catch(e) {
-    document.getElementById('fu-err').textContent = 'Erro ao cadastrar campanha: ' + e.message;
-    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao cadastrar campanha.'; }
+    document.getElementById('fu-err').textContent = 'Erro ao salvar campanha: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao salvar campanha.'; }
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Adicionar'; }
+    if (btn) { btn.disabled = false; btn.textContent = editandoCampanhaId ? 'Salvar edição' : 'Adicionar'; }
   }
+}
+
+function editarCampanha(id) {
+  const c = (fuCampanhas || []).find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('fu-campanha-nome').value = c.nome || '';
+  document.getElementById('fu-campanha-gatilho').value = c.gatilho || '';
+  document.getElementById('fu-campanha-investimento-tipo').value = c.investimento_tipo === 'total' ? 'total' : 'diario';
+  document.getElementById('fu-campanha-investimento').value = (c.investimento_valor != null ? c.investimento_valor : (c.investimento != null ? c.investimento : ''));
+  document.getElementById('fu-campanha-template').value = c.template_id != null ? String(c.template_id) : '';
+  editandoCampanhaId = id;
+  const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Salvar edição';
+  const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = '';
+  const statusEl = document.getElementById('fu-campanha-status');
+  if (statusEl) { statusEl.style.color = 'var(--amber)'; statusEl.textContent = 'Editando: ' + (c.nome || '') + '. Ajuste os campos acima e clique em Salvar edição.'; }
+  document.getElementById('fu-campanha-nome').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelarEdicaoCampanha() {
+  editandoCampanhaId = null;
+  ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const t = document.getElementById('fu-campanha-template'); if (t) t.value = '';
+  const tipo = document.getElementById('fu-campanha-investimento-tipo'); if (tipo) tipo.value = 'diario';
+  const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Adicionar';
+  const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = 'none';
 }
 
 async function marcarLeadCliente(leadId) {
@@ -2058,7 +2094,8 @@ function escAttr(s) {
         <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
         <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
         <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado</option></select>
-        <button class="btn-add-small" onclick="adicionarCampanha(this)">Adicionar</button>
+        <button class="btn-add-small" id="btn-camp-add" onclick="adicionarCampanha(this)">Adicionar</button>
+        <button class="btn-cancel" id="btn-camp-cancel" style="display:none;padding:8px 14px" onclick="cancelarEdicaoCampanha()">Cancelar edição</button>
       </div>
       <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
       <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
