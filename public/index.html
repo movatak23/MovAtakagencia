@@ -452,7 +452,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.5.1-funil-janela-dedicada-fix-centavos';
+const PAINEL_VERSION = 'v2.5.2-funil-mensagem-kanban-vendedores-inline';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -2261,7 +2261,7 @@ function renderFunilAtendimento() {
     board.innerHTML = '<div class="state-row" style="grid-column:1/-1">Nenhuma etapa encontrada.</div>';
     return;
   }
-  board.innerHTML = colunas.map(col => {
+  const htmlEtapas = colunas.map(col => {
     const leads = col.leads || [];
     const sync = col.zapi_tag_id
       ? '<span class="funil-sync ok">WhatsApp OK</span>'
@@ -2282,7 +2282,31 @@ function renderFunilAtendimento() {
       </div>
     </div>`;
   }).join('');
-  renderFunilVendedores();
+
+  const htmlVendedores = (funilState.colunasVendedores || []).map(col => {
+    const leads = col.leads || [];
+    return `<div class="funil-col funil-col-vendedor" style="border-color:rgba(91,127,255,.35)" data-vendedor-id="${col.vendedor_id}"
+              ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)"
+              ondrop="funilDropVendedor(event,${col.vendedor_id})">
+      <div class="funil-col-head">
+        <div>
+          <strong style="color:var(--accent)">${escapeHtml(col.nome)}</strong>
+          <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="funil-sync pendente" style="background:rgba(91,127,255,.12);color:var(--accent)">Vendedor</span>
+      </div>
+      <div class="funil-col-actions">
+        <span style="font-size:11px;color:var(--text3)">Arraste aqui para atribuir</span>
+      </div>
+      <div class="funil-cards">
+        ${leads.length ? leads.map(l => renderFunilCardVendedor(l, col.vendedor_id)).join('') : '<div class="funil-empty">Sem leads atribuídos.</div>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  board.innerHTML = htmlEtapas + htmlVendedores;
+  const sec = document.getElementById('funil-vendedores-section');
+  if (sec) sec.style.display = 'none';
 }
 
 function renderFunilVendedores() {
@@ -2326,6 +2350,7 @@ function renderFunilCardVendedor(lead, vendedorAtualId) {
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
     ${plano}${etapa}
     <div class="funil-card-actions">
+      <button onclick="abrirMensagemKanban(${lead.id})">Mensagem</button>
       <button onclick="abrirWhatsLead('${String(lead.telefone || '').replace(/'/g, '')}')">WhatsApp</button>
       <select onchange="reatribuirVendedor(${lead.id},this.value)">${opts}</select>
     </div>
@@ -2370,6 +2395,7 @@ function renderFunilCard(lead, colunaAtualId) {
     ${plano}${vendedor}
     <div class="funil-card-line">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
     <div class="funil-card-actions">
+      <button onclick="abrirMensagemKanban(${lead.id})">Mensagem</button>
       <button onclick="abrirWhatsLead('${String(lead.telefone || '').replace(/'/g, '')}')">WhatsApp</button>
       <select onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
     </div>
@@ -2430,6 +2456,85 @@ async function moverLeadFunil(leadId, colunaId) {
   } catch (e) {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao mover: ' + e.message; }
     await carregarFunilAtendimento();
+  }
+}
+
+function garantirModalMensagemKanban() {
+  let modal = document.getElementById('modal-msg-kanban');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'modal-msg-kanban';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:560px;position:relative">
+      <button class="modal-x" onclick="fecharMensagemKanban()" title="Fechar">✕</button>
+      <h3>Enviar mensagem</h3>
+      <p id="msg-kanban-destino" style="font-size:13px;color:var(--text2);margin:6px 0 14px"></p>
+      <input type="hidden" id="msg-kanban-lead-id" value="">
+      <label class="fu-label" style="margin-top:0">Mensagem para o cliente</label>
+      <textarea class="fu-textarea" id="msg-kanban-texto" rows="5" placeholder="Digite a mensagem que será enviada pelo WhatsApp..."></textarea>
+      <div class="fu-hint">A mensagem será enviada pela Z-API usando o WhatsApp Business configurado no cliente. Não expõe token da Z-API no navegador.</div>
+      <div id="msg-kanban-status" style="font-size:13px;margin-top:10px;min-height:18px"></div>
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="fecharMensagemKanban()">Cancelar</button>
+        <button class="btn-save" id="btn-msg-kanban-enviar" onclick="enviarMensagemKanban()">Enviar pelo WhatsApp</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function localizarLeadNoFunil(leadId) {
+  const id = Number(leadId);
+  const grupos = [...(funilState.colunas || []), ...(funilState.colunasVendedores || [])];
+  for (const col of grupos) {
+    const lead = (col.leads || []).find(l => Number(l.id) === id);
+    if (lead) return lead;
+  }
+  return null;
+}
+
+function abrirMensagemKanban(leadId) {
+  const modal = garantirModalMensagemKanban();
+  const lead = localizarLeadNoFunil(leadId) || { id: leadId, nome: 'Lead', telefone: '' };
+  const leadInput = document.getElementById('msg-kanban-lead-id');
+  const destino = document.getElementById('msg-kanban-destino');
+  const texto = document.getElementById('msg-kanban-texto');
+  const status = document.getElementById('msg-kanban-status');
+  if (leadInput) leadInput.value = String(leadId || '');
+  if (destino) destino.textContent = `${lead.nome || 'Lead'} · ${lead.telefone || 'sem telefone'}`;
+  if (texto) { texto.value = ''; setTimeout(() => texto.focus(), 50); }
+  if (status) status.textContent = '';
+  modal.classList.add('open');
+}
+
+function fecharMensagemKanban() {
+  const modal = document.getElementById('modal-msg-kanban');
+  if (modal) modal.classList.remove('open');
+}
+
+async function enviarMensagemKanban() {
+  const leadId = document.getElementById('msg-kanban-lead-id')?.value;
+  const texto = (document.getElementById('msg-kanban-texto')?.value || '').trim();
+  const status = document.getElementById('msg-kanban-status');
+  const btn = document.getElementById('btn-msg-kanban-enviar');
+  if (!leadId) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Lead não identificado.'; } return; }
+  if (!texto) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Digite uma mensagem antes de enviar.'; } return; }
+  if (texto.length > 2000) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Mensagem muito longa. Limite: 2000 caracteres.'; } return; }
+  try {
+    if (btn) btn.disabled = true;
+    if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Enviando mensagem...'; }
+    await api('/movatak/admin/leads/' + leadId + '/mensagem-kanban', {
+      method: 'POST',
+      body: JSON.stringify({ mensagem: texto })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Mensagem enviada com sucesso.'; }
+    setTimeout(() => fecharMensagemKanban(), 700);
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao enviar: ' + e.message; }
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -2697,8 +2802,9 @@ async function sincronizarColunaWhatsapp(colunaId) {
 .funil-page .funil-badge{font-size:10px;color:var(--amber);border:1px solid rgba(245,166,35,.35);border-radius:20px;padding:2px 6px}
 .funil-page .funil-card-phone{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:6px}
 .funil-page .funil-card-line{font-size:11px;color:var(--text2);margin-top:3px}
-.funil-page .funil-card-actions{display:flex;gap:6px;margin-top:10px;align-items:center}
-.funil-page .funil-card-actions select{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:7px;padding:6px;font-size:11px;min-width:0}
+.funil-page .funil-card-actions{display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.funil-page .funil-card-actions select{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:7px;padding:6px;font-size:11px;min-width:110px}
+.funil-page .funil-col-vendedor{background:linear-gradient(180deg,rgba(91,127,255,.10),rgba(22,22,42,.92))}
 .funil-page .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
 .funil-card[draggable="true"]{cursor:grab}
 .funil-card.dragging{opacity:.55;cursor:grabbing;border-color:var(--accent)}
