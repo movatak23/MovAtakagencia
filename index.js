@@ -13,7 +13,7 @@ const crypto = require('crypto');
 
 const path = require('path');
 const app = express();
-app.use(express.json({ limit: '12mb' }));
+app.use(express.json({ limit: '30mb' }));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token');
@@ -171,6 +171,13 @@ async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
 async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-image`;
   await axios.post(url, { phone: telefone, image: imageUrl, caption: caption || '' }, {
+    headers: { 'Client-Token': clientToken }
+  });
+}
+
+async function zapiEnviarVideo(instance, token, clientToken, telefone, videoUrl, caption) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-video`;
+  await axios.post(url, { phone: telefone, video: videoUrl, caption: caption || '' }, {
     headers: { 'Client-Token': clientToken }
   });
 }
@@ -2916,10 +2923,17 @@ function normalizarCep(cep) {
   return String(cep || '').replace(/\D/g, '');
 }
 
-// Envia mensagem do questionário: com imagem (legenda junto) quando houver, senão texto.
-async function enviarMsgQuestionario(cliente, telefone, texto, imagem) {
-  if (imagem && String(imagem).trim()) {
-    return zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, String(imagem).trim(), texto);
+// Envia mensagem do questionário: com mídia (legenda junto) quando houver, senão texto.
+function tipoMidia(url) {
+  return /\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(String(url || '')) ? 'video' : 'image';
+}
+async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
+  if (midia && String(midia).trim()) {
+    const url = String(midia).trim();
+    if (tipoMidia(url) === 'video') {
+      return zapiEnviarVideo(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
+    }
+    return zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
   }
   return zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
 }
@@ -3040,6 +3054,37 @@ async function calcularRecomendacao(cliente, respostas) {
   }
 }
 
+// Avança o questionário a partir de fromIdx: envia cada passo; em passo que
+// "aguarda resposta" para e espera o lead; em passo só-material (aguardar=false)
+// envia e segue para o próximo automaticamente. No fim, finaliza.
+async function avancarQuestionario(cliente, lead, estadoId, respostas, fromIdx, prefix) {
+  const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
+  let idx = fromIdx;
+  let pref = prefix || '';
+  let guarda = 0;
+  while (guarda++ < 50) {
+    const passo = passos[idx];
+    if (!passo) {
+      if (pref) await enviarMsgQuestionario(cliente, lead.telefone, pref, '');
+      await query(`UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$3`, [idx, JSON.stringify(respostas), estadoId]).catch(() => null);
+      await finalizarQuestionario(cliente, lead, respostas);
+      return;
+    }
+    const aguarda = passo.aguardar !== false;
+    const corpo = aguarda ? montarTextoPergunta(passo) : (passo.pergunta || '');
+    const texto = (pref ? pref + '\n\n' : '') + corpo;
+    await enviarMsgQuestionario(cliente, lead.telefone, texto || ' ', passo.imagem);
+    pref = '';
+    if (aguarda) {
+      await query(`UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, lembretes=0, status='em_andamento', atualizado_em=NOW() WHERE id=$3`, [idx, JSON.stringify(respostas), estadoId]).catch(() => null);
+      return;
+    }
+    // passo só-material: não espera resposta, segue para o próximo
+    await query(`UPDATE movatak_questionario_estado SET passo_idx=$1, atualizado_em=NOW() WHERE id=$2`, [idx + 1, estadoId]).catch(() => null);
+    idx++;
+  }
+}
+
 async function iniciarQuestionario(cliente, lead) {
   try {
     const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
@@ -3058,11 +3103,13 @@ async function iniciarQuestionario(cliente, lead) {
     await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
 
     // cria estado
-    await query(
+    const ins = await query(
       `INSERT INTO movatak_questionario_estado (cliente_id, lead_id, telefone, passo_idx, respostas, status)
-       VALUES ($1, $2, $3, 0, '{}'::jsonb, 'em_andamento')`,
+       VALUES ($1, $2, $3, 0, '{}'::jsonb, 'em_andamento')
+       RETURNING id`,
       [cliente.id, lead.id, lead.telefone]
     );
+    const estadoId = ins.rows[0].id;
 
     // 2) introdução (opcional, texto e/ou imagem)
     const introTxt = (cliente.questionario_intro && String(cliente.questionario_intro).trim())
@@ -3073,8 +3120,8 @@ async function iniciarQuestionario(cliente, lead) {
       await enviarMsgQuestionario(cliente, lead.telefone, introTxt || ' ', introImg);
     }
 
-    // 3) primeira pergunta
-    await enviarMsgQuestionario(cliente, lead.telefone, montarTextoPergunta(passos[0]), passos[0].imagem);
+    // 3) primeiro passo (avança por etapas só-material até a primeira que espera resposta)
+    await avancarQuestionario(cliente, lead, estadoId, {}, 0, '');
 
     await registrarEventoLead(lead.id, cliente.id, 'questionario_iniciado', 'Questionário consultivo iniciado', { total_perguntas: passos.length });
   } catch (e) {
@@ -3092,6 +3139,14 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
       return;
     }
 
+    const respostas = (estado.respostas && typeof estado.respostas === 'object') ? estado.respostas : {};
+
+    // Passo só-material (não espera resposta): apenas segue adiante.
+    if (passo.aguardar === false) {
+      await avancarQuestionario(cliente, lead, estado.id, respostas, idx + 1, '');
+      return;
+    }
+
     const interp = interpretarResposta(passo, texto);
     if (!interp.ok) {
       const dica = interp.motivo === 'cep_invalido'
@@ -3101,7 +3156,6 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
       return;
     }
 
-    const respostas = (estado.respostas && typeof estado.respostas === 'object') ? estado.respostas : {};
     respostas[passo.id] = interp.valor;
 
     let notaCep = '';
@@ -3114,23 +3168,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
         : '⚠️ Vou confirmar a disponibilidade na sua região e já te retorno.';
     }
 
-    const proxIdx = idx + 1;
-    if (proxIdx >= passos.length) {
-      await query(
-        `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$3`,
-        [proxIdx, JSON.stringify(respostas), estado.id]
-      );
-      if (notaCep) await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, notaCep);
-      await finalizarQuestionario(cliente, lead, respostas);
-    } else {
-      await query(
-        `UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, lembretes=0, atualizado_em=NOW() WHERE id=$3`,
-        [proxIdx, JSON.stringify(respostas), estado.id]
-      );
-      const prox = passos[proxIdx];
-      const txt = (notaCep ? notaCep + '\n\n' : '') + montarTextoPergunta(prox);
-      await enviarMsgQuestionario(cliente, lead.telefone, txt, prox.imagem);
-    }
+    await avancarQuestionario(cliente, lead, estado.id, respostas, idx + 1, notaCep);
   } catch (e) {
     console.error('[questionario][processar] erro:', e.message);
   }
@@ -3572,12 +3610,17 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
 app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
   try {
     const dataUrl = (req.body && req.body.dataUrl) || '';
-    const m = /^data:(image\/(png|jpe?g|webp));base64,(.+)$/i.exec(dataUrl);
-    if (!m) return res.status(400).json({ error: 'Imagem inválida. Envie PNG, JPG ou WEBP.' });
+    const m = /^data:((?:image\/(?:png|jpe?g|webp))|(?:video\/(?:mp4|webm|quicktime)));base64,(.+)$/i.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: 'Arquivo inválido. Envie imagem (PNG, JPG, WEBP) ou vídeo (MP4, WEBM, MOV).' });
     const contentType = m[1].toLowerCase();
-    const ext = m[2].toLowerCase() === 'jpeg' ? 'jpg' : m[2].toLowerCase();
-    const buffer = Buffer.from(m[3], 'base64');
-    if (buffer.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 8MB).' });
+    const ehVideo = contentType.startsWith('video/');
+    const extMap = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
+    const ext = extMap[contentType] || (ehVideo ? 'mp4' : 'jpg');
+    const buffer = Buffer.from(m[2], 'base64');
+    const limite = ehVideo ? 20 * 1024 * 1024 : 8 * 1024 * 1024;
+    if (buffer.length > limite) {
+      return res.status(413).json({ error: ehVideo ? 'Vídeo muito grande (máx 20MB).' : 'Imagem muito grande (máx 8MB).' });
+    }
     const url = await uploadSupabase(buffer, contentType, ext);
     res.json({ ok: true, url });
   } catch (e) { res.status(500).json({ error: e.message }); }
