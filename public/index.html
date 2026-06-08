@@ -452,8 +452,9 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.2.1-funil-janela-dragdrop';
+const PAINEL_VERSION = 'v2.2.2-funil-janela-auth-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
+const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
 
 let secret = '';
@@ -489,6 +490,7 @@ function fazerLogin() {
   if (!val) { document.getElementById('login-err').textContent = 'Informe a senha.'; return; }
   secret = val;
   sessionStorage.setItem(SENHA_KEY, val);
+  localStorage.setItem(SENHA_LOCAL_KEY, val);
   iniciar();
 }
 
@@ -498,6 +500,7 @@ document.getElementById('login-input').addEventListener('keydown', e => {
 
 function sair() {
   sessionStorage.removeItem(SENHA_KEY);
+  localStorage.removeItem(SENHA_LOCAL_KEY);
   secret = '';
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('app').classList.remove('visible');
@@ -533,8 +536,12 @@ async function verificarVersao() {
 }
 
 // Verificar sessão salva
-const savedSecret = sessionStorage.getItem(SENHA_KEY);
-if (savedSecret) { secret = savedSecret; iniciar(); }
+const savedSecret = sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY);
+if (savedSecret) {
+  secret = savedSecret;
+  sessionStorage.setItem(SENHA_KEY, savedSecret);
+  iniciar();
+}
 
 // ── API ────────────────────────────────────────────────────
 async function api(path, opts = {}) {
@@ -546,7 +553,14 @@ async function api(path, opts = {}) {
       ...(opts.headers || {})
     }
   });
-  if (res.status === 401) { sair(); throw new Error('Sessão expirada.'); }
+  if (res.status === 401) {
+    if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+      const st = document.getElementById('funil-status');
+      if (st) st.innerHTML = '<span style="color:var(--red)">Sessão expirada. Feche esta janela, faça login no painel e abra o funil novamente.</span>';
+    }
+    sair();
+    throw new Error('Sessão expirada.');
+  }
   if (!res.ok) {
     let detalhe = '';
     try {
@@ -2136,7 +2150,15 @@ async function abrirFunilAtendimento(id, nome) {
   url.searchParams.set('clienteId', String(id));
   url.searchParams.set('clienteNome', nome || '');
   const win = window.open(url.toString(), '_blank');
-  if (!win) {
+  if (win) {
+    try {
+      const auth = sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret;
+      if (auth) {
+        localStorage.setItem(SENHA_LOCAL_KEY, auth);
+        win.sessionStorage.setItem(SENHA_KEY, auth);
+      }
+    } catch(e) {}
+  } else {
     window.location.href = url.toString();
   }
 }
