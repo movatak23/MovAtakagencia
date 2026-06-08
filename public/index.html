@@ -452,7 +452,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.2.3-funil-janela-auth-race-fix';
+const PAINEL_VERSION = 'v2.2.4-fix-centavos-planos';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -963,7 +963,7 @@ async function carregarPlanos(id) {
     box.innerHTML = planos.map(p => `
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
         <input type="text" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2" value="${escAttr(p.nome)}" onchange="patchPlano(${p.id},'nome',this.value)">
-        <input type="text" inputmode="decimal" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${formatarValorPlanoInput(p.valor)}" placeholder="R$ 99,90" onchange="patchPlano(${p.id},'valor',this.value)">
+        <input type="text" inputmode="decimal" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${formatarValorPlanoInput(p.valor)}" placeholder="R$ 99,90" onchange="patchPlano(${p.id},'valor',normalizarValorPlano(this.value))">
         <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.nota_minima || 0}" placeholder="Nota mín." onchange="patchPlano(${p.id},'nota_minima',this.value)">
         <button class="btn-remove" title="Excluir plano" onclick="removerPlano(${p.id})">×</button>
       </div>`).join('');
@@ -973,7 +973,7 @@ async function carregarPlanos(id) {
 }
 async function adicionarPlano() {
   const nome = document.getElementById('plano-novo-nome').value.trim();
-  const valor = document.getElementById('plano-novo-valor').value.trim();
+  const valor = normalizarValorPlano(document.getElementById('plano-novo-valor').value);
   const nota_minima = document.getElementById('plano-novo-nota').value.trim();
   const st = document.getElementById('plano-status');
   if (!nome) { st.style.color = 'var(--red)'; st.textContent = 'Informe o nome do plano.'; return; }
@@ -2089,12 +2089,39 @@ async function executarReset() {
   }
 }
 
+function parseValorPlanoNumero(v) {
+  if (v === null || v === undefined || v === '') return null;
+  let raw = String(v).trim().replace(/[R$\s]/g, '');
+  if (!raw) return null;
+
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  let normalized = raw;
+
+  // Aceita BR e US: 99,90 / 99.90 / 1.299,90 / 1,299.90
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw.replace(/,/g, '');
+  } else if (lastComma >= 0) {
+    normalized = raw.replace(/\./g, '').replace(',', '.');
+  } else if (lastDot >= 0) {
+    const parts = raw.split('.');
+    normalized = parts.length > 2 ? parts.slice(0, -1).join('') + '.' + parts.at(-1) : raw;
+  }
+
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
+}
+
+function normalizarValorPlano(v) {
+  const num = parseValorPlanoNumero(v);
+  return num === null ? '' : num.toFixed(2);
+}
+
 function formatarValorPlanoBR(v) {
-  if (v === null || v === undefined || v === '') return '';
-  const raw = String(v).trim();
-  const n = Number(raw.replace(/\./g, '').replace(',', '.'));
-  const num = Number.isFinite(n) ? n : Number(raw);
-  if (!Number.isFinite(num)) return raw;
+  const num = parseValorPlanoNumero(v);
+  if (num === null) return String(v ?? '');
   return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 function formatarValorPlanoInput(v) {
