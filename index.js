@@ -2949,6 +2949,7 @@ async function uploadSupabase(buffer, contentType, ext) {
   await axios.post(url, buffer, {
     headers: {
       'Authorization': 'Bearer ' + key,
+      'apikey': key,
       'Content-Type': contentType,
       'x-upsert': 'true'
     },
