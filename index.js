@@ -578,6 +578,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
           WHERE id = $1`,
         [row.id]
       );
+      registrarConversa(leadId, row.cliente_id, 'saida', msg || '', null).catch(() => null);
       await registrarEventoLead(
         leadId,
         row.cliente_id,
@@ -862,6 +863,7 @@ cron.schedule('*/10 * * * *', async () => {
             WHERE id = $1`,
           [row.id]
         );
+        registrarConversa(row.lead_id, row.cliente_id, 'saida', msg || '', null).catch(() => null);
         await registrarEventoLead(row.lead_id, row.cliente_id, 'mensagem_enviada', `FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada pelo cron`, { followup_id: row.id });
 
         console.log(`[cron] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviado → lead ${row.lead_id}`);
@@ -2229,6 +2231,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
+    // Gravar mensagem recebida na conversa (se lead existe)
+    if (lead) {
+      registrarConversa(lead.id, cliente.id, 'entrada', texto, null).catch(() => null);
+    }
+
     // Buscar lead pelo telefone
     const rl = await query(
       'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
@@ -2769,6 +2776,19 @@ app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, 
 
 
 // Histórico completo de um lead
+app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaConversas();
+    const r = await query(
+      `SELECT id, direcao, conteudo, midia_url, criado_em
+         FROM movatak_conversas WHERE lead_id = $1
+         ORDER BY criado_em ASC LIMIT 200`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/leads/:id/historico', authMovatak, async (req, res) => {
   try {
     const leadId = req.params.id;
@@ -3016,14 +3036,23 @@ function tipoMidia(url) {
   return /\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(String(url || '')) ? 'video' : 'image';
 }
 async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
+  // Encontra o lead_id pelo telefone para gravar na conversa
+  const lr = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 ORDER BY criado_em DESC LIMIT 1', [cliente.id, telefone]).catch(() => ({ rows: [] }));
+  const leadId = lr.rows[0] ? lr.rows[0].id : null;
+  let resultado;
   if (midia && String(midia).trim()) {
     const url = String(midia).trim();
     if (tipoMidia(url) === 'video') {
-      return zapiEnviarVideo(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
+      resultado = await zapiEnviarVideo(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
+    } else {
+      resultado = await zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
     }
-    return zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
+    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', midia).catch(() => null);
+  } else {
+    resultado = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
+    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', null).catch(() => null);
   }
-  return zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
+  return resultado;
 }
 
 // Upload de imagem para o Supabase Storage. Retorna a URL pública.
@@ -3869,6 +3898,28 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
 // ============================================================
 // API — Mensagens Rápidas (enviadas manualmente do Kanban)
 // ============================================================
+async function garantirEstruturaConversas() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_conversas (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    cliente_id INTEGER NOT NULL,
+    direcao TEXT NOT NULL CHECK (direcao IN ('entrada','saida')),
+    conteudo TEXT,
+    midia_url TEXT,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
+}
+
+async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl) {
+  if (!leadId || !clienteId) return;
+  await garantirEstruturaConversas();
+  await query(
+    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url) VALUES ($1,$2,$3,$4,$5)`,
+    [leadId, clienteId, direcao, conteudo || null, midiaUrl || null]
+  ).catch(e => console.error('[conversa] erro ao registrar:', e.message));
+}
+
 async function garantirEstruturaMensagensRapidas() {
   await query(`CREATE TABLE IF NOT EXISTS movatak_mensagens_rapidas (
     id SERIAL PRIMARY KEY,
@@ -3932,6 +3983,7 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, re
     } else {
       await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
     }
+    registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
