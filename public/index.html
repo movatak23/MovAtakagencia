@@ -1201,7 +1201,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   if (grid) {
     grid.innerHTML = msgsRapidasCache.length
       ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
-      : '<span class="fu-hint" style="font-size:11px">Sem mensagens rápidas cadastradas.</span>';
+      : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
   }
 }
 
