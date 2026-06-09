@@ -3875,15 +3875,17 @@ async function garantirEstruturaMensagensRapidas() {
     cliente_id INTEGER NOT NULL,
     titulo TEXT NOT NULL,
     texto TEXT NOT NULL,
+    midia_url TEXT,
     ordem INTEGER DEFAULT 0,
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
+  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS midia_url TEXT`).catch(() => null);
 }
 
 app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, ordem FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY ordem ASC, id ASC', [req.params.id]);
+    const r = await query('SELECT id, titulo, texto, midia_url, ordem FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY ordem ASC, id ASC', [req.params.id]);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3891,17 +3893,17 @@ app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req
 app.post('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const { titulo, texto } = req.body || {};
+    const { titulo, texto, midia_url } = req.body || {};
     if (!titulo || !texto) return res.status(400).json({ error: 'Título e texto obrigatórios.' });
-    const r = await query('INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto) VALUES ($1,$2,$3) RETURNING id, titulo, texto, ordem', [req.params.id, titulo.trim(), texto.trim()]);
+    const r = await query('INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url) VALUES ($1,$2,$3,$4) RETURNING id, titulo, texto, midia_url, ordem', [req.params.id, titulo.trim(), texto.trim(), midia_url || null]);
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res) => {
   try {
-    const { titulo, texto } = req.body || {};
-    await query('UPDATE movatak_mensagens_rapidas SET titulo=COALESCE($1,titulo), texto=COALESCE($2,texto) WHERE id=$3', [titulo||null, texto||null, req.params.id]);
+    const { titulo, texto, midia_url } = req.body || {};
+    await query('UPDATE movatak_mensagens_rapidas SET titulo=COALESCE($1,titulo), texto=COALESCE($2,texto), midia_url=CASE WHEN $3::text IS NULL THEN midia_url ELSE $3 END WHERE id=$4', [titulo||null, texto||null, midia_url !== undefined ? (midia_url || null) : null, req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3915,13 +3917,22 @@ app.delete('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res)
 
 app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, res) => {
   try {
-    const { texto } = req.body || {};
-    if (!texto) return res.status(400).json({ error: 'Texto obrigatório.' });
+    const { texto, midia_url } = req.body || {};
+    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
     const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     const row = rl.rows[0];
-    await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
-    await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: texto.slice(0, 100) });
+    if (midia_url) {
+      const tipo = tipoMidia(midia_url);
+      if (tipo === 'video') {
+        await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+      } else {
+        await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+      }
+    } else {
+      await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
+    }
+    await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
