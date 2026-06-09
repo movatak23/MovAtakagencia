@@ -2779,13 +2779,63 @@ app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, 
 app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaConversas();
+    // Mensagens registradas no banco
     const r = await query(
       `SELECT id, direcao, conteudo, midia_url, criado_em
          FROM movatak_conversas WHERE lead_id = $1
-         ORDER BY criado_em ASC LIMIT 200`,
+         ORDER BY criado_em ASC LIMIT 300`,
       [req.params.id]
     );
-    res.json(r.rows);
+    const banco = r.rows.map(m => ({ ...m, fonte: 'banco' }));
+
+    // Tenta buscar histórico do Z-API (sessão ativa)
+    const rl = await query(
+      `SELECT l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
+         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
+        WHERE l.id = $1`,
+      [req.params.id]
+    );
+    let zapiMsgs = [];
+    if (rl.rows.length) {
+      const row = rl.rows[0];
+      const phone = String(row.telefone || '').replace(/\D/g, '');
+      try {
+        const url = `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/chat-messages/${phone}`;
+        const resp = await axios.get(url, {
+          headers: { 'Client-Token': row.zapi_client_token || '' },
+          params: { page: 0, pageSize: 100 },
+          timeout: 6000
+        });
+        const msgs = Array.isArray(resp.data) ? resp.data
+          : Array.isArray(resp.data?.messages) ? resp.data.messages
+          : Array.isArray(resp.data?.value) ? resp.data.value : [];
+        zapiMsgs = msgs.map(m => ({
+          id: 'zapi_' + (m.messageId || m.id || Math.random()),
+          direcao: m.fromMe ? 'saida' : 'entrada',
+          conteudo: m.text?.message || m.body || m.caption || m.text || null,
+          midia_url: m.image?.imageUrl || m.video?.videoUrl || m.audio?.audioUrl || null,
+          criado_em: m.momentsAgo
+            ? new Date(Date.now() - m.momentsAgo * 1000).toISOString()
+            : (m.timestamp ? new Date(m.timestamp * 1000).toISOString() : null),
+          fonte: 'zapi'
+        })).filter(m => m.criado_em && (m.conteudo || m.midia_url));
+      } catch (e) {
+        console.log('[conversas] Z-API histórico indisponível:', e.message);
+      }
+    }
+
+    // Mescla: banco tem prioridade para deduplicação (mesmo texto + horário próximo)
+    const todos = [...banco];
+    for (const zm of zapiMsgs) {
+      const dt = new Date(zm.criado_em).getTime();
+      const duplicado = banco.some(b => {
+        const diff = Math.abs(new Date(b.criado_em).getTime() - dt);
+        return diff < 30000 && b.direcao === zm.direcao && b.conteudo === zm.conteudo;
+      });
+      if (!duplicado) todos.push(zm);
+    }
+    todos.sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
+    res.json(todos);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
