@@ -1121,6 +1121,139 @@ async function iniciarEnvioLote() {
   await carregarFunilAtendimento();
 }
 
+// ── Painel lateral de mensagem + histórico ─────────────────
+window._painelLeadId = null;
+
+async function abrirPainelLead(leadId, nomeAbrev) {
+  window._painelLeadId = leadId;
+  document.getElementById('painel-lead-nome').textContent = nomeAbrev || 'Lead';
+  document.getElementById('painel-lead-fone').textContent = '';
+  document.getElementById('painel-msg-texto').value = '';
+  document.getElementById('painel-msg-status').textContent = '';
+  const midiaEl = document.getElementById('painel-midia-el');
+  const midiaPreview = document.getElementById('painel-midia-preview');
+  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; }
+  if (midiaPreview) midiaPreview.style.display = 'none';
+  document.getElementById('painel-historico').innerHTML = '<div class="fu-hint">Carregando...</div>';
+
+  const painel = document.getElementById('funil-painel');
+  if (painel) painel.style.right = '0';
+
+  // Quick messages
+  await carregarMsgsRapidas();
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  if (grid) {
+    grid.innerHTML = msgsRapidasCache.length
+      ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
+      : '<span class="fu-hint" style="font-size:11px">Sem mensagens rápidas cadastradas.</span>';
+  }
+
+  // Histórico
+  try {
+    const data = await api('/movatak/admin/leads/' + leadId + '/historico');
+    const lead = data.lead || {};
+    document.getElementById('painel-lead-nome').textContent = lead.nome || 'Lead sem nome';
+    document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
+    renderHistoricoPainel(data);
+  } catch (e) {
+    document.getElementById('painel-historico').innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro ao carregar histórico.</div>';
+  }
+}
+
+function fecharPainelLead() {
+  const painel = document.getElementById('funil-painel');
+  if (painel) painel.style.right = '-420px';
+  window._painelLeadId = null;
+}
+
+function usarMsgRapidaPainel(id) {
+  const m = msgsRapidasCache.find(x => String(x.id) === String(id));
+  if (!m) return;
+  document.getElementById('painel-msg-texto').value = m.texto || '';
+  const midiaEl = document.getElementById('painel-midia-el');
+  const midiaPreview = document.getElementById('painel-midia-preview');
+  if (m.midia_url) {
+    const isVideo = /\.(mp4|webm|mov)/i.test(m.midia_url);
+    midiaEl.innerHTML = isVideo
+      ? `<video src="${m.midia_url}" style="max-width:160px;max-height:90px;border-radius:6px" controls></video>`
+      : `<img src="${m.midia_url}" style="max-width:160px;max-height:90px;border-radius:6px;object-fit:cover">`;
+    midiaEl.dataset.url = m.midia_url;
+    midiaPreview.style.display = '';
+  } else {
+    midiaEl.innerHTML = ''; midiaEl.dataset.url = '';
+    midiaPreview.style.display = 'none';
+  }
+}
+
+async function enviarMensagemPainel() {
+  const texto = (document.getElementById('painel-msg-texto').value || '').trim();
+  const midiaEl = document.getElementById('painel-midia-el');
+  const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
+  const st = document.getElementById('painel-msg-status');
+  if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem.'; return; }
+  if (!window._painelLeadId) return;
+  st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
+      method: 'POST', body: JSON.stringify({ texto, midia_url })
+    });
+    document.getElementById('painel-msg-texto').value = '';
+    if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; }
+    document.getElementById('painel-midia-preview').style.display = 'none';
+    st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
+    // Recarrega histórico
+    const data = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    renderHistoricoPainel(data);
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+}
+
+function renderHistoricoPainel(data) {
+  const box = document.getElementById('painel-historico');
+  const eventos = data.eventos || [];
+  const fila = data.fila || [];
+
+  const ICONES = {
+    lead_criado: '🆕', questionario_iniciado: '📋', questionario_lembrete: '⏰',
+    questionario_concluido: '✅', questionario_abandonado: '🚪', questionario_transferido: '🤝',
+    followup_reativado: '🔄', mensagem_manual: '💬', venda_marcada: '💰',
+    followup_reativado: '🔄', lead_convertido: '🎉', default: '📌'
+  };
+
+  const linhasEventos = eventos.map(e => {
+    const icone = ICONES[e.tipo] || ICONES.default;
+    const hora = new Date(e.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const extra = e.tipo === 'mensagem_manual' && e.dados && e.dados.texto
+      ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:pre-wrap">"${escapeHtml(String(e.dados.texto).slice(0,120))}"</div>` : '';
+    return `<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start">
+      <span style="font-size:16px;flex-shrink:0;margin-top:1px">${icone}</span>
+      <div style="flex:1">
+        <div style="font-size:12px">${escapeHtml(e.descricao || e.tipo)}</div>
+        ${extra}
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${hora}</div>
+      </div>
+    </div>`;
+  });
+
+  const fuEnviados = fila.filter(f => f.status === 'enviado');
+  const linhasFU = fuEnviados.map(f => {
+    const hora = f.enviado_em ? new Date(f.enviado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+    return `<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start">
+      <span style="font-size:16px;flex-shrink:0;margin-top:1px">📤</span>
+      <div style="flex:1">
+        <div style="font-size:12px">Follow-up FU${f.sequencia_fu || 1} msg${f.etapa_seq} enviado</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${hora}</div>
+      </div>
+    </div>`;
+  });
+
+  const tudo = [...linhasEventos, ...linhasFU];
+  box.innerHTML = tudo.length ? tudo.join('') : '<div class="fu-hint">Nenhum evento registrado.</div>';
+}
+
+function abrirMensagemRapidaLead(leadId, nomeAbrev) {
+  abrirPainelLead(leadId, nomeAbrev);
+}
+
 // ── Mensagens Rápidas do Kanban ────────────────────────────
 let msgRapidaLeadId = null;
 let msgsRapidasCache = [];
@@ -1147,25 +1280,47 @@ async function abrirMensagemRapidaLead(leadId, nomeAbrev) {
 
 function usarMsgRapida(id) {
   const m = msgsRapidasCache.find(x => x.id === id || String(x.id) === String(id));
-  if (m) document.getElementById('msg-lead-texto').value = m.texto;
+  if (!m) return;
+  document.getElementById('msg-lead-texto').value = m.texto || '';
+  const prev = document.getElementById('msg-lead-midia-preview');
+  const el = document.getElementById('msg-lead-midia-el');
+  if (m.midia_url) {
+    prev.style.display = '';
+    const isVideo = /\.(mp4|webm|mov)/i.test(m.midia_url);
+    el.innerHTML = isVideo
+      ? `<video src="${m.midia_url}" style="max-width:200px;max-height:120px;border-radius:6px" controls></video>`
+      : `<img src="${m.midia_url}" style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover">`;
+    el.dataset.url = m.midia_url;
+  } else {
+    prev.style.display = 'none';
+    if (el) { el.innerHTML = ''; el.dataset.url = ''; }
+  }
 }
 
 function fecharMensagemRapidaLead() {
   document.getElementById('modal-msg-lead').classList.remove('open');
+  const el = document.getElementById('msg-lead-midia-el');
+  const prev = document.getElementById('msg-lead-midia-preview');
+  if (el) { el.innerHTML = ''; el.dataset.url = ''; }
+  if (prev) prev.style.display = 'none';
   msgRapidaLeadId = null;
 }
 
 async function enviarMensagemRapidaLead() {
   const texto = (document.getElementById('msg-lead-texto').value || '').trim();
+  const midiaEl = document.getElementById('msg-lead-midia-el');
+  const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
   const st = document.getElementById('msg-lead-status');
-  if (!texto) { st.style.color = 'var(--red)'; st.textContent = 'Escreva ou escolha uma mensagem.'; return; }
+  if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem ou selecione uma mensagem rápida com mídia.'; return; }
   if (!msgRapidaLeadId) return;
   const btn = document.querySelector('#modal-msg-lead .btn-save');
   if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
   try {
-    await api('/movatak/admin/leads/' + msgRapidaLeadId + '/mensagem-rapida', { method: 'POST', body: JSON.stringify({ texto }) });
+    await api('/movatak/admin/leads/' + msgRapidaLeadId + '/mensagem-rapida', { method: 'POST', body: JSON.stringify({ texto, midia_url }) });
     st.style.color = 'var(--green)'; st.textContent = '✓ Mensagem enviada!';
     document.getElementById('msg-lead-texto').value = '';
+    if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; }
+    const prev = document.getElementById('msg-lead-midia-preview'); if (prev) prev.style.display = 'none';
   } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Enviar'; } }
 }
@@ -1197,28 +1352,80 @@ async function renderMsgsGerenciar() {
   box.innerHTML = '<div class="fu-hint">Carregando...</div>';
   await carregarMsgsRapidas();
   if (!msgsRapidasCache.length) { box.innerHTML = '<div class="fu-hint">Nenhuma mensagem cadastrada ainda.</div>'; return; }
-  box.innerHTML = msgsRapidasCache.map(m => `
-    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+  box.innerHTML = msgsRapidasCache.map(m => {
+    const midiaHtml = m.midia_url
+      ? (/\.(mp4|webm|mov)/i.test(m.midia_url)
+          ? `<video src="${m.midia_url}" style="max-width:120px;max-height:70px;border-radius:4px;display:block;margin-top:4px" controls></video>`
+          : `<img src="${m.midia_url}" style="max-width:120px;max-height:70px;border-radius:4px;display:block;margin-top:4px;object-fit:cover">`)
+        + `<button style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;padding:2px 0" onclick="patchMsgRapida(${m.id},'midia_url','')">✕ remover mídia</button>`
+      : `<label style="font-size:11px;color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-top:4px">📎 Adicionar mídia<input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaMsgExistente(this,${m.id})"></label>`;
+    return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
       <div style="flex:1">
         <input class="fu-textarea" style="min-height:auto;padding:7px 10px;resize:none;margin-bottom:4px;width:100%" value="${escapeHtml(m.titulo)}" onchange="patchMsgRapida(${m.id},'titulo',this.value)">
         <textarea class="fu-textarea" style="min-height:60px;width:100%" onchange="patchMsgRapida(${m.id},'texto',this.value)">${escapeHtml(m.texto)}</textarea>
+        ${midiaHtml}
       </div>
       <button class="btn-remove" onclick="removerMsgRapida(${m.id})">×</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
+}
+
+async function uploadMidiaNovaMsg(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const preview = document.getElementById('msg-nova-midia-preview');
+  const urlInput = document.getElementById('msg-nova-midia-url');
+  preview.textContent = 'Enviando...';
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ imagem: base64, clienteId: funilState.clienteId }) });
+    urlInput.value = resp.url || '';
+    preview.textContent = '✓ ' + file.name;
+    preview.style.color = 'var(--green)';
+  } catch (e) { preview.textContent = 'Erro: ' + e.message; preview.style.color = 'var(--red)'; }
+  input.value = '';
 }
 
 async function adicionarMsgRapida() {
   const titulo = document.getElementById('msg-nova-titulo').value.trim();
   const texto = document.getElementById('msg-nova-texto').value.trim();
+  const midia_url = (document.getElementById('msg-nova-midia-url').value || '').trim() || null;
   const st = document.getElementById('msgs-gerenciar-status');
   if (!titulo || !texto) { st.style.color='var(--red)'; st.textContent='Preencha título e texto.'; return; }
   try {
-    await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas', { method: 'POST', body: JSON.stringify({ titulo, texto }) });
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas', { method: 'POST', body: JSON.stringify({ titulo, texto, midia_url }) });
     document.getElementById('msg-nova-titulo').value = '';
     document.getElementById('msg-nova-texto').value = '';
+    document.getElementById('msg-nova-midia-url').value = '';
+    document.getElementById('msg-nova-midia-preview').textContent = '';
     st.style.color = 'var(--green)'; st.textContent = 'Mensagem adicionada.';
     await renderMsgsGerenciar();
   } catch (e) { st.style.color='var(--red)'; st.textContent='Erro: '+e.message; }
+}
+
+async function uploadMidiaMsgExistente(input, msgId) {
+  const file = input.files[0];
+  if (!file) return;
+  const st = document.getElementById('msgs-gerenciar-status');
+  st.style.color = 'var(--text2)'; st.textContent = 'Enviando mídia...';
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ imagem: base64, clienteId: funilState.clienteId }) });
+    await api('/movatak/admin/mensagens-rapidas/' + msgId, { method: 'PATCH', body: JSON.stringify({ midia_url: resp.url }) });
+    st.style.color = 'var(--green)'; st.textContent = '✓ Mídia salva.';
+    await renderMsgsGerenciar();
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  input.value = '';
 }
 
 async function patchMsgRapida(id, campo, valor) {
@@ -2471,6 +2678,34 @@ async function iniciarPaginaFunilAtendimento() {
         <div class="fu-hint" style="margin-top:12px">
           Arraste o lead para outra etapa para mover no CRM. O sistema também tenta aplicar a lista correspondente no WhatsApp via Z-API.
         </div>
+      </div>
+
+      <!-- Painel lateral: mensagem rápida + histórico do lead -->
+      <div id="funil-painel" style="position:fixed;top:0;right:-420px;width:400px;height:100vh;background:var(--bg1);border-left:1px solid var(--border2);z-index:300;display:flex;flex-direction:column;transition:right .25s ease;box-shadow:-4px 0 24px rgba(0,0,0,.45)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+          <div>
+            <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
+            <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+          </div>
+          <button onclick="fecharPainelLead()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:4px 8px">✕</button>
+        </div>
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+          <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid" style="margin-bottom:8px"></div>
+          <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
+            <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Mídia incluída:</div>
+            <div id="painel-midia-el"></div>
+          </div>
+          <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:70px;margin-bottom:8px" placeholder="Mensagem..."></textarea>
+          <div style="display:flex;gap:8px">
+            <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+            <button onclick="reativarFollowupManual(window._painelLeadId)" style="padding:8px 12px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px">+ FU</button>
+          </div>
+          <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:12px 16px">
+          <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico</div>
+          <div id="painel-historico"><div class="fu-hint">Selecione um lead.</div></div>
+        </div>
       </div>`;
   }
   await carregarFunilAtendimento();
@@ -3260,6 +3495,10 @@ async function sincronizarColunaWhatsapp(colunaId) {
     <h3 id="modal-msg-lead-titulo">Enviar mensagem</h3>
     <div class="fu-hint" style="margin-bottom:10px">Clique numa mensagem rápida ou escreva uma personalizada.</div>
     <div id="msgs-rapidas-lead-lista" class="msgs-rapidas-grid"></div>
+    <div id="msg-lead-midia-preview" style="display:none;margin:8px 0 10px">
+      <div style="font-size:12px;color:var(--accent);margin-bottom:4px">📎 Mídia incluída:</div>
+      <div id="msg-lead-midia-el"></div>
+    </div>
     <label class="fu-label">Mensagem personalizada</label>
     <textarea id="msg-lead-texto" class="fu-textarea" style="min-height:90px" placeholder="Digite a mensagem..."></textarea>
     <div id="msg-lead-status" style="font-size:13px;margin-top:8px"></div>
@@ -3280,8 +3519,16 @@ async function sincronizarColunaWhatsapp(colunaId) {
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:flex-start">
       <input type="text" id="msg-nova-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;flex:1;min-width:130px" placeholder="Título/atalho (ex: Proposta)">
       <textarea id="msg-nova-texto" class="fu-textarea" style="min-height:70px;flex:2;min-width:200px" placeholder="Texto da mensagem..."></textarea>
-      <button class="btn-add-small" onclick="adicionarMsgRapida()">Adicionar</button>
     </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <label class="btn-add-small" style="cursor:pointer;padding:7px 12px;font-size:12px">
+        📎 Imagem/Vídeo
+        <input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaNovaMsg(this)">
+      </label>
+      <span id="msg-nova-midia-preview" style="font-size:12px;color:var(--text2)"></span>
+      <input type="hidden" id="msg-nova-midia-url">
+    </div>
+    <button class="btn-add-small" style="margin-top:10px" onclick="adicionarMsgRapida()">Adicionar</button>
     <div id="msgs-gerenciar-status" class="fu-hint" style="margin-top:8px"></div>
   </div>
 </div>
