@@ -2694,6 +2694,10 @@ async function iniciarPaginaFunilAtendimento() {
         <div class="funil-toolbar">
           <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
           <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
+          <div style="display:flex;align-items:center;gap:6px">
+            <button class="btn-cancel" style="padding:9px 14px" onclick="toggleBuscaLead()">🔍 Procurar lead</button>
+            <input id="funil-busca-lead" type="text" placeholder="Nome ou telefone..." style="display:none;background:var(--bg3);border:1px solid var(--accent);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);width:200px;outline:none" oninput="filtrarLeadsKanban(this.value)" onkeydown="if(event.key==='Escape'){this.value='';filtrarLeadsKanban('');toggleBuscaLead();}">
+          </div>
           <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
         </div>
         <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;display:none;align-items:center;gap:12px;flex-wrap:wrap">
@@ -3139,6 +3143,40 @@ async function enviarMensagemKanban() {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao enviar: ' + e.message; }
   } finally {
     if (btn) btn.disabled = false;
+  }
+}
+
+function toggleBuscaLead() {
+  const inp = document.getElementById('funil-busca-lead');
+  if (!inp) return;
+  if (inp.style.display === 'none') {
+    inp.style.display = '';
+    inp.focus();
+  } else {
+    inp.value = '';
+    inp.style.display = 'none';
+    filtrarLeadsKanban('');
+  }
+}
+
+function filtrarLeadsKanban(termo) {
+  const q = String(termo || '').toLowerCase().trim();
+  document.querySelectorAll('.funil-card').forEach(card => {
+    if (!q) {
+      card.style.display = '';
+      card.style.outline = '';
+      return;
+    }
+    const nome = String(card.querySelector('strong')?.textContent || '').toLowerCase();
+    const fone = String(card.querySelector('.funil-card-phone')?.textContent || '').toLowerCase();
+    const match = nome.includes(q) || fone.includes(q);
+    card.style.display = match ? '' : 'none';
+    card.style.outline = match ? '2px solid var(--accent)' : '';
+  });
+  // Scroll para o primeiro resultado
+  if (q) {
+    const primeiro = document.querySelector('.funil-card[style*="outline"]');
+    if (primeiro) primeiro.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 }
 
