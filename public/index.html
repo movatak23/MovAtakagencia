@@ -1124,6 +1124,49 @@ async function iniciarEnvioLote() {
 // ── Painel lateral de mensagem + histórico ─────────────────
 window._painelLeadId = null;
 
+function painelTab(tab) {
+  const conv = document.getElementById('painel-body-conversa');
+  const hist = document.getElementById('painel-body-historico');
+  const tConv = document.getElementById('painel-tab-conversa');
+  const tHist = document.getElementById('painel-tab-historico');
+  if (tab === 'conversa') {
+    conv.style.display = ''; hist.style.display = 'none';
+    tConv.style.borderBottomColor = 'var(--accent)'; tConv.style.color = 'var(--text)';
+    tHist.style.borderBottomColor = 'transparent'; tHist.style.color = '#a0aec0';
+  } else {
+    conv.style.display = 'none'; hist.style.display = '';
+    tHist.style.borderBottomColor = 'var(--accent)'; tHist.style.color = 'var(--text)';
+    tConv.style.borderBottomColor = 'transparent'; tConv.style.color = '#a0aec0';
+  }
+}
+
+function renderConversaPainel(msgs) {
+  const box = document.getElementById('painel-conversa');
+  if (!msgs || !msgs.length) {
+    box.innerHTML = '<div style="font-size:12px;color:#666;text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
+    return;
+  }
+  box.innerHTML = msgs.map(m => {
+    const saida = m.direcao === 'saida';
+    const hora = new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const midiaHtml = m.midia_url
+      ? (/\.(mp4|webm|mov)/i.test(m.midia_url)
+          ? `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`
+          : `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`)
+      : '';
+    const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
+    return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px">
+      <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px">
+        ${midiaHtml}
+        ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
+        <div style="font-size:10px;color:${saida ? '#93c5fd' : '#888'};margin-top:3px;text-align:right">${hora}</div>
+      </div>
+    </div>`;
+  }).join('');
+  // Scroll to bottom
+  box.scrollTop = box.scrollHeight;
+}
+
 async function abrirPainelLead(leadId, nomeAbrev) {
   window._painelLeadId = leadId;
   document.getElementById('painel-lead-nome').textContent = nomeAbrev || 'Lead';
@@ -1138,25 +1181,27 @@ async function abrirPainelLead(leadId, nomeAbrev) {
 
   const painel = document.getElementById('funil-painel');
   if (painel) painel.style.right = '0';
+  painelTab('conversa');
 
-  // Quick messages
-  await carregarMsgsRapidas();
+  // Conversa + Histórico em paralelo
+  try {
+    const [convData, histData] = await Promise.all([
+      api('/movatak/admin/leads/' + leadId + '/conversas'),
+      api('/movatak/admin/leads/' + leadId + '/historico')
+    ]);
+    const lead = histData.lead || {};
+    document.getElementById('painel-lead-nome').textContent = lead.nome || nomeAbrev || 'Lead';
+    document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
+    renderConversaPainel(convData);
+    renderHistoricoPainel(histData);
+  } catch (e) {
+    document.getElementById('painel-conversa').innerHTML = '<div style="font-size:12px;color:red">Erro: ' + e.message + '</div>';
+  }
   const grid = document.getElementById('painel-msgs-rapidas-grid');
   if (grid) {
     grid.innerHTML = msgsRapidasCache.length
       ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
       : '<span class="fu-hint" style="font-size:11px">Sem mensagens rápidas cadastradas.</span>';
-  }
-
-  // Histórico
-  try {
-    const data = await api('/movatak/admin/leads/' + leadId + '/historico');
-    const lead = data.lead || {};
-    document.getElementById('painel-lead-nome').textContent = lead.nome || 'Lead sem nome';
-    document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
-    renderHistoricoPainel(data);
-  } catch (e) {
-    document.getElementById('painel-historico').innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro ao carregar histórico.</div>';
   }
 }
 
@@ -2668,7 +2713,7 @@ async function iniciarPaginaFunilAtendimento() {
       </div>
 
       <!-- Painel lateral: mensagem rápida + histórico do lead -->
-      <div id="funil-painel" style="position:fixed;top:0;right:-420px;width:400px;height:100vh;background:var(--bg1);border-left:1px solid var(--border2);z-index:300;display:flex;flex-direction:column;transition:right .25s ease;box-shadow:-4px 0 24px rgba(0,0,0,.45)">
+      <div id="funil-painel" style="position:fixed;top:0;right:-420px;width:400px;height:100vh;background:#1c2030;border-left:1px solid #2a2f3d;z-index:300;display:flex;flex-direction:column;transition:right .25s ease;box-shadow:-6px 0 32px rgba(0,0,0,.7)">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
           <div>
             <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
@@ -2689,9 +2734,19 @@ async function iniciarPaginaFunilAtendimento() {
           </div>
           <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
         </div>
-        <div style="flex:1;overflow-y:auto;padding:12px 16px">
-          <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico</div>
-          <div id="painel-historico"><div class="fu-hint">Selecione um lead.</div></div>
+        <div style="flex:1;overflow-y:auto;padding:0">
+          <!-- Tabs -->
+          <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
+            <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+            <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+          </div>
+          <div id="painel-body-conversa" style="padding:12px 16px;overflow-y:auto;max-height:calc(100vh - 340px)">
+            <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
+          </div>
+          <div id="painel-body-historico" style="padding:12px 16px;display:none;overflow-y:auto;max-height:calc(100vh - 340px)">
+            <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+            <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
+          </div>
         </div>
       </div>`;
   }
