@@ -2029,6 +2029,18 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
+    // Mensagem apagada (revogada) — ignorar para não disparar "Não entendi" no questionário
+    if (body.type === 'revoked' || body.isDeleted || body.revoked) {
+      logDebug('[zapi][ignorado] mensagem apagada/revogada');
+      return;
+    }
+
+    // Notificações de status (leitura, entrega, etc.) — não são mensagens reais
+    if (body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase())) {
+      logDebug('[zapi][ignorado] evento de status: ' + body.type);
+      return;
+    }
+
     if (!instanceId) {
       logDebug('[zapi][ignorado] payload sem instanceId/instance');
       return;
@@ -2978,6 +2990,7 @@ async function garantirEstruturaQuestionario() {
   )`).catch(() => null);
 
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_quest_estado ON movatak_questionario_estado(cliente_id, telefone, status)`).catch(() => null);
+  await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS tentativas_invalidas INTEGER DEFAULT 0`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -3221,12 +3234,37 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
 
     const interp = interpretarResposta(passo, texto);
     if (!interp.ok) {
-      const dica = interp.motivo === 'cep_invalido'
-        ? 'Não consegui ler o CEP. Me envia os 8 números, ex: 50000000.'
-        : 'Não entendi sua resposta.';
-      await enviarMsgQuestionario(cliente, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo), passo.imagem);
+      const tentativas = (estado.tentativas_invalidas || 0) + 1;
+      await query(
+        `UPDATE movatak_questionario_estado SET tentativas_invalidas = $1, atualizado_em = NOW() WHERE id = $2`,
+        [tentativas, estado.id]
+      );
+
+      if (tentativas <= 2) {
+        // Ainda dentro do limite — envia dica e re-pergunta
+        const dica = interp.motivo === 'cep_invalido'
+          ? 'Não consegui ler o CEP. Me envia os 8 números, ex: 50000000.'
+          : `Não entendi sua resposta. (${tentativas}/2)`;
+        await enviarMsgQuestionario(cliente, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo), passo.imagem);
+      } else {
+        // Limite atingido — transfere para vendedor e encerra questionário
+        await enviarMsgQuestionario(cliente, lead.telefone, 'Vou transferir seu atendimento para um dos meus colegas. 😊', null);
+        await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [estado.id]);
+        await atribuirVendedorBalanceado(cliente.id, lead.id).catch(() => null);
+        await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(() => null);
+        await agendarFollowupV2(lead.id, cliente.id, 1, true);
+        await enviarFollowupsPendentesDoLead(lead.id, 1);
+        await registrarEventoLead(lead.id, cliente.id, 'questionario_transferido', 'Lead transferido após 2 respostas inválidas', { passo_idx: estado.passo_idx });
+        console.log(`[questionario][transferido] lead ${lead.id} transferido após ${tentativas} tentativas inválidas`);
+      }
       return;
     }
+
+    // Resposta válida — zera o contador de tentativas inválidas
+    await query(
+      `UPDATE movatak_questionario_estado SET tentativas_invalidas = 0 WHERE id = $1`,
+      [estado.id]
+    );
 
     respostas[passo.id] = interp.valor;
 
