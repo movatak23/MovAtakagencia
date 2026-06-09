@@ -2299,14 +2299,22 @@ function renderFunilAtendimento() {
   }
   const htmlEtapas = colunas.map(col => {
     const leads = col.leads || [];
+    const cor = col.cor || '#6b7280';
     const sync = col.zapi_tag_id
       ? '<span class="funil-sync ok">WhatsApp OK</span>'
       : '<span class="funil-sync pendente">Sem sync</span>';
-    return `<div class="funil-col" data-coluna="${col.id}" ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)" ondrop="funilDrop(event, ${col.id})">
+    return `<div class="funil-col" data-coluna="${col.id}"
+              style="border-top:3px solid ${cor}"
+              ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)" ondrop="funilDrop(event, ${col.id})">
       <div class="funil-col-head">
-        <div>
-          <strong>${escapeHtml(col.nome)}</strong>
-          <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input type="color" value="${cor}" title="Cor da coluna"
+            style="width:18px;height:18px;border:none;background:none;cursor:pointer;padding:0;border-radius:3px;flex-shrink:0"
+            onchange="atualizarCorColuna(${col.id}, this.value, this.closest('.funil-col'))">
+          <div>
+            <strong>${escapeHtml(col.nome)}</strong>
+            <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+          </div>
         </div>
         ${sync}
       </div>
@@ -2415,6 +2423,21 @@ async function reatribuirVendedor(leadId, vendedorId) {
     await carregarFunilAtendimento();
   } catch (e) {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao reatribuir: ' + e.message; }
+  }
+}
+
+async function atualizarCorColuna(colunaId, cor, colEl) {
+  if (colEl) colEl.style.borderTopColor = cor;
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId, {
+      method: 'PATCH',
+      body: JSON.stringify({ cor })
+    });
+    const idx = (funilState.colunas || []).findIndex(c => c.id === colunaId);
+    if (idx >= 0) funilState.colunas[idx].cor = cor;
+  } catch (e) {
+    const status = document.getElementById('funil-status');
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao salvar cor: ' + e.message; }
   }
 }
 
