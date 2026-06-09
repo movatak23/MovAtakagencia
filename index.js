@@ -515,12 +515,13 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
     `SELECT f.*, l.telefone, l.nome, l.etapa,
             c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
             camp.id AS campanha_id, camp.nome AS campanha_nome,
-            t.followup_v2 AS template_followup_v2
+            t.followup_v2 AS template_followup_v2, t.nome AS template_nome_debug
        FROM movatak_followup f
        JOIN movatak_leads l ON l.id = f.lead_id
        JOIN movatak_clientes c ON c.id = f.cliente_id
        LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
-       LEFT JOIN movatak_followup_templates t ON t.id = camp.template_id AND t.ativo = true
+       LEFT JOIN movatak_followup_templates t
+              ON t.id = COALESCE(camp.template_id, l.template_id_origem) AND t.ativo = true
       WHERE f.lead_id = $1
         AND f.status = 'pendente'
         AND f.proximo_envio <= NOW()
@@ -545,6 +546,8 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       const seqKey = 'fu' + (row.sequencia_fu || 1);
       const msgs = fuData[seqKey] || {};
       const msgText = msgs['msg' + row.etapa_seq];
+      const templateFonte = row.template_followup_v2 ? `template:${row.template_nome_debug}` : 'cliente:followup_msgs_v2';
+      console.log(`[imediato][fu] lead=${leadId} campanha=${row.campanha_nome||'—'} fonte=${templateFonte} seq=${seqKey} etapa=${row.etapa_seq}`);
 
       if (!msgText || !String(msgText).trim()) {
         await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
@@ -814,16 +817,17 @@ cron.schedule('*/10 * * * *', async () => {
     await migrarFU1ParaFU2();
 
     const r = await query(
-      `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
-              camp.id AS campanha_id, camp.nome AS campanha_nome,
-              t.followup_v2 AS template_followup_v2
-       FROM movatak_followup f
-       JOIN movatak_leads l ON l.id = f.lead_id
-       JOIN movatak_clientes c ON c.id = f.cliente_id
-       LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
-       LEFT JOIN movatak_followup_templates t ON t.id = camp.template_id AND t.ativo = true
-       WHERE f.status = 'pendente'
-         AND f.proximo_envio <= NOW()`,
+    `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
+            camp.id AS campanha_id, camp.nome AS campanha_nome,
+            t.followup_v2 AS template_followup_v2, t.nome AS template_nome_debug
+     FROM movatak_followup f
+     JOIN movatak_leads l ON l.id = f.lead_id
+     JOIN movatak_clientes c ON c.id = f.cliente_id
+     LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
+     LEFT JOIN movatak_followup_templates t
+            ON t.id = COALESCE(camp.template_id, l.template_id_origem) AND t.ativo = true
+     WHERE f.status = 'pendente'
+       AND f.proximo_envio <= NOW()`,
       []
     );
 
@@ -835,6 +839,8 @@ cron.schedule('*/10 * * * *', async () => {
         const seq_key = 'fu' + (row.sequencia_fu || 1);
         const msgs = fu_data[seq_key] || {};
         const msg_text = msgs['msg' + row.etapa_seq];
+        const templateFonte = row.template_followup_v2 ? `template:${row.template_nome_debug}` : 'cliente:followup_msgs_v2';
+        console.log(`[cron][fu] lead=${row.lead_id} campanha=${row.campanha_nome||'—'} fonte=${templateFonte} seq=${seq_key} etapa=${row.etapa_seq}`);
         
         if (!msg_text || !msg_text.trim()) {
           await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
