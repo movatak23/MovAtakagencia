@@ -3333,7 +3333,7 @@ async function processarQuestionariosParados() {
           if (passo) {
             await enviarMsgQuestionario(
               cliente, lead.telefone,
-              'Ainda quero te ajudar a achar o plano ideal. 😊 Ficou faltando só isso:\n\n' + montarTextoPergunta(passo),
+              '⏰ Ficou faltando só isso:\n\n' + montarTextoPergunta(passo),
               passo.imagem
             );
           }
