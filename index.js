@@ -3931,12 +3931,13 @@ async function garantirEstruturaMensagensRapidas() {
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS midia_url TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS vezes_usado INTEGER DEFAULT 0`).catch(() => null);
 }
 
 app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, midia_url, ordem FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY ordem ASC, id ASC', [req.params.id]);
+    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3985,6 +3986,10 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, re
     }
     registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
+    // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
+    if (texto) {
+      query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE cliente_id=$1 AND texto=$2', [row.cliente_id, texto]).catch(() => null);
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
