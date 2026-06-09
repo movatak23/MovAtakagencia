@@ -1949,8 +1949,9 @@ function vendedorBateComando(vendedor, texto) {
 function textoPareceComandoInterno(texto, comandos, vendedores) {
   const t = String(texto || '').trim();
   if (!t) return false;
-  // Segurança: comandos internos devem começar com #. Isso evita que uma mensagem comum enviada pela equipe seja interpretada como automação.
-  if (!t.startsWith('#')) return false;
+  // Segurança: a mensagem deve conter pelo menos um # para ser interpretada como comando.
+  // Permite que o código apareça em qualquer posição da mensagem (ex: "Fechado! #rebeka").
+  if (!t.includes('#')) return false;
   if (contemComando(t, comandos.followup || [])) return true;
   if (contemComando(t, comandos.convertido || [])) return true;
   if (contemComando(t, comandos.descartar || [])) return true;
@@ -3762,7 +3763,8 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
     const r = await query(
       `SELECT questionario_ativo, questionario_intro, questionario_final,
               questionario_intro_imagem, questionario_final_imagem,
-              questionario_passos, questionario_recomendacao
+              questionario_passos, questionario_recomendacao,
+              acao_arquivar_ao_final, acao_marcar_nao_lido
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -3778,7 +3780,9 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
       passos: r.rows[0].questionario_passos || [],
       recomendacao: r.rows[0].questionario_recomendacao || [],
       planos: rp.rows,
-      cobertura_total: cob.rows[0].total
+      cobertura_total: cob.rows[0].total,
+      acao_arquivar_ao_final: !!r.rows[0].acao_arquivar_ao_final,
+      acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3786,7 +3790,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
 app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
-    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao } = req.body || {};
+    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, acao_arquivar_ao_final, acao_marcar_nao_lido } = req.body || {};
     await query(
       `UPDATE movatak_clientes
           SET questionario_ativo = COALESCE($1, questionario_ativo),
@@ -3795,8 +3799,10 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
               questionario_intro_imagem = $4,
               questionario_final_imagem = $5,
               questionario_passos = $6::jsonb,
-              questionario_recomendacao = $7::jsonb
-        WHERE id = $8`,
+              questionario_recomendacao = $7::jsonb,
+              acao_arquivar_ao_final = COALESCE($8, acao_arquivar_ao_final),
+              acao_marcar_nao_lido = COALESCE($9, acao_marcar_nao_lido)
+        WHERE id = $10`,
       [
         typeof ativo === 'boolean' ? ativo : null,
         intro || null,
@@ -3805,6 +3811,8 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
         final_imagem || null,
         JSON.stringify(Array.isArray(passos) ? passos : []),
         JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
+        typeof acao_arquivar_ao_final === 'boolean' ? acao_arquivar_ao_final : null,
+        typeof acao_marcar_nao_lido === 'boolean' ? acao_marcar_nao_lido : null,
         req.params.id
       ]
     );
