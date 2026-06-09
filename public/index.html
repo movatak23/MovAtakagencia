@@ -1000,6 +1000,127 @@ async function removerPlano(id) {
   catch (e) { const st = document.getElementById('plano-status'); if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao excluir: ' + e.message; } }
 }
 
+// ── Envio em Lote (Kanban) ─────────────────────────────────
+let loteEnviando = false;
+
+function getLeadsSelecionados() {
+  return Array.from(document.querySelectorAll('.funil-lead-check:checked'))
+    .map(el => Number(el.dataset.leadId)).filter(Boolean);
+}
+
+function atualizarSelecaoLote() {
+  const ids = getLeadsSelecionados();
+  const bar = document.getElementById('funil-lote-bar');
+  const count = document.getElementById('funil-lote-count');
+  if (!bar) return;
+  if (ids.length > 0) {
+    bar.style.display = 'flex';
+    if (count) count.textContent = ids.length + ' lead' + (ids.length > 1 ? 's' : '') + ' selecionado' + (ids.length > 1 ? 's' : '');
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function selecionarTodosColuna(colId, checked) {
+  document.querySelectorAll(`.funil-lead-check[data-coluna-id="${colId}"]`).forEach(el => { el.checked = checked; });
+  atualizarSelecaoLote();
+}
+
+function limparSelecaoLote() {
+  document.querySelectorAll('.funil-lead-check').forEach(el => { el.checked = false; });
+  document.querySelectorAll('[data-select-col]').forEach(el => { el.checked = false; });
+  atualizarSelecaoLote();
+}
+
+async function abrirModalLote() {
+  const ids = getLeadsSelecionados();
+  if (!ids.length) return;
+  document.getElementById('modal-lote-titulo').textContent = 'Envio em lote — ' + ids.length + ' lead' + (ids.length > 1 ? 's' : '');
+  document.getElementById('lote-btn-count').textContent = ids.length;
+  document.getElementById('lote-msg-texto').value = '';
+  document.getElementById('lote-status').textContent = '';
+  document.getElementById('lote-progresso').style.display = 'none';
+  document.getElementById('lote-progresso-bar').style.width = '0%';
+
+  await carregarMsgsRapidas();
+  const grid = document.getElementById('msgs-rapidas-lote-grid');
+  grid.innerHTML = msgsRapidasCache.length
+    ? msgsRapidasCache.map(m => `<button onclick="document.getElementById('lote-msg-texto').value=this.dataset.txt" data-txt="${escapeHtml(m.texto)}" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
+    : '';
+
+  const colSel = document.getElementById('lote-mover-coluna');
+  colSel.innerHTML = '<option value="">— não mover —</option>' +
+    (funilState.colunas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+
+  document.getElementById('modal-lote').classList.add('open');
+}
+
+function fecharModalLote() {
+  if (loteEnviando) return;
+  document.getElementById('modal-lote').classList.remove('open');
+}
+
+async function iniciarEnvioLote() {
+  const texto = (document.getElementById('lote-msg-texto').value || '').trim();
+  const st = document.getElementById('lote-status');
+  if (!texto) { st.style.color = 'var(--red)'; st.textContent = 'Escreva ou escolha uma mensagem.'; return; }
+
+  const ids = getLeadsSelecionados();
+  if (!ids.length) { st.style.color = 'var(--red)'; st.textContent = 'Nenhum lead selecionado.'; return; }
+
+  const intervaloMs = (parseInt(document.getElementById('lote-intervalo').value) || 8) * 1000;
+  const moverColunaId = document.getElementById('lote-mover-coluna').value || null;
+
+  loteEnviando = true;
+  const btn = document.getElementById('btn-lote-enviar');
+  btn.disabled = true;
+  document.querySelector('#modal-lote .btn-cancel').textContent = 'Aguarde...';
+  document.getElementById('lote-progresso').style.display = '';
+  st.textContent = '';
+
+  let enviados = 0, erros = 0;
+  const total = ids.length;
+
+  const atualizarProgresso = () => {
+    const pct = Math.round(((enviados + erros) / total) * 100);
+    document.getElementById('lote-progresso-bar').style.width = pct + '%';
+    document.getElementById('lote-progresso-txt').textContent =
+      `Enviando ${enviados + erros}/${total}... (${enviados} ok${erros ? ', ' + erros + ' erro(s)' : ''})`;
+  };
+
+  for (let i = 0; i < ids.length; i++) {
+    atualizarProgresso();
+    try {
+      await api('/movatak/admin/leads/' + ids[i] + '/mensagem-rapida', { method: 'POST', body: JSON.stringify({ texto }) });
+      enviados++;
+    } catch (e) { erros++; console.error('[lote] lead ' + ids[i] + ':', e.message); }
+
+    if (i < ids.length - 1) await new Promise(r => setTimeout(r, intervaloMs));
+  }
+
+  // Mover leads após envio
+  if (moverColunaId) {
+    document.getElementById('lote-progresso-txt').textContent = 'Movendo leads...';
+    for (const leadId of ids) {
+      try {
+        await api('/movatak/admin/leads/' + leadId + '/funil', { method: 'PATCH', body: JSON.stringify({ coluna_id: Number(moverColunaId) }) });
+      } catch (e) { console.error('[lote][mover] lead ' + leadId + ':', e.message); }
+    }
+  }
+
+  loteEnviando = false;
+  btn.disabled = false;
+  document.querySelector('#modal-lote .btn-cancel').textContent = 'Fechar';
+  document.getElementById('lote-progresso-bar').style.width = '100%';
+  document.getElementById('lote-progresso-txt').textContent = `Concluído: ${enviados}/${total} enviados${erros ? ', ' + erros + ' com erro' : ''}.`;
+  st.style.color = erros ? 'var(--amber)' : 'var(--green)';
+  st.textContent = erros
+    ? `✓ ${enviados} enviados com sucesso. ${erros} falharam (veja o console).`
+    : `✓ Todas as ${enviados} mensagens enviadas!`;
+  limparSelecaoLote();
+  await carregarFunilAtendimento();
+}
+
 // ── Mensagens Rápidas do Kanban ────────────────────────────
 let msgRapidaLeadId = null;
 let msgsRapidasCache = [];
@@ -2333,6 +2454,11 @@ async function iniciarPaginaFunilAtendimento() {
           <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
           <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
         </div>
+        <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;display:none;align-items:center;gap:12px;flex-wrap:wrap">
+          <span id="funil-lote-count" style="font-size:13px;color:var(--accent);font-weight:600"></span>
+          <button class="btn-save" style="padding:7px 14px;font-size:12px" onclick="abrirModalLote()">Enviar mensagem em lote</button>
+          <button class="btn-cancel" style="padding:7px 14px;font-size:12px" onclick="limparSelecaoLote()">Cancelar seleção</button>
+        </div>
         <div id="funil-board" class="funil-board">
           <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
         </div>
@@ -2433,6 +2559,9 @@ function renderFunilAtendimento() {
         ${sync}
       </div>
       <div class="funil-col-actions">
+        <label style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none">
+          <input type="checkbox" data-select-col="${col.id}" onchange="selecionarTodosColuna(${col.id}, this.checked)" style="cursor:pointer"> Selecionar todos
+        </label>
         <button onclick="sincronizarColunaWhatsapp(${col.id})">Sincronizar WhatsApp</button>
       </div>
       <div class="funil-cards">
@@ -2581,6 +2710,9 @@ function renderFunilCard(lead, colunaAtualId) {
   const options = (funilState.colunas || []).map(c => `<option value="${c.id}" ${Number(c.id) === Number(colunaAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`).join('');
   return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}" ondragstart="funilDragStart(event, ${lead.id})" ondragend="funilDragEnd(event)">
     <div class="funil-card-top">
+      <input type="checkbox" class="funil-lead-check" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
+        style="margin-right:6px;cursor:pointer;flex-shrink:0"
+        onclick="event.stopPropagation()" onchange="atualizarSelecaoLote()">
       <strong>${escapeHtml(nome)}</strong>${pend}
     </div>
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
@@ -3151,6 +3283,48 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <button class="btn-add-small" onclick="adicionarMsgRapida()">Adicionar</button>
     </div>
     <div id="msgs-gerenciar-status" class="fu-hint" style="margin-top:8px"></div>
+  </div>
+</div>
+<!-- Modal: envio em lote -->
+<div class="modal-overlay" id="modal-lote">
+  <div class="modal" style="max-width:540px">
+    <button class="modal-x" onclick="fecharModalLote()" title="Fechar">✕</button>
+    <h3 id="modal-lote-titulo">Envio em lote</h3>
+    <div class="fu-hint" style="margin-bottom:10px">Selecione uma mensagem rápida ou escreva abaixo. As mensagens serão enviadas com intervalo entre elas para evitar bloqueio.</div>
+    <div id="msgs-rapidas-lote-grid" class="msgs-rapidas-grid" style="margin-bottom:12px"></div>
+    <label class="fu-label">Mensagem</label>
+    <textarea id="lote-msg-texto" class="fu-textarea" style="min-height:90px" placeholder="Digite a mensagem..."></textarea>
+
+    <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap;align-items:center">
+      <div>
+        <label class="fu-label" style="margin-bottom:4px">Intervalo entre mensagens</label>
+        <select id="lote-intervalo" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;width:auto">
+          <option value="5">5 segundos (menor risco, volume baixo)</option>
+          <option value="8" selected>8 segundos (recomendado)</option>
+          <option value="15">15 segundos (mais seguro)</option>
+          <option value="30">30 segundos (máxima segurança)</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:180px">
+        <label class="fu-label" style="margin-bottom:4px">Após enviar, mover para</label>
+        <select id="lote-mover-coluna" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;width:100%">
+          <option value="">— não mover —</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="lote-progresso" style="display:none;margin-top:14px">
+      <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px">
+        <div id="lote-progresso-bar" style="height:100%;background:var(--accent);width:0%;transition:width .3s"></div>
+      </div>
+      <div id="lote-progresso-txt" style="font-size:12px;color:var(--text2)"></div>
+    </div>
+
+    <div id="lote-status" style="font-size:13px;margin-top:10px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharModalLote()">Fechar</button>
+      <button class="btn-save" id="btn-lote-enviar" onclick="iniciarEnvioLote()">Enviar para <span id="lote-btn-count">0</span> leads</button>
+    </div>
   </div>
 </div>
 </body>
