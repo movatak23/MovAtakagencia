@@ -1265,19 +1265,6 @@ async function carregarMsgsRapidas() {
   } catch (e) { msgsRapidasCache = []; }
 }
 
-async function abrirMensagemRapidaLead(leadId, nomeAbrev) {
-  msgRapidaLeadId = leadId;
-  document.getElementById('modal-msg-lead-titulo').textContent = 'Mensagem para: ' + (nomeAbrev || 'Lead');
-  document.getElementById('msg-lead-texto').value = '';
-  document.getElementById('msg-lead-status').textContent = '';
-  await carregarMsgsRapidas();
-  const grid = document.getElementById('msgs-rapidas-lead-lista');
-  grid.innerHTML = msgsRapidasCache.length
-    ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapida(${escapeHtml(String(m.id))})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
-    : '<span class="fu-hint" style="font-size:12px">Nenhuma mensagem rápida cadastrada ainda.</span>';
-  document.getElementById('modal-msg-lead').classList.add('open');
-}
-
 function usarMsgRapida(id) {
   const m = msgsRapidasCache.find(x => x.id === id || String(x.id) === String(id));
   if (!m) return;
