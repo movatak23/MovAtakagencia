@@ -3828,6 +3828,79 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
 
 
 // ============================================================
+// ============================================================
+// API — Mensagens Rápidas (enviadas manualmente do Kanban)
+// ============================================================
+async function garantirEstruturaMensagensRapidas() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_mensagens_rapidas (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    titulo TEXT NOT NULL,
+    texto TEXT NOT NULL,
+    ordem INTEGER DEFAULT 0,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+}
+
+app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaMensagensRapidas();
+    const r = await query('SELECT id, titulo, texto, ordem FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY ordem ASC, id ASC', [req.params.id]);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaMensagensRapidas();
+    const { titulo, texto } = req.body || {};
+    if (!titulo || !texto) return res.status(400).json({ error: 'Título e texto obrigatórios.' });
+    const r = await query('INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto) VALUES ($1,$2,$3) RETURNING id, titulo, texto, ordem', [req.params.id, titulo.trim(), texto.trim()]);
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res) => {
+  try {
+    const { titulo, texto } = req.body || {};
+    await query('UPDATE movatak_mensagens_rapidas SET titulo=COALESCE($1,titulo), texto=COALESCE($2,texto) WHERE id=$3', [titulo||null, texto||null, req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res) => {
+  try {
+    await query('DELETE FROM movatak_mensagens_rapidas WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, res) => {
+  try {
+    const { texto } = req.body || {};
+    if (!texto) return res.status(400).json({ error: 'Texto obrigatório.' });
+    const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
+    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const row = rl.rows[0];
+    await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
+    await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: texto.slice(0, 100) });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/leads/:id/reativar-followup', authMovatak, async (req, res) => {
+  try {
+    const rl = await query('SELECT id, cliente_id, etapa FROM movatak_leads WHERE id=$1', [req.params.id]);
+    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = rl.rows[0];
+    await query(`UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
+    await agendarFollowupV2(lead.id, lead.cliente_id, 1, true);
+    await enviarFollowupsPendentesDoLead(lead.id, 1);
+    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up reativado manualmente pelo kanban', {});
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Funil de Atendimento — Kanban de leads + listas/tags WhatsApp
 // ============================================================
 // Distribui lead para o vendedor com menor número de leads atribuídos.
