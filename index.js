@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.5.2-funil-mensagem-kanban-vendedores-inline';
+const MOVATAK_VERSION = 'v2.5.4-kanban-historico-zap-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1991,6 +1991,61 @@ function extrairTelefonePayload(body) {
   return null;
 }
 
+function extrairTextoPayloadZapi(body) {
+  return (body.text && body.text.message) ? String(body.text.message)
+    : (typeof body.text === 'string') ? String(body.text)
+    : (body.image && body.image.caption) ? String(body.image.caption || '')
+    : (body.video && body.video.caption) ? String(body.video.caption || '')
+    : (body.document && body.document.caption) ? String(body.document.caption || '')
+    : (body.caption ? String(body.caption) : '');
+}
+
+function extrairMidiaPayloadZapi(body) {
+  return (body.image && (body.image.imageUrl || body.image.url)) ||
+    (body.video && (body.video.videoUrl || body.video.url)) ||
+    (body.audio && (body.audio.audioUrl || body.audio.url)) ||
+    (body.document && (body.document.documentUrl || body.document.url)) ||
+    body.fileUrl || body.mediaUrl || null;
+}
+
+async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFallbackRecente = false) {
+  let rl = null;
+
+  if (chatLid) {
+    rl = await query(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND chat_lid = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
+      [clienteId, chatLid]
+    );
+  }
+
+  if ((!rl || !rl.rows.length) && telefone) {
+    rl = await query(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
+      [clienteId, telefone]
+    );
+  }
+
+  if ((!rl || !rl.rows.length) && permitirFallbackRecente) {
+    const fallback = await query(
+      `SELECT * FROM movatak_leads
+        WHERE cliente_id = $1
+          AND etapa IN ('lead','followup','auto_atendimento','negociacao')
+          AND criado_em >= NOW() - INTERVAL '48 hours'
+        ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC
+        LIMIT 2`,
+      [clienteId]
+    );
+    if (fallback.rows.length === 1) rl = { rows: [fallback.rows[0]] };
+  }
+
+  if (rl && rl.rows.length && chatLid && rl.rows[0].chat_lid !== chatLid) {
+    await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, rl.rows[0].id]).catch(() => null);
+    rl.rows[0].chat_lid = chatLid;
+  }
+
+  return rl && rl.rows.length ? rl.rows[0] : null;
+}
+
 app.post('/movatak/webhook/zapi', async (req, res) => {
   res.json({ ok: true }); // responde imediato
 
@@ -2069,9 +2124,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     });
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
-    // ===== MENSAGEM ENVIADA PELO VENDEDOR (fromMe) =====
-    // Busca o lead primeiro pelo chat_lid. Se não encontrar, usa telefone como fallback.
-    // Isso corrige casos em que leads antigos ainda não tinham chat_lid salvo.
+    // ===== MENSAGEM ENVIADA PELO VENDEDOR / PRÓPRIO WHATSAPP (fromMe) =====
+    // Antes o CRM descartava toda mensagem fromMe que não fosse comando interno.
+    // Isso quebrava o histórico do Kanban, porque respostas manuais do vendedor nunca eram gravadas.
+    // Agora a mensagem é registrada primeiro; depois a lógica de comandos continua igual.
     if (body.fromMe) {
       logDebug('[zapi][fromMe] recebido', JSON.stringify({ texto, chatLid, telefone }));
 
@@ -2080,55 +2136,25 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id]
       );
 
-      if (!textoPareceComandoInterno(texto, comandos, rvPre.rows)) {
-        logDebug('[zapi][fromMe] mensagem enviada sem comando interno — ignorada pelo CRM');
+      const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows);
+      const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatLid, ehComandoInterno);
+
+      if (!leadFromMe) {
+        console.log('[zapi][fromMe] lead nao encontrado para registrar mensagem/comando', JSON.stringify({ chatLid, telefone, ehComandoInterno }));
         return;
       }
 
-      let rl;
-
-      if (chatLid) {
-        rl = await query(
-          'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND chat_lid = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
-          [cliente.id, chatLid]
-        );
+      const midiaFromMe = extrairMidiaPayloadZapi(body);
+      if ((texto && String(texto).trim()) || midiaFromMe) {
+        await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe).catch(() => null);
       }
 
-      if ((!rl || !rl.rows.length) && telefone) {
-        rl = await query(
-          'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
-          [cliente.id, telefone]
-        );
+      if (!ehComandoInterno) {
+        logDebug('[zapi][fromMe] mensagem normal registrada no histórico do Kanban');
+        return;
       }
 
-      if (!rl || !rl.rows.length) {
-        // Fallback controlado: se houver exatamente um lead aberto recente sem chat_lid, atribui o comando a ele.
-        // Isso cobre casos em que a Z-API muda/omite o chatLid do evento fromMe, sem abrir brecha para atribuir errado em massa.
-        const fallback = await query(
-          `SELECT * FROM movatak_leads
-            WHERE cliente_id = $1
-              AND etapa IN ('lead','followup')
-              AND criado_em >= NOW() - INTERVAL '48 hours'
-            ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC
-            LIMIT 2`,
-          [cliente.id]
-        );
-        if (fallback.rows.length === 1) {
-          rl = { rows: [fallback.rows[0]] };
-          console.log('[zapi] comando associado por fallback seguro ao unico lead aberto recente -> lead ' + fallback.rows[0].id);
-        } else {
-          console.log('[zapi] comando ignorado — lead nao encontrado para chatLid ' + (chatLid || 'sem-chatLid') + ' telefone ' + (telefone || 'sem-telefone') + ' fallback_abertos=' + fallback.rows.length);
-          return;
-        }
-      }
-
-      const lead = rl.rows[0];
-
-      // Se encontrou pelo telefone, já grava o chat_lid para os próximos comandos funcionarem direto.
-      if (chatLid && lead.chat_lid !== chatLid) {
-        await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, lead.id]);
-        lead.chat_lid = chatLid;
-      }
+      const lead = leadFromMe;
 
       // -- Comando: vendedor especifico (conversao atribuida) --
       const rv = { rows: rvPre.rows };
@@ -2210,14 +2236,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
-      // Evita poluir o log com mensagens normais enviadas pelo próprio WhatsApp
-      // conectado, como avisos de rastreio, pós-venda e respostas manuais.
-      if (texto && texto.trim().startsWith('#')) {
-        console.log('[zapi][fromMe] mensagem do vendedor sem comando reconhecido:', texto || '(sem texto)');
-      } else {
-        logDebug('[zapi][fromMe] mensagem enviada sem comando interno — ignorada pelo CRM');
-      }
-      return; // mensagem do vendedor sem comando reconhecido
+      return;
     }
 
     // ===== MENSAGEM RECEBIDA DO LEAD =====
@@ -2329,6 +2348,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id, telefone, body.senderName || null, chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
       );
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
+      // Registra também a primeira mensagem do lead que criou o atendimento.
+      // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
+      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', extrairMidiaPayloadZapi(body)).catch(() => null);
 
       if (cliente.questionario_ativo) {
         const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid };
@@ -4055,6 +4077,34 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, re
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
+// Alias usado pelo Kanban. Mantém compatibilidade com telas que chamam /mensagem-kanban
+// em vez de /mensagem-rapida.
+app.post('/movatak/admin/leads/:id/mensagem-kanban', authMovatak, async (req, res) => {
+  try {
+    const { texto, midia_url } = req.body || {};
+    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
+    const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
+    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const row = rl.rows[0];
+
+    if (midia_url) {
+      const tipo = tipoMidia(midia_url);
+      if (tipo === 'video') {
+        await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+      } else {
+        await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+      }
+    } else {
+      await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
+    }
+
+    await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null).catch(() => null);
+    await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual_kanban', 'Mensagem enviada manualmente pelo Kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 
 app.post('/movatak/admin/leads/:id/reativar-followup', authMovatak, async (req, res) => {
   try {
