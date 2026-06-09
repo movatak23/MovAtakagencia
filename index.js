@@ -2231,17 +2231,17 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Gravar mensagem recebida na conversa (se lead existe)
-    if (lead) {
-      registrarConversa(lead.id, cliente.id, 'entrada', texto, null).catch(() => null);
-    }
-
     // Buscar lead pelo telefone
     const rl = await query(
       'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
       [cliente.id, telefone]
     );
     const lead = rl.rows[0] || null;
+
+    // Gravar mensagem recebida na conversa (agora que o lead está disponível)
+    if (lead && texto) {
+      registrarConversa(lead.id, cliente.id, 'entrada', texto, null).catch(() => null);
+    }
 
     // ===== QUESTIONÁRIO EM ANDAMENTO (venda consultiva) =====
     // Se o lead está respondendo um questionário ativo, a mensagem é tratada
@@ -2800,23 +2800,35 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
       const row = rl.rows[0];
       const phone = String(row.telefone || '').replace(/\D/g, '');
       try {
-        const url = `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/chat-messages/${phone}`;
-        const resp = await axios.get(url, {
-          headers: { 'Client-Token': row.zapi_client_token || '' },
-          params: { page: 0, pageSize: 100 },
-          timeout: 6000
-        });
+        // Z-API: tenta buscar histórico do chat (disponível apenas na sessão ativa)
+        const endpoints = [
+          `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/chat-messages/${phone}`,
+          `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/messages?phone=${phone}&page=0&pageSize=100`,
+          `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/last-messages?phone=${phone}&qtd=100`
+        ];
+        let resp = null;
+        for (const url of endpoints) {
+          try {
+            resp = await axios.get(url, {
+              headers: { 'Client-Token': row.zapi_client_token || '' },
+              timeout: 5000
+            });
+            if (resp.data && (Array.isArray(resp.data) || Array.isArray(resp.data?.messages) || Array.isArray(resp.data?.value))) break;
+          } catch (e2) { /* tenta próximo */ }
+        }
+        if (!resp) throw new Error('Nenhum endpoint respondeu');
         const msgs = Array.isArray(resp.data) ? resp.data
           : Array.isArray(resp.data?.messages) ? resp.data.messages
           : Array.isArray(resp.data?.value) ? resp.data.value : [];
+        console.log(`[conversas][zapi] ${msgs.length} msgs para lead ${req.params.id}`);
         zapiMsgs = msgs.map(m => ({
           id: 'zapi_' + (m.messageId || m.id || Math.random()),
           direcao: m.fromMe ? 'saida' : 'entrada',
           conteudo: m.text?.message || m.body || m.caption || m.text || null,
           midia_url: m.image?.imageUrl || m.video?.videoUrl || m.audio?.audioUrl || null,
-          criado_em: m.momentsAgo
-            ? new Date(Date.now() - m.momentsAgo * 1000).toISOString()
-            : (m.timestamp ? new Date(m.timestamp * 1000).toISOString() : null),
+          criado_em: m.timestamp
+            ? new Date(m.timestamp * 1000).toISOString()
+            : (m.momentsAgo ? new Date(Date.now() - m.momentsAgo * 1000).toISOString() : null),
           fonte: 'zapi'
         })).filter(m => m.criado_em && (m.conteudo || m.midia_url));
       } catch (e) {
