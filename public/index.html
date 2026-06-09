@@ -296,6 +296,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     </div>
     <div class="header-right">
       <span id="header-status" style="font-size:12px;color:var(--text2)"></span>
+      <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
       <button class="btn-sair" onclick="abrirReset()" style="border-color:var(--amber);color:var(--amber)">Reset lead</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
@@ -997,6 +998,117 @@ async function removerPlano(id) {
   if (!confirm('Excluir este plano?')) return;
   try { await api('/movatak/admin/planos/' + id, { method: 'DELETE' }); carregarPlanos(planosClienteId); }
   catch (e) { const st = document.getElementById('plano-status'); if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao excluir: ' + e.message; } }
+}
+
+// ── Mensagens Rápidas do Kanban ────────────────────────────
+let msgRapidaLeadId = null;
+let msgsRapidasCache = [];
+
+async function carregarMsgsRapidas() {
+  if (!funilState.clienteId) return;
+  try {
+    msgsRapidasCache = await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas');
+  } catch (e) { msgsRapidasCache = []; }
+}
+
+async function abrirMensagemRapidaLead(leadId, nomeAbrev) {
+  msgRapidaLeadId = leadId;
+  document.getElementById('modal-msg-lead-titulo').textContent = 'Mensagem para: ' + (nomeAbrev || 'Lead');
+  document.getElementById('msg-lead-texto').value = '';
+  document.getElementById('msg-lead-status').textContent = '';
+  await carregarMsgsRapidas();
+  const grid = document.getElementById('msgs-rapidas-lead-lista');
+  grid.innerHTML = msgsRapidasCache.length
+    ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapida(${escapeHtml(String(m.id))})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
+    : '<span class="fu-hint" style="font-size:12px">Nenhuma mensagem rápida cadastrada ainda.</span>';
+  document.getElementById('modal-msg-lead').classList.add('open');
+}
+
+function usarMsgRapida(id) {
+  const m = msgsRapidasCache.find(x => x.id === id || String(x.id) === String(id));
+  if (m) document.getElementById('msg-lead-texto').value = m.texto;
+}
+
+function fecharMensagemRapidaLead() {
+  document.getElementById('modal-msg-lead').classList.remove('open');
+  msgRapidaLeadId = null;
+}
+
+async function enviarMensagemRapidaLead() {
+  const texto = (document.getElementById('msg-lead-texto').value || '').trim();
+  const st = document.getElementById('msg-lead-status');
+  if (!texto) { st.style.color = 'var(--red)'; st.textContent = 'Escreva ou escolha uma mensagem.'; return; }
+  if (!msgRapidaLeadId) return;
+  const btn = document.querySelector('#modal-msg-lead .btn-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try {
+    await api('/movatak/admin/leads/' + msgRapidaLeadId + '/mensagem-rapida', { method: 'POST', body: JSON.stringify({ texto }) });
+    st.style.color = 'var(--green)'; st.textContent = '✓ Mensagem enviada!';
+    document.getElementById('msg-lead-texto').value = '';
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Enviar'; } }
+}
+
+async function reativarFollowupManual(leadId) {
+  const st = document.getElementById('funil-status');
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Reativando follow-up...'; }
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/reativar-followup', { method: 'POST', body: '{}' });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Follow-up reativado. FU1 enviado.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  }
+}
+
+async function abrirGerenciarMsgsRapidas() {
+  document.getElementById('msgs-gerenciar-status').textContent = '';
+  document.getElementById('modal-gerenciar-msgs').classList.add('open');
+  await renderMsgsGerenciar();
+}
+
+function fecharGerenciarMsgsRapidas() {
+  document.getElementById('modal-gerenciar-msgs').classList.remove('open');
+}
+
+async function renderMsgsGerenciar() {
+  const box = document.getElementById('msgs-rapidas-lista');
+  box.innerHTML = '<div class="fu-hint">Carregando...</div>';
+  await carregarMsgsRapidas();
+  if (!msgsRapidasCache.length) { box.innerHTML = '<div class="fu-hint">Nenhuma mensagem cadastrada ainda.</div>'; return; }
+  box.innerHTML = msgsRapidasCache.map(m => `
+    <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+      <div style="flex:1">
+        <input class="fu-textarea" style="min-height:auto;padding:7px 10px;resize:none;margin-bottom:4px;width:100%" value="${escapeHtml(m.titulo)}" onchange="patchMsgRapida(${m.id},'titulo',this.value)">
+        <textarea class="fu-textarea" style="min-height:60px;width:100%" onchange="patchMsgRapida(${m.id},'texto',this.value)">${escapeHtml(m.texto)}</textarea>
+      </div>
+      <button class="btn-remove" onclick="removerMsgRapida(${m.id})">×</button>
+    </div>`).join('');
+}
+
+async function adicionarMsgRapida() {
+  const titulo = document.getElementById('msg-nova-titulo').value.trim();
+  const texto = document.getElementById('msg-nova-texto').value.trim();
+  const st = document.getElementById('msgs-gerenciar-status');
+  if (!titulo || !texto) { st.style.color='var(--red)'; st.textContent='Preencha título e texto.'; return; }
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas', { method: 'POST', body: JSON.stringify({ titulo, texto }) });
+    document.getElementById('msg-nova-titulo').value = '';
+    document.getElementById('msg-nova-texto').value = '';
+    st.style.color = 'var(--green)'; st.textContent = 'Mensagem adicionada.';
+    await renderMsgsGerenciar();
+  } catch (e) { st.style.color='var(--red)'; st.textContent='Erro: '+e.message; }
+}
+
+async function patchMsgRapida(id, campo, valor) {
+  try { await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'PATCH', body: JSON.stringify({ [campo]: valor }) }); }
+  catch (e) { const st=document.getElementById('msgs-gerenciar-status'); if(st){st.style.color='var(--red)';st.textContent='Erro ao salvar: '+e.message;} }
+}
+
+async function removerMsgRapida(id) {
+  if (!confirm('Remover esta mensagem?')) return;
+  try { await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'DELETE' }); await renderMsgsGerenciar(); }
+  catch (e) { const st=document.getElementById('msgs-gerenciar-status'); if(st){st.style.color='var(--red)';st.textContent='Erro: '+e.message;} }
 }
 
 function fecharModal() {
@@ -2196,6 +2308,8 @@ async function iniciarPaginaFunilAtendimento() {
   if (!id) return;
 
   funilState = { clienteId: id, clienteNome: nome, colunas: [] };
+  const btnMsgs = document.getElementById('btn-msgs-rapidas');
+  if (btnMsgs) btnMsgs.style.display = '';
   const headerTitle = document.querySelector('.header-title');
   const headerSub = document.querySelector('.header-sub');
   if (headerTitle) headerTitle.textContent = 'Funil de Atendimento';
@@ -2395,8 +2509,8 @@ function renderFunilCardVendedor(lead, vendedorAtualId) {
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
     ${plano}${etapa}
     <div class="funil-card-actions">
-      <button onclick="abrirMensagemKanban(${lead.id})">Mensagem</button>
-      <button onclick="abrirWhatsLead('${String(lead.telefone || '').replace(/'/g, '')}')">WhatsApp</button>
+      <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
+      <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
       <select onchange="reatribuirVendedor(${lead.id},this.value)">${opts}</select>
     </div>
   </div>`;
@@ -2473,8 +2587,8 @@ function renderFunilCard(lead, colunaAtualId) {
     ${plano}${vendedor}
     <div class="funil-card-line">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
     <div class="funil-card-actions">
-      <button onclick="abrirMensagemKanban(${lead.id})">Mensagem</button>
-      <button onclick="abrirWhatsLead('${String(lead.telefone || '').replace(/'/g, '')}')">WhatsApp</button>
+      <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
+      <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
       <select onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
     </div>
   </div>`;
@@ -2999,6 +3113,44 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <button class="btn-cancel" onclick="fecharReset()">Cancelar</button>
       <button class="btn-save" id="btn-reset-go" onclick="executarReset()" style="background:var(--amber)">Resetar lead</button>
     </div>
+  </div>
+</div>
+<style>
+.msgs-rapidas-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.msgs-rapidas-grid button{padding:7px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer;text-align:left;flex-shrink:0;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msgs-rapidas-grid button:hover{border-color:var(--accent);color:var(--accent)}
+</style>
+
+<!-- Modal: enviar mensagem rápida a um lead -->
+<div class="modal-overlay" id="modal-msg-lead">
+  <div class="modal" style="max-width:500px">
+    <button class="modal-x" onclick="fecharMensagemRapidaLead()" title="Fechar">✕</button>
+    <h3 id="modal-msg-lead-titulo">Enviar mensagem</h3>
+    <div class="fu-hint" style="margin-bottom:10px">Clique numa mensagem rápida ou escreva uma personalizada.</div>
+    <div id="msgs-rapidas-lead-lista" class="msgs-rapidas-grid"></div>
+    <label class="fu-label">Mensagem personalizada</label>
+    <textarea id="msg-lead-texto" class="fu-textarea" style="min-height:90px" placeholder="Digite a mensagem..."></textarea>
+    <div id="msg-lead-status" style="font-size:13px;margin-top:8px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharMensagemRapidaLead()">Fechar</button>
+      <button class="btn-save" onclick="enviarMensagemRapidaLead()">Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: gerenciar cadastro de mensagens rápidas -->
+<div class="modal-overlay" id="modal-gerenciar-msgs">
+  <div class="modal" style="max-width:560px">
+    <button class="modal-x" onclick="fecharGerenciarMsgsRapidas()" title="Fechar">✕</button>
+    <h3>Mensagens Rápidas</h3>
+    <div class="fu-hint" style="margin-bottom:12px">Mensagens para disparar do kanban com um clique.</div>
+    <div id="msgs-rapidas-lista"></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:flex-start">
+      <input type="text" id="msg-nova-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;flex:1;min-width:130px" placeholder="Título/atalho (ex: Proposta)">
+      <textarea id="msg-nova-texto" class="fu-textarea" style="min-height:70px;flex:2;min-width:200px" placeholder="Texto da mensagem..."></textarea>
+      <button class="btn-add-small" onclick="adicionarMsgRapida()">Adicionar</button>
+    </div>
+    <div id="msgs-gerenciar-status" class="fu-hint" style="margin-top:8px"></div>
   </div>
 </div>
 </body>
