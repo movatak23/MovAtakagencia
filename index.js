@@ -4143,16 +4143,17 @@ app.post('/movatak/admin/clientes/:id/funil/colunas', authMovatak, async (req, r
 app.patch('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaFunil();
-    const { nome, ordem, ativo } = req.body || {};
+    const { nome, ordem, ativo, cor } = req.body || {};
     const r = await query(
       `UPDATE movatak_funil_colunas
           SET nome = COALESCE($1, nome),
               ordem = COALESCE($2, ordem),
               ativo = COALESCE($3, ativo),
+              cor = CASE WHEN $5::text IS NULL THEN cor ELSE $5 END,
               atualizado_em = NOW()
         WHERE id = $4
         RETURNING *`,
-      [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id]
+      [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id, cor !== undefined ? (cor || null) : null]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
