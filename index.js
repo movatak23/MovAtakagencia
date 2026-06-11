@@ -1964,6 +1964,7 @@ function textoPareceComandoInterno(texto, comandos, vendedores) {
   if (contemComando(t, comandos.convertido || [])) return true;
   if (contemComando(t, comandos.descartar || [])) return true;
   if (contemComando(t, comandos.desfazer || [])) return true;
+  if (contemComando(t, comandos.pausar || [])) return true;
   return Array.isArray(vendedores) && vendedores.some(v => vendedorBateComando(v, t));
 }
 
@@ -2236,6 +2237,26 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
+      // -- Comando: pausar automação --
+      if (contemComando(texto, comandos.pausar)) {
+        await query(
+          `UPDATE movatak_leads SET automacao_pausada = true, atualizado_em = NOW() WHERE id = $1`,
+          [lead.id]
+        );
+        await query(
+          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+          [lead.id]
+        );
+        await query(
+          `UPDATE movatak_questionario_estado SET status = 'cancelado', atualizado_em = NOW()
+           WHERE lead_id = $1 AND status = 'em_andamento'`,
+          [lead.id]
+        ).catch(() => null);
+        await registrarEventoLead(lead.id, cliente.id, 'automacao_pausada', 'Automação pausada manualmente por comando', { comando: texto });
+        console.log(`[zapi] Automação pausada -> lead ${lead.id}`);
+        return;
+      }
+
       return;
     }
 
@@ -2250,12 +2271,23 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Buscar lead pelo telefone (com fallback por chatLid para tolerar variações de formato)
-    const lead = await localizarLeadPorPayload(cliente.id, telefone, chatLid);
+    // Buscar lead pelo telefone
+    const rl = await query(
+      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
+      [cliente.id, telefone]
+    );
+    const lead = rl.rows[0] || null;
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível)
     if (lead && texto) {
       registrarConversa(lead.id, cliente.id, 'entrada', texto, null).catch(() => null);
+    }
+
+    // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
+    // Retomar: vendedor usa o comando de followup ou convertido para reativar.
+    if (lead && lead.automacao_pausada) {
+      logDebug('[zapi][lead] automacao pausada — mensagem gravada, automacao ignorada');
+      return;
     }
 
     // ===== QUESTIONÁRIO EM ANDAMENTO (venda consultiva) =====
@@ -2264,11 +2296,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && cliente.questionario_ativo) {
       const estQ = await query(
         `SELECT * FROM movatak_questionario_estado
-          WHERE cliente_id = $1
-            AND (lead_id = $2 OR telefone = $3)
-            AND status = 'em_andamento'
+          WHERE cliente_id = $1 AND telefone = $2 AND status = 'em_andamento'
           ORDER BY id DESC LIMIT 1`,
-        [cliente.id, lead.id, lead.telefone]
+        [cliente.id, telefone]
       ).catch(() => ({ rows: [] }));
       if (estQ.rows.length) {
         await processarRespostaQuestionario(cliente, lead, estQ.rows[0], texto);
@@ -2300,7 +2330,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         }
         await query(
           `UPDATE movatak_leads
-             SET etapa = 'followup', nome = COALESCE($1, nome), atualizado_em = NOW()
+             SET etapa = 'followup', nome = COALESCE($1, nome), automacao_pausada = false, atualizado_em = NOW()
            WHERE id = $2`,
           [body.senderName || null, lead.id]
         );
@@ -2385,7 +2415,8 @@ function extrairComandosDoBody(body) {
     followup: normalizarListaComandos(src.followup || src.comando_followup || src.comandos_followup),
     convertido: normalizarListaComandos(src.convertido || src.comando_convertido || src.comando_convertido_venda || src.vendido || src.comando_vendido),
     descartar: normalizarListaComandos(src.descartar || src.comando_descartar || src.descartado || src.comando_descartado),
-    desfazer: normalizarListaComandos(src.desfazer || src.comando_desfazer || src.estornar || src.comando_estornar)
+    desfazer: normalizarListaComandos(src.desfazer || src.comando_desfazer || src.estornar || src.comando_estornar),
+    pausar: normalizarListaComandos(src.pausar || src.comando_pausar)
   };
 }
 
@@ -2410,7 +2441,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
     // Validação: nenhum comando pode se repetir entre os campos
     const todos = [
       ...comandos.followup, ...comandos.convertido,
-      ...comandos.descartar, ...comandos.desfazer
+      ...comandos.descartar, ...comandos.desfazer, ...(comandos.pausar || [])
     ];
     const duplicado = todos.find((c, i) => todos.indexOf(c) !== i);
     if (duplicado) {
@@ -2456,7 +2487,7 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
       const cmds = rc.rows[0] && rc.rows[0].comandos ? rc.rows[0].comandos : {};
       const todosCliente = [
         ...(cmds.followup || []), ...(cmds.convertido || []),
-        ...(cmds.descartar || []), ...(cmds.desfazer || [])
+        ...(cmds.descartar || []), ...(cmds.desfazer || []), ...(cmds.pausar || [])
       ].map(c => String(c).trim().toLowerCase());
       if (todosCliente.includes(comando)) {
         return res.status(400).json({ error: 'Esse comando ja esta em uso na automacao do cliente.' });
@@ -3093,6 +3124,7 @@ async function garantirEstruturaQuestionario() {
 
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_quest_estado ON movatak_questionario_estado(cliente_id, telefone, status)`).catch(() => null);
   await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS tentativas_invalidas INTEGER DEFAULT 0`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -3349,7 +3381,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
       await query(
         `UPDATE movatak_questionario_estado SET tentativas_invalidas = $1, atualizado_em = NOW() WHERE id = $2`,
         [tentativas, estado.id]
-      ).catch(() => null);
+      );
 
       if (tentativas <= 2) {
         // Ainda dentro do limite — envia dica e re-pergunta
