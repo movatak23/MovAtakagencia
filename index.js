@@ -2250,12 +2250,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Buscar lead pelo telefone
-    const rl = await query(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
-      [cliente.id, telefone]
-    );
-    const lead = rl.rows[0] || null;
+    // Buscar lead pelo telefone (com fallback por chatLid para tolerar variações de formato)
+    const lead = await localizarLeadPorPayload(cliente.id, telefone, chatLid);
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível)
     if (lead && texto) {
@@ -2268,9 +2264,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && cliente.questionario_ativo) {
       const estQ = await query(
         `SELECT * FROM movatak_questionario_estado
-          WHERE cliente_id = $1 AND telefone = $2 AND status = 'em_andamento'
+          WHERE cliente_id = $1
+            AND (lead_id = $2 OR telefone = $3)
+            AND status = 'em_andamento'
           ORDER BY id DESC LIMIT 1`,
-        [cliente.id, telefone]
+        [cliente.id, lead.id, lead.telefone]
       ).catch(() => ({ rows: [] }));
       if (estQ.rows.length) {
         await processarRespostaQuestionario(cliente, lead, estQ.rows[0], texto);
@@ -3351,7 +3349,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
       await query(
         `UPDATE movatak_questionario_estado SET tentativas_invalidas = $1, atualizado_em = NOW() WHERE id = $2`,
         [tentativas, estado.id]
-      );
+      ).catch(() => null);
 
       if (tentativas <= 2) {
         // Ainda dentro do limite — envia dica e re-pergunta
