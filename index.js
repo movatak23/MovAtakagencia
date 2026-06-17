@@ -2530,7 +2530,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
       await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', extrairMidiaPayloadZapi(body)).catch(() => null);
 
-      if (cliente.questionario_ativo) {
+      // O questionário dispara se o cliente tem questionário ativo E a campanha
+      // de origem permite (campanha sem flag ou flag true). Campanha com
+      // questionario_ativo=false (ex: DTF Têxtil) manda o lead direto pro follow-up.
+      const campanhaPermiteQuest = !campanhaDetectada || campanhaDetectada.questionario_ativo !== false;
+      if (cliente.questionario_ativo && campanhaPermiteQuest) {
         const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid };
         await iniciarQuestionario(cliente, leadObj);
         console.log(`[zapi] Novo lead + questionario iniciado -> ${telefone} (${cliente.nome})`);
@@ -3214,6 +3218,7 @@ async function garantirEstruturaCampanhasTemplates() {
     ADD COLUMN IF NOT EXISTS investimento_tipo TEXT DEFAULT 'diario',
     ADD COLUMN IF NOT EXISTS investimento_valor NUMERIC,
     ADD COLUMN IF NOT EXISTS template_id INTEGER,
+    ADD COLUMN IF NOT EXISTS questionario_ativo BOOLEAN DEFAULT true,
     ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
     ADD COLUMN IF NOT EXISTS excluida_em TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
@@ -3728,7 +3733,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
             WHERE c.cliente_id = $1
               AND c.excluida_em IS NULL
         )
-        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em,
+        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.criado_em, c.atualizado_em,
               t.nome AS template_nome,
               c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
               (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
@@ -3761,7 +3766,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
 app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
     const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
@@ -3771,9 +3776,9 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
     // Observação: quando isso acontece, a atribuição exata por campanha fica compartilhada pelo gatilho.
     const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
     const r = await query(
-      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`,
-      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId]
+      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, ativo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true) RETURNING *`,
+      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId, typeof questionario_ativo === 'boolean' ? questionario_ativo : true]
     );
     res.json(r.rows[0]);
   } catch (e) {
@@ -3786,7 +3791,7 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
 app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo } = req.body || {};
     const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
     const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
     const templateDbId = template_id === undefined ? undefined : await resolverTemplateCampanha(null, template_id);
@@ -3799,9 +3804,10 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
               investimento_tipo = COALESCE($4, investimento_tipo),
               template_id = CASE WHEN $5::text IS NULL THEN template_id ELSE $5::int END,
               ativo = COALESCE($6, ativo),
+              questionario_ativo = COALESCE($8, questionario_ativo),
               atualizado_em = NOW()
         WHERE id = $7 RETURNING *`,
-      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id]
+      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
     res.json(r.rows[0]);
@@ -4643,6 +4649,44 @@ app.patch('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaFunil();
+    const colId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(colId)) return res.status(400).json({ error: 'ID inválido.' });
+
+    const cr = await query('SELECT id, cliente_id, nome, etapa_sistema FROM movatak_funil_colunas WHERE id=$1', [colId]);
+    if (!cr.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    const col = cr.rows[0];
+
+    // Colunas de sistema não podem ser excluídas (são usadas pelo motor do funil).
+    const slugsSistema = ['lead', 'auto_atendimento', 'followup', 'negociacao', 'cliente', 'descartado'];
+    if (col.etapa_sistema && slugsSistema.includes(col.etapa_sistema)) {
+      return res.status(400).json({ error: 'Esta é uma etapa padrão do sistema e não pode ser excluída.' });
+    }
+
+    // Realoca os leads desta coluna para a etapa "Novo contato" do cliente.
+    const destino = await query(
+      `SELECT id FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND slug='novo_contato' LIMIT 1`,
+      [col.cliente_id]
+    );
+    const destinoId = destino.rows[0] ? destino.rows[0].id : null;
+    if (destinoId) {
+      await query(
+        `UPDATE movatak_leads SET funil_coluna_id=$1, etapa='lead', atualizado_em=NOW()
+          WHERE funil_coluna_id=$2`,
+        [destinoId, colId]
+      ).catch(() => null);
+    } else {
+      await query(`UPDATE movatak_leads SET funil_coluna_id=NULL, atualizado_em=NOW() WHERE funil_coluna_id=$1`, [colId]).catch(() => null);
+    }
+
+    await query('UPDATE movatak_funil_colunas SET ativo=false, atualizado_em=NOW() WHERE id=$1', [colId]);
+    res.json({ ok: true, leads_realocados: destinoId ? true : false });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
