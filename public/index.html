@@ -2562,8 +2562,9 @@ function renderQuestPassos() {
         const destinos = (selIdx) => {
           const atual = (p.saltos && p.saltos[String(selIdx)]) || '';
           const optsPerg = questState.passos
-            .filter((pp, j) => j !== i && (pp.id || '').trim())
-            .map(pp => `<option value="${escAttr(pp.id)}" ${atual === pp.id ? 'selected' : ''}>→ ${escAttr(pp.id)}${pp.pergunta_curta ? ' ('+escAttr(pp.pergunta_curta)+')' : ''}</option>`).join('');
+            .map((pp, j) => ({ pp, num: j + 1 }))
+            .filter(x => x.num - 1 !== i && (x.pp.id || '').trim())
+            .map(x => `<option value="${escAttr(x.pp.id)}" ${atual === x.pp.id ? 'selected' : ''}>→ Pergunta #${x.num}${x.pp.pergunta_curta ? ' ('+escAttr(x.pp.pergunta_curta)+')' : ''}</option>`).join('');
           return `<option value="" ${!atual ? 'selected' : ''}>Seguir normal</option>${optsPerg}<option value="__fim__" ${atual === '__fim__' ? 'selected' : ''}>Encerrar (recomendar)</option>`;
         };
         saltosField = `<div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:8px;margin:4px 0">
