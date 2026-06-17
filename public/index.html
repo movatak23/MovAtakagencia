@@ -2151,10 +2151,23 @@ async function salvarTemplateFollowupAtual() {
     if (btn) { btn.disabled = false; btn.textContent = 'Salvar modelo'; }
   }
 }
+async function popularSelectQuestTemplateCampanha(clienteId) {
+  const sel = document.getElementById('fu-campanha-quest-template');
+  if (!sel) return;
+  try {
+    const rows = await api('/movatak/admin/clientes/' + clienteId + '/questionario-templates');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Questionário do cliente (padrão)</option>' +
+      (rows || []).map(t => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join('');
+    sel.value = prev;
+  } catch (e) { /* mantém só o padrão */ }
+}
+
 async function carregarCampanhas(id) {
   const box = document.getElementById('fu-campanhas-box');
   if (!box) return;
   box.innerHTML = '<div style="font-size:13px;color:var(--text3);margin-top:10px">Carregando campanhas...</div>';
+  await popularSelectQuestTemplateCampanha(id);
   try {
     const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
     fuCampanhas = rows;
@@ -2248,6 +2261,8 @@ async function adicionarCampanha(btn) {
   const template_id = document.getElementById('fu-campanha-template').value;
   const questEl = document.getElementById('fu-campanha-questionario');
   const questionario_ativo = questEl ? questEl.checked : true;
+  const qtSel = document.getElementById('fu-campanha-quest-template');
+  const questionario_template_id = qtSel && qtSel.value ? parseInt(qtSel.value, 10) : null;
   if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
   if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
   if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
@@ -2257,12 +2272,12 @@ async function adicionarCampanha(btn) {
     if (editandoCampanhaId) {
       await api('/movatak/admin/campanhas/' + editandoCampanhaId, {
         method: 'PATCH',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo })
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id })
       });
     } else {
       await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
         method: 'POST',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo })
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id })
       });
     }
     cancelarEdicaoCampanha();
@@ -2299,6 +2314,8 @@ function editarCampanha(id) {
   editandoCampanhaId = id;
   const questEl = document.getElementById('fu-campanha-questionario');
   if (questEl) questEl.checked = c.questionario_ativo !== false;
+  const qtSel = document.getElementById('fu-campanha-quest-template');
+  if (qtSel) qtSel.value = c.questionario_template_id != null ? String(c.questionario_template_id) : '';
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Salvar edição';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = '';
   const statusEl = document.getElementById('fu-campanha-status');
@@ -2317,6 +2334,7 @@ function cancelarEdicaoCampanha() {
   }
   const tipo = document.getElementById('fu-campanha-investimento-tipo'); if (tipo) tipo.value = 'diario';
   const questEl = document.getElementById('fu-campanha-questionario'); if (questEl) questEl.checked = true;
+  const qtSel = document.getElementById('fu-campanha-quest-template'); if (qtSel) qtSel.value = '';
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Adicionar';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = 'none';
 }
@@ -2349,7 +2367,8 @@ setInterval(() => {
 // ============================================================
 // QUESTIONÁRIO CONSULTIVO — editor por cliente
 // ============================================================
-let questState = { clienteId: null, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
+let questState = { clienteId: null, templateId: null, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
+let questTemplatesCache = [];
 let questSeq = 0;
 
 const QUEST_TIPOS = [
@@ -2360,11 +2379,42 @@ const QUEST_TIPOS = [
 ];
 
 async function abrirQuestionario(id) {
-  questState = { clienteId: id, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
+  questState = { clienteId: id, templateId: null, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
   document.getElementById('quest-err').textContent = '';
   document.getElementById('modal-quest').classList.add('open');
+  await carregarListaTemplatesQuest(id);
+  await carregarQuestNoEditor();
+}
+
+// Carrega o seletor de modelos de autoatendimento (cliente + templates).
+async function carregarListaTemplatesQuest(clienteId) {
+  const sel = document.getElementById('quest-template-select');
+  if (!sel) return;
   try {
-    const r = await api('/movatak/admin/clientes/' + id + '/questionario');
+    const rows = await api('/movatak/admin/clientes/' + clienteId + '/questionario-templates');
+    questTemplatesCache = rows || [];
+    const opts = ['<option value="">Questionário do cliente (padrão)</option>']
+      .concat(questTemplatesCache.map(t => `<option value="${t.id}">${escapeHtml(t.nome)} (${t.qtd_passos} pergunta${t.qtd_passos === 1 ? '' : 's'})</option>`));
+    sel.innerHTML = opts.join('');
+    sel.value = questState.templateId ? String(questState.templateId) : '';
+    const delBtn = document.getElementById('btn-quest-tpl-del');
+    if (delBtn) delBtn.style.display = questState.templateId ? '' : 'none';
+  } catch (e) {
+    sel.innerHTML = '<option value="">Questionário do cliente (padrão)</option>';
+  }
+}
+
+// Carrega no editor o conteúdo do destino atual (cliente ou template).
+async function carregarQuestNoEditor() {
+  const id = questState.clienteId;
+  try {
+    let r;
+    if (questState.templateId) {
+      r = await api('/movatak/admin/questionario-templates/' + questState.templateId);
+      r.planos = await carregarPlanosQuest(id);
+    } else {
+      r = await api('/movatak/admin/clientes/' + id + '/questionario');
+    }
     questState.planos = r.planos || [];
     questState.passos = (r.passos || []).map(p => ({
       id: p.id || ('q' + (++questSeq)),
@@ -2382,9 +2432,12 @@ async function abrirQuestionario(id) {
       plano_id: g.plano_id != null ? String(g.plano_id) : '',
       condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
     }));
-    document.getElementById('quest-ativo').checked = !!r.ativo;
-    document.getElementById('quest-acao-arquivar').checked = !!r.acao_arquivar_ao_final;
-    document.getElementById('quest-acao-nao-lido').checked = !!r.acao_marcar_nao_lido;
+    // Campos exclusivos do cliente (não existem em template): desabilita visualmente quando em template
+    const ehTemplate = !!questState.templateId;
+    document.getElementById('quest-ativo').checked = ehTemplate ? true : !!r.ativo;
+    document.getElementById('quest-ativo').disabled = ehTemplate;
+    document.getElementById('quest-acao-arquivar').checked = !ehTemplate && !!r.acao_arquivar_ao_final;
+    document.getElementById('quest-acao-nao-lido').checked = !ehTemplate && !!r.acao_marcar_nao_lido;
     document.getElementById('quest-intro').value = r.intro || '';
     document.getElementById('quest-final').value = r.final || '';
     document.getElementById('quest-comando-parar').value = r.comando_parar || '';
@@ -2394,9 +2447,58 @@ async function abrirQuestionario(id) {
     renderQuestRegras();
     renderQuestImg('intro');
     renderQuestImg('final');
-    carregarCobertura(id);
+    if (!ehTemplate) carregarCobertura(id);
   } catch (e) {
     document.getElementById('quest-err').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+async function carregarPlanosQuest(clienteId) {
+  try {
+    const r = await api('/movatak/admin/clientes/' + clienteId + '/questionario');
+    return r.planos || [];
+  } catch (e) { return []; }
+}
+
+async function trocarTemplateQuest() {
+  const sel = document.getElementById('quest-template-select');
+  questState.templateId = sel.value ? parseInt(sel.value, 10) : null;
+  const delBtn = document.getElementById('btn-quest-tpl-del');
+  if (delBtn) delBtn.style.display = questState.templateId ? '' : 'none';
+  await carregarQuestNoEditor();
+}
+
+async function novoTemplateQuest() {
+  const nome = prompt('Nome do novo modelo de autoatendimento (ex: DTF Têxtil, Provedor):');
+  if (!nome || !nome.trim()) return;
+  const status = document.getElementById('quest-tpl-status');
+  try {
+    if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Criando modelo...'; }
+    const res = await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario-templates', {
+      method: 'POST',
+      body: JSON.stringify({ nome: nome.trim(), intro: '', final: '', passos: [], recomendacao: [] })
+    });
+    questState.templateId = res.id;
+    await carregarListaTemplatesQuest(questState.clienteId);
+    await carregarQuestNoEditor();
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Modelo "' + nome.trim() + '" criado. Edite as perguntas e clique em Salvar.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao criar modelo: ' + e.message; }
+  }
+}
+
+async function excluirTemplateQuest() {
+  if (!questState.templateId) return;
+  if (!confirm('Excluir este modelo de autoatendimento? As campanhas que o usam voltarão ao questionário do cliente.')) return;
+  const status = document.getElementById('quest-tpl-status');
+  try {
+    await api('/movatak/admin/questionario-templates/' + questState.templateId, { method: 'DELETE' });
+    questState.templateId = null;
+    await carregarListaTemplatesQuest(questState.clienteId);
+    await carregarQuestNoEditor();
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Modelo excluído.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao excluir: ' + e.message; }
   }
 }
 
@@ -2551,22 +2653,40 @@ async function salvarQuestionario() {
         delay_segundos: Math.max(0, parseInt(p.delay_segundos, 10) || 0),
         aguardar: p.aguardar !== false
       }));
-    await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
-      method: 'PATCH',
-      body: JSON.stringify({
-        ativo: document.getElementById('quest-ativo').checked,
-        intro: document.getElementById('quest-intro').value,
-        final: document.getElementById('quest-final').value,
-        comando_parar: document.getElementById('quest-comando-parar').value.trim(),
-        comando_ativar: document.getElementById('quest-comando-ativar').value.trim(),
-        intro_imagem: questState.introImagem || '',
-        final_imagem: questState.finalImagem || '',
-        passos,
-        recomendacao: [],
-        acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
-        acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked
-      })
-    });
+    // Destino: template de autoatendimento OU questionário do cliente.
+    if (questState.templateId) {
+      await api('/movatak/admin/questionario-templates/' + questState.templateId, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          intro: document.getElementById('quest-intro').value,
+          final: document.getElementById('quest-final').value,
+          comando_parar: document.getElementById('quest-comando-parar').value.trim(),
+          comando_ativar: document.getElementById('quest-comando-ativar').value.trim(),
+          intro_imagem: questState.introImagem || '',
+          final_imagem: questState.finalImagem || '',
+          passos,
+          recomendacao: []
+        })
+      });
+      await carregarListaTemplatesQuest(questState.clienteId);
+    } else {
+      await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ativo: document.getElementById('quest-ativo').checked,
+          intro: document.getElementById('quest-intro').value,
+          final: document.getElementById('quest-final').value,
+          comando_parar: document.getElementById('quest-comando-parar').value.trim(),
+          comando_ativar: document.getElementById('quest-comando-ativar').value.trim(),
+          intro_imagem: questState.introImagem || '',
+          final_imagem: questState.finalImagem || '',
+          passos,
+          recomendacao: [],
+          acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
+          acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked
+        })
+      });
+    }
     btn.textContent = '✓ Salvo';
     setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar Auto Atendimento'; }, 1500);
   } catch (e) {
@@ -3477,6 +3597,11 @@ async function sincronizarColunaWhatsapp(colunaId) {
         Ativar autoatendimento (questionário) para esta campanha
         <span class="fu-hint" style="margin:0">— desmarque para a campanha ir direto ao follow-up, sem questionário (ex: DTF Têxtil).</span>
       </label>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label class="fu-label" style="margin:0;font-size:13px">Modelo de autoatendimento:</label>
+        <select id="fu-campanha-quest-template" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;max-width:280px"><option value="">Questionário do cliente (padrão)</option></select>
+        <span class="fu-hint" style="margin:0">Escolha um modelo específico para esta campanha, ou deixe no padrão do cliente.</span>
+      </div>
       <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
       <div id="fu-campanhas-box"></div>
     </div>
@@ -3669,6 +3794,17 @@ async function sincronizarColunaWhatsapp(colunaId) {
     <button class="modal-x" onclick="fecharQuestionario()" title="Fechar">✕</button>
     <h3>Auto Atendimento</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> nas mensagens e <strong>{plano}</strong> na mensagem final.</p>
+
+    <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px;margin-bottom:16px">
+      <label class="fu-label" style="margin-top:0">Modelo de autoatendimento em edição</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="quest-template-select" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;flex:1;min-width:200px" onchange="trocarTemplateQuest()"></select>
+        <button class="btn-add-small" onclick="novoTemplateQuest()">+ Novo modelo</button>
+        <button class="btn-remove" id="btn-quest-tpl-del" title="Excluir modelo" onclick="excluirTemplateQuest()" style="display:none">×</button>
+      </div>
+      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:8px">"Questionário do cliente" é o padrão (usado por campanhas sem modelo). Crie modelos diferentes para vincular a campanhas específicas (ex: um para Provedor, outro para DTF Têxtil). O vínculo é feito na seção de Campanhas.</div>
+      <div id="quest-tpl-status" class="fu-hint" style="margin-top:6px"></div>
+    </div>
 
     <div class="quest-switch">
       <input type="checkbox" id="quest-ativo">
