@@ -1954,7 +1954,34 @@ function vendedorBateComando(vendedor, texto) {
   return contemComando(texto, comandosDoVendedor(vendedor));
 }
 
-function textoPareceComandoInterno(texto, comandos, vendedores) {
+function textoBateComandoParar(texto, comandoParar) {
+  const c = String(comandoParar || '').trim();
+  if (!c) return false;
+  return contemComando(texto, [c]);
+}
+
+// Para TODA a automação de um lead: marca a flag, pausa follow-ups pendentes e
+// cancela o questionário em andamento. Usada pelo comando de parar atendimento,
+// disparado tanto pelo cliente quanto pelo vendedor/dono.
+async function pararAtendimentoLead(clienteId, leadId, origem, comando) {
+  await query(
+    `UPDATE movatak_leads SET automacao_pausada = true, atualizado_em = NOW() WHERE id = $1`,
+    [leadId]
+  );
+  await query(
+    `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
+    [leadId]
+  );
+  await query(
+    `UPDATE movatak_questionario_estado SET status = 'cancelado', atualizado_em = NOW()
+       WHERE lead_id = $1 AND status = 'em_andamento'`,
+    [leadId]
+  ).catch(() => null);
+  await registrarEventoLead(leadId, clienteId, 'atendimento_parado', 'Automação encerrada por comando de atendente', { origem: origem || null, comando: comando || null }).catch(() => null);
+  console.log(`[zapi] Atendimento parado (${origem}) -> lead ${leadId}`);
+}
+
+function textoPareceComandoInterno(texto, comandos, vendedores, comandoParar) {
   const t = String(texto || '').trim();
   if (!t) return false;
   // Segurança: a mensagem deve conter pelo menos um # para ser interpretada como comando.
@@ -1965,6 +1992,7 @@ function textoPareceComandoInterno(texto, comandos, vendedores) {
   if (contemComando(t, comandos.descartar || [])) return true;
   if (contemComando(t, comandos.desfazer || [])) return true;
   if (contemComando(t, comandos.pausar || [])) return true;
+  if (textoBateComandoParar(t, comandoParar)) return true;
   return Array.isArray(vendedores) && vendedores.some(v => vendedorBateComando(v, t));
 }
 
@@ -2137,7 +2165,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id]
       );
 
-      const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows);
+      const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows, cliente.questionario_comando_parar);
       const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatLid, ehComandoInterno);
 
       if (!leadFromMe) {
@@ -2257,6 +2285,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
+      // -- Comando: parar atendimento (autoatendimento) --
+      if (textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
+        await pararAtendimentoLead(cliente.id, lead.id, 'vendedor', texto);
+        return;
+      }
+
       return;
     }
 
@@ -2287,6 +2321,13 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // Retomar: vendedor usa o comando de followup ou convertido para reativar.
     if (lead && lead.automacao_pausada) {
       logDebug('[zapi][lead] automacao pausada — mensagem gravada, automacao ignorada');
+      return;
+    }
+
+    // ===== COMANDO: PARAR ATENDIMENTO (cliente pede atendente humano) =====
+    // Funciona em qualquer ponto, inclusive durante o questionário.
+    if (lead && textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
+      await pararAtendimentoLead(cliente.id, lead.id, 'cliente', texto);
       return;
     }
 
@@ -3099,7 +3140,8 @@ async function garantirEstruturaQuestionario() {
     ADD COLUMN IF NOT EXISTS questionario_intro_imagem TEXT,
     ADD COLUMN IF NOT EXISTS questionario_final_imagem TEXT,
     ADD COLUMN IF NOT EXISTS questionario_passos JSONB DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS questionario_recomendacao JSONB DEFAULT '[]'::jsonb`).catch(() => null);
+    ADD COLUMN IF NOT EXISTS questionario_recomendacao JSONB DEFAULT '[]'::jsonb,
+    ADD COLUMN IF NOT EXISTS questionario_comando_parar TEXT`).catch(() => null);
 
   await query(`CREATE TABLE IF NOT EXISTS movatak_questionario_estado (
     id SERIAL PRIMARY KEY,
@@ -3391,7 +3433,11 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
         await enviarMsgQuestionario(cliente, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo), passo.imagem);
       } else {
         // Limite atingido — transfere para vendedor e encerra questionário
-        await enviarMsgQuestionario(cliente, lead.telefone, 'Vou transferir seu atendimento para um dos meus colegas. 😊', null);
+        const cmdParar = String(cliente.questionario_comando_parar || '').trim();
+        const msgTransfer = cmdParar
+          ? `Vou transferir seu atendimento para um dos meus colegas. 😊\n\nSe quiser falar agora com um atendente, é só responder ${cmdParar}.`
+          : 'Vou transferir seu atendimento para um dos meus colegas. 😊';
+        await enviarMsgQuestionario(cliente, lead.telefone, msgTransfer, null);
         await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [estado.id]);
         await atribuirVendedorBalanceado(cliente.id, lead.id).catch(() => null);
         await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(() => null);
@@ -3951,6 +3997,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
       `SELECT questionario_ativo, questionario_intro, questionario_final,
               questionario_intro_imagem, questionario_final_imagem,
               questionario_passos, questionario_recomendacao,
+              questionario_comando_parar,
               acao_arquivar_ao_final, acao_marcar_nao_lido
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
@@ -3966,6 +4013,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
       final_imagem: r.rows[0].questionario_final_imagem || '',
       passos: r.rows[0].questionario_passos || [],
       recomendacao: r.rows[0].questionario_recomendacao || [],
+      comando_parar: r.rows[0].questionario_comando_parar || '',
       planos: rp.rows,
       cobertura_total: cob.rows[0].total,
       acao_arquivar_ao_final: !!r.rows[0].acao_arquivar_ao_final,
@@ -3977,7 +4025,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
 app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
-    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, acao_arquivar_ao_final, acao_marcar_nao_lido } = req.body || {};
+    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, acao_arquivar_ao_final, acao_marcar_nao_lido } = req.body || {};
     await query(
       `UPDATE movatak_clientes
           SET questionario_ativo = COALESCE($1, questionario_ativo),
@@ -3988,8 +4036,9 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
               questionario_passos = $6::jsonb,
               questionario_recomendacao = $7::jsonb,
               acao_arquivar_ao_final = COALESCE($8, acao_arquivar_ao_final),
-              acao_marcar_nao_lido = COALESCE($9, acao_marcar_nao_lido)
-        WHERE id = $10`,
+              acao_marcar_nao_lido = COALESCE($9, acao_marcar_nao_lido),
+              questionario_comando_parar = $10
+        WHERE id = $11`,
       [
         typeof ativo === 'boolean' ? ativo : null,
         intro || null,
@@ -4000,6 +4049,7 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
         JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
         typeof acao_arquivar_ao_final === 'boolean' ? acao_arquivar_ao_final : null,
         typeof acao_marcar_nao_lido === 'boolean' ? acao_marcar_nao_lido : null,
+        (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
         req.params.id
       ]
     );
