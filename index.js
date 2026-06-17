@@ -3938,6 +3938,45 @@ app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (r
   }
 });
 
+app.get('/movatak/admin/clientes/:id/template-conteudo', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaCampanhasTemplates();
+    const templateId = String(req.query.template || '').trim();
+    if (!templateId) return res.status(400).json({ error: 'Informe o template.' });
+    let t = null;
+
+    if (templateId.startsWith('custom:')) {
+      const templateDbId = templateId.replace('custom:', '').replace(/\D/g, '');
+      const r = await query(
+        `SELECT nome, trigger_msg, followup_v2, boas_vindas_msg, comandos
+           FROM movatak_followup_templates
+          WHERE id = $1 AND cliente_id = $2 AND ativo = true`,
+        [templateDbId, req.params.id]
+      );
+      if (!r.rows.length) return res.status(404).json({ error: 'Template personalizado não encontrado.' });
+      const row = r.rows[0];
+      t = {
+        nome: row.nome,
+        trigger_msg: row.trigger_msg || '',
+        followup_v2: row.followup_v2 || {},
+        boas_vindas_msg: row.boas_vindas_msg || '',
+        comandos: row.comandos || {}
+      };
+    } else {
+      const base = TEMPLATES_FOLLOWUP[templateId];
+      if (!base) return res.status(404).json({ error: 'Template não encontrado.' });
+      t = {
+        nome: base.nome,
+        trigger_msg: base.trigger_msg || '',
+        followup_v2: base.followup_v2 || {},
+        boas_vindas_msg: base.boas_vindas_msg || '',
+        comandos: base.comandos || {}
+      };
+    }
+    res.json(t);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/movatak/admin/clientes/:id/aplicar-template', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
