@@ -2428,9 +2428,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // ===== QUESTIONÁRIO EM ANDAMENTO (venda consultiva) =====
-    // Se o lead está respondendo um questionário ativo, a mensagem é tratada
-    // pelo motor do questionário e não pela lógica de trigger/follow-up.
-    if (lead && cliente.questionario_ativo) {
+    // Se existe um estado em andamento para o lead, a mensagem é tratada pelo
+    // motor do questionário. Não depende do flag global do cliente, pois o
+    // questionário pode ter sido iniciado por um template vinculado à campanha.
+    if (lead) {
       const estQ = await query(
         `SELECT * FROM movatak_questionario_estado
           WHERE cliente_id = $1 AND lead_id = $2 AND status = 'em_andamento'
@@ -2530,12 +2531,15 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
       await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', extrairMidiaPayloadZapi(body)).catch(() => null);
 
-      // O questionário dispara se o cliente tem questionário ativo E a campanha
-      // de origem permite (campanha sem flag ou flag true). Campanha com
-      // questionario_ativo=false (ex: DTF Têxtil) manda o lead direto pro follow-up.
+      // Decide se inicia o questionário:
+      // - Campanha com template de questionário vinculado → usa o questionário do template.
+      // - Senão, usa o questionário do cliente (se ativo).
+      // A flag questionario_ativo da campanha permite desligar (vai direto ao follow-up).
       const campanhaPermiteQuest = !campanhaDetectada || campanhaDetectada.questionario_ativo !== false;
-      if (cliente.questionario_ativo && campanhaPermiteQuest) {
-        const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid };
+      const temTemplateQuest = campanhaDetectada && campanhaDetectada.questionario_template_id;
+      const deveIniciarQuest = campanhaPermiteQuest && (temTemplateQuest || cliente.questionario_ativo);
+      const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid, campanha_id: campanhaDetectada ? campanhaDetectada.id : null };
+      if (deveIniciarQuest) {
         await iniciarQuestionario(cliente, leadObj);
         console.log(`[zapi] Novo lead + questionario iniciado -> ${telefone} (${cliente.nome})`);
       } else {
@@ -3258,6 +3262,26 @@ async function garantirEstruturaQuestionario() {
     ADD COLUMN IF NOT EXISTS questionario_comando_parar TEXT,
     ADD COLUMN IF NOT EXISTS questionario_comando_ativar TEXT`).catch(() => null);
 
+  // Templates de autoatendimento (questionário), reutilizáveis e vinculáveis a campanhas.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_questionario_templates (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER,
+    nome TEXT NOT NULL,
+    intro TEXT,
+    final TEXT,
+    intro_imagem TEXT,
+    final_imagem TEXT,
+    passos JSONB DEFAULT '[]'::jsonb,
+    recomendacao JSONB DEFAULT '[]'::jsonb,
+    comando_parar TEXT,
+    comando_ativar TEXT,
+    ativo BOOLEAN DEFAULT true,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`ALTER TABLE movatak_campanhas ADD COLUMN IF NOT EXISTS questionario_template_id INTEGER`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_quest_templates_cliente ON movatak_questionario_templates(cliente_id, ativo)`).catch(() => null);
+
   await query(`CREATE TABLE IF NOT EXISTS movatak_questionario_estado (
     id SERIAL PRIMARY KEY,
     cliente_id INTEGER NOT NULL,
@@ -3469,8 +3493,43 @@ async function avancarQuestionario(cliente, lead, estadoId, respostas, fromIdx, 
   }
 }
 
+// Retorna um objeto "cliente efetivo": uma cópia do cliente com os campos de
+// questionário sobrescritos pelo template de autoatendimento vinculado à campanha
+// do lead. Se a campanha não tem template, usa o questionário do próprio cliente.
+async function resolverQuestionarioDoLead(cliente, lead) {
+  try {
+    if (!lead || !lead.campanha_id) return cliente;
+    const r = await query(
+      `SELECT qt.*
+         FROM movatak_campanhas c
+         JOIN movatak_questionario_templates qt
+           ON qt.id = c.questionario_template_id AND qt.ativo = true
+        WHERE c.id = $1`,
+      [lead.campanha_id]
+    );
+    if (!r.rows.length) return cliente;
+    const qt = r.rows[0];
+    return {
+      ...cliente,
+      questionario_intro: qt.intro,
+      questionario_final: qt.final,
+      questionario_intro_imagem: qt.intro_imagem,
+      questionario_final_imagem: qt.final_imagem,
+      questionario_passos: qt.passos || [],
+      questionario_recomendacao: qt.recomendacao || [],
+      questionario_comando_parar: qt.comando_parar,
+      questionario_comando_ativar: qt.comando_ativar,
+      __quest_template_id: qt.id
+    };
+  } catch (e) {
+    console.error('[questionario][resolver-template]', e.message);
+    return cliente;
+  }
+}
+
 async function iniciarQuestionario(cliente, lead) {
   try {
+    cliente = await resolverQuestionarioDoLead(cliente, lead);
     const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
     if (!passos.length) {
       await agendarFollowupV2(lead.id, cliente.id, 1, true);
@@ -3516,6 +3575,7 @@ async function iniciarQuestionario(cliente, lead) {
 
 async function processarRespostaQuestionario(cliente, lead, estado, texto) {
   try {
+    cliente = await resolverQuestionarioDoLead(cliente, lead);
     const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
     const idx = estado.passo_idx || 0;
     const passo = passos[idx];
@@ -3733,7 +3793,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
             WHERE c.cliente_id = $1
               AND c.excluida_em IS NULL
         )
-        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.criado_em, c.atualizado_em,
+        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em,
               t.nome AS template_nome,
               c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
               (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
@@ -3750,7 +3810,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
                     THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
                     ELSE l.campanha_id = c.id
                END)
-        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
+        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
     );
@@ -3766,7 +3826,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
 app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
     const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
@@ -3775,10 +3835,11 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
     // A partir da v2.1.3 permitimos o mesmo gatilho em mais de uma campanha.
     // Observação: quando isso acontece, a atribuição exata por campanha fica compartilhada pelo gatilho.
     const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
+    const questTplId = (questionario_template_id !== undefined && questionario_template_id !== null && String(questionario_template_id) !== '') ? parseInt(questionario_template_id, 10) : null;
     const r = await query(
-      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, ativo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true) RETURNING *`,
-      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId, typeof questionario_ativo === 'boolean' ? questionario_ativo : true]
+      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id, ativo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true) RETURNING *`,
+      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId, typeof questionario_ativo === 'boolean' ? questionario_ativo : true, questTplId]
     );
     res.json(r.rows[0]);
   } catch (e) {
@@ -3791,10 +3852,12 @@ app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) 
 app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo } = req.body || {};
+    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo, questionario_template_id } = req.body || {};
     const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
     const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
     const templateDbId = template_id === undefined ? undefined : await resolverTemplateCampanha(null, template_id);
+    const questTplProvided = questionario_template_id !== undefined;
+    const questTplId = questTplProvided ? ((questionario_template_id === null || String(questionario_template_id) === '') ? null : parseInt(questionario_template_id, 10)) : null;
     const r = await query(
       `UPDATE movatak_campanhas
           SET nome = COALESCE($1, nome),
@@ -3805,9 +3868,10 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
               template_id = CASE WHEN $5::text IS NULL THEN template_id ELSE $5::int END,
               ativo = COALESCE($6, ativo),
               questionario_ativo = COALESCE($8, questionario_ativo),
+              questionario_template_id = CASE WHEN $9::boolean THEN $10::int ELSE questionario_template_id END,
               atualizado_em = NOW()
         WHERE id = $7 RETURNING *`,
-      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null]
+      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null, questTplProvided, questTplId]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
     res.json(r.rows[0]);
@@ -4217,7 +4281,102 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
 
 
 // ============================================================
+// API — Templates de autoatendimento (questionário) por campanha
 // ============================================================
+app.get('/movatak/admin/clientes/:id/questionario-templates', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaQuestionario();
+    const r = await query(
+      `SELECT id, nome, criado_em, atualizado_em,
+              COALESCE(jsonb_array_length(passos), 0) AS qtd_passos
+         FROM movatak_questionario_templates
+        WHERE cliente_id = $1 AND ativo = true
+        ORDER BY criado_em DESC`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaQuestionario();
+    const r = await query(`SELECT * FROM movatak_questionario_templates WHERE id = $1`, [req.params.tid]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Template de questionário não encontrado.' });
+    const t = r.rows[0];
+    res.json({
+      id: t.id,
+      nome: t.nome,
+      intro: t.intro || '',
+      final: t.final || '',
+      intro_imagem: t.intro_imagem || '',
+      final_imagem: t.final_imagem || '',
+      passos: t.passos || [],
+      recomendacao: t.recomendacao || [],
+      comando_parar: t.comando_parar || '',
+      comando_ativar: t.comando_ativar || ''
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/questionario-templates', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaQuestionario();
+    const { nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar } = req.body || {};
+    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do template de autoatendimento.' });
+    const r = await query(
+      `INSERT INTO movatak_questionario_templates
+         (cliente_id, nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar)
+       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10) RETURNING id`,
+      [
+        req.params.id, String(nome).trim(), intro || null, final || null, intro_imagem || null, final_imagem || null,
+        JSON.stringify(Array.isArray(passos) ? passos : []),
+        JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
+        (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
+        (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null
+      ]
+    );
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaQuestionario();
+    const { nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar } = req.body || {};
+    const r = await query(
+      `UPDATE movatak_questionario_templates
+          SET nome = COALESCE($1, nome),
+              intro = $2, final = $3, intro_imagem = $4, final_imagem = $5,
+              passos = $6::jsonb, recomendacao = $7::jsonb,
+              comando_parar = $8, comando_ativar = $9,
+              atualizado_em = NOW()
+        WHERE id = $10 RETURNING id`,
+      [
+        nome ? String(nome).trim() : null, intro || null, final || null, intro_imagem || null, final_imagem || null,
+        JSON.stringify(Array.isArray(passos) ? passos : []),
+        JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
+        (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
+        (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null,
+        req.params.tid
+      ]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Template de questionário não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaQuestionario();
+    // Desvincula das campanhas que o usavam (elas voltam ao questionário do cliente).
+    await query(`UPDATE movatak_campanhas SET questionario_template_id = NULL WHERE questionario_template_id = $1`, [req.params.tid]).catch(() => null);
+    await query(`UPDATE movatak_questionario_templates SET ativo = false, atualizado_em = NOW() WHERE id = $1`, [req.params.tid]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
 // API — Mensagens Rápidas (enviadas manualmente do Kanban)
 // ============================================================
 async function garantirEstruturaConversas() {
