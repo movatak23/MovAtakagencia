@@ -2836,10 +2836,14 @@ function renderFunilAtendimento() {
               style="border-top:3px solid ${cor}"
               ondragover="funilColunaDragOver(event)" ondrop="funilColunaOuLeadDrop(event, ${col.id})" ondragleave="funilDragLeave(event)">
       <div class="funil-col-head">
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:6px">
           <span class="funil-col-handle" title="Arraste para reordenar" draggable="true"
             ondragstart="funilColunaDragStart(event, ${col.id})" ondragend="funilColunaDragEnd(event)"
             style="cursor:grab;color:var(--text3);font-size:14px;user-select:none;flex-shrink:0">⠿</span>
+          <button onclick="moverColunaLado(${col.id}, -1)" title="Mover para a esquerda"
+            style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--text2);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0">◀</button>
+          <button onclick="moverColunaLado(${col.id}, 1)" title="Mover para a direita"
+            style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--text2);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0">▶</button>
           <input type="color" value="${cor}" title="Cor da coluna"
             style="width:18px;height:18px;border:none;background:none;cursor:pointer;padding:0;border-radius:3px;flex-shrink:0"
             onchange="atualizarCorColuna(${col.id}, this.value, this.closest('.funil-col'))">
@@ -2988,6 +2992,9 @@ function enableDragScroll(el) {
   let isDown = false, startX = 0, scrollLeft = 0;
   el.addEventListener('mousedown', e => {
     if (e.target.closest('[draggable="true"]')) return;
+    // Não inicia o drag-scroll quando o clique é em um campo interativo,
+    // senão o preventDefault bloqueia foco/digitação (inputs, selects, botões).
+    if (e.target.closest('input, textarea, select, button, label, a, [contenteditable="true"]')) return;
     isDown = true; startX = e.pageX - el.offsetLeft; scrollLeft = el.scrollLeft;
     el.classList.add('drag-scrolling'); e.preventDefault();
   });
@@ -3122,7 +3129,22 @@ async function reordenarColunas(origemId, alvoId) {
   if (iOrigem < 0 || iAlvo < 0) return;
   const [movida] = cols.splice(iOrigem, 1);
   cols.splice(iAlvo, 0, movida);
-  funilState.colunas = cols; // atualiza local imediatamente
+  await aplicarNovaOrdemColunas(cols);
+}
+
+// Move a coluna uma posição para a esquerda (-1) ou direita (+1).
+async function moverColunaLado(colunaId, direcao) {
+  const cols = (funilState.colunas || []).slice();
+  const i = cols.findIndex(c => Number(c.id) === Number(colunaId));
+  if (i < 0) return;
+  const j = i + direcao;
+  if (j < 0 || j >= cols.length) return; // já está na ponta
+  const tmp = cols[i]; cols[i] = cols[j]; cols[j] = tmp;
+  await aplicarNovaOrdemColunas(cols);
+}
+
+async function aplicarNovaOrdemColunas(cols) {
+  funilState.colunas = cols;
   renderFunilAtendimento();
   const status = document.getElementById('funil-status');
   if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Salvando nova ordem...'; }
