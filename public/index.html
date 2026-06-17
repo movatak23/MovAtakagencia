@@ -955,22 +955,58 @@ async function salvarEdicao() {
 }
 
 let planosClienteId = null;
+let planosTemplatesCache = [];
 async function carregarPlanos(id) {
   const box = document.getElementById('planos-lista');
   if (!box) return;
   box.innerHTML = '<div class="fu-hint">Carregando planos...</div>';
   try {
-    const planos = await api('/movatak/admin/clientes/' + id + '/planos');
+    const [planos, tpls] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/planos'),
+      api('/movatak/admin/clientes/' + id + '/questionario-templates').catch(() => [])
+    ]);
+    planosTemplatesCache = tpls || [];
     if (!planos.length) { box.innerHTML = '<div class="fu-hint">Nenhum plano cadastrado ainda.</div>'; return; }
-    box.innerHTML = planos.map(p => `
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+    box.innerHTML = planos.map(p => {
+      const vinc = Array.isArray(p.template_ids) ? p.template_ids.map(Number) : [];
+      const tplBtn = planosTemplatesCache.length
+        ? `<button class="btn-add-small" style="padding:6px 10px;font-size:11px;white-space:nowrap" onclick="abrirVinculoPlano(${p.id})">Modelos${vinc.length ? ' (' + vinc.length + ')' : ': todos'}</button>`
+        : '';
+      return `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-plano-row="${p.id}">
         <input type="text" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2" value="${escAttr(p.nome)}" onchange="patchPlano(${p.id},'nome',this.value)">
         <input type="text" inputmode="decimal" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${formatarValorPlanoInput(p.valor)}" placeholder="R$ 99,90" onchange="patchPlano(${p.id},'valor',normalizarValorPlano(this.value))">
         <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.nota_minima || 0}" placeholder="Nota mín." onchange="patchPlano(${p.id},'nota_minima',this.value)">
+        ${tplBtn}
         <button class="btn-remove" title="Excluir plano" onclick="removerPlano(${p.id})">×</button>
-      </div>`).join('');
+      </div>
+      <div id="vinc-plano-${p.id}" style="display:none;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px;margin:-2px 0 10px 0">
+        <div class="fu-hint" style="margin-bottom:8px">Em quais modelos de autoatendimento este plano/produto aparece? Sem marcar nenhum, ele fica só no questionário do cliente (padrão).</div>
+        ${planosTemplatesCache.map(t => `<label style="display:inline-flex;align-items:center;gap:6px;margin:3px 12px 3px 0;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" value="${t.id}" ${vinc.includes(Number(t.id)) ? 'checked' : ''} onchange="salvarVinculoPlano(${p.id})"> ${escapeHtml(t.nome)}</label>`).join('')}
+      </div>`;
+    }).join('');
   } catch (e) {
     box.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro ao carregar planos: ' + e.message + '</div>';
+  }
+}
+
+function abrirVinculoPlano(planoId) {
+  const el = document.getElementById('vinc-plano-' + planoId);
+  if (el) el.style.display = el.style.display === 'none' || !el.style.display ? 'block' : 'none';
+}
+
+async function salvarVinculoPlano(planoId) {
+  const wrap = document.getElementById('vinc-plano-' + planoId);
+  if (!wrap) return;
+  const template_ids = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked')).map(c => parseInt(c.value, 10));
+  const st = document.getElementById('plano-status');
+  try {
+    await api('/movatak/admin/planos/' + planoId, { method: 'PATCH', body: JSON.stringify({ template_ids }) });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = 'Modelos do plano atualizados.'; }
+    // Atualiza o contador no botão sem recarregar tudo
+    carregarPlanos(planosClienteId);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar modelos: ' + e.message; }
   }
 }
 async function adicionarPlano() {
