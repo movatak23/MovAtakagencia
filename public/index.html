@@ -2461,6 +2461,7 @@ async function carregarQuestNoEditor() {
       imagem: p.imagem || '',
       delay_segundos: Math.max(0, parseInt(p.delay_segundos ?? p.delaySegundos ?? 0, 10) || 0),
       aguardar: p.aguardar !== false,
+      encerrar_apos: !!p.encerrar_apos,
       saltos: (p.saltos && typeof p.saltos === 'object') ? p.saltos : {}
     }));
     questState.introImagem = r.intro_imagem || '';
@@ -2599,6 +2600,7 @@ function renderQuestPassos() {
       </div>
       ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
       <label class="quest-aguardar"><input type="checkbox" ${p.aguardar !== false ? 'checked' : ''} onchange="questSetPasso(${i},'aguardar',this.checked)"> Aguardar resposta do lead <span class="quest-aguardar-hint">(desmarque p/ só enviar material e seguir)</span></label>
+      <label class="quest-aguardar"><input type="checkbox" ${p.encerrar_apos ? 'checked' : ''} onchange="questSetPasso(${i},'encerrar_apos',this.checked)"> Encerrar após esta pergunta <span class="quest-aguardar-hint">(vai direto para a mensagem final, ignorando as perguntas abaixo)</span></label>
     </div>`;
   }).join('');
 }
@@ -2622,7 +2624,7 @@ function questSetPasso(i, campo, valor) {
   if (campo === 'tipo') renderQuestPassos();
 }
 function questAddPasso() {
-  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', delay_segundos: 0, aguardar: true });
+  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', delay_segundos: 0, aguardar: true, encerrar_apos: false, saltos: {} });
   renderQuestPassos();
 }
 function questRemovePasso(i) { questState.passos.splice(i, 1); renderQuestPassos(); }
@@ -2719,6 +2721,7 @@ async function salvarQuestionario() {
         imagem: p.imagem || '',
         delay_segundos: Math.max(0, parseInt(p.delay_segundos, 10) || 0),
         aguardar: p.aguardar !== false,
+        encerrar_apos: !!p.encerrar_apos,
         saltos: (p.tipo === 'opcoes' || p.tipo === 'sim_nao') && p.saltos && Object.keys(p.saltos).length ? p.saltos : undefined
       }));
     // Destino: template de autoatendimento OU questionário do cliente.
