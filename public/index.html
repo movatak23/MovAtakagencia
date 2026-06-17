@@ -2146,7 +2146,7 @@ async function carregarCampanhas(id) {
           </thead>
           <tbody>${rows.map(c => `
             <tr>
-              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong></td>
+              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong>${c.questionario_ativo === false ? '<div style="margin-top:4px;font-size:10px;color:var(--amber);font-family:var(--sans)">Sem autoatendimento (só follow-up)</div>' : ''}</td>
               <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}${c.gatilho_compartilhado ? '<div style="margin-top:6px;color:var(--amber);font-family:var(--sans);font-size:11px">Gatilho compartilhado com ' + c.campanhas_mesmo_gatilho + ' campanhas. Métrica por gatilho, não por campanha única.</div>' : ''}</td>
               <td style="white-space:normal">${escapeHtml(c.template_nome || '—')}</td>
               <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
@@ -2214,6 +2214,8 @@ async function adicionarCampanha(btn) {
   const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
   const investimento_valor = document.getElementById('fu-campanha-investimento').value.trim();
   const template_id = document.getElementById('fu-campanha-template').value;
+  const questEl = document.getElementById('fu-campanha-questionario');
+  const questionario_ativo = questEl ? questEl.checked : true;
   if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
   if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
   if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
@@ -2223,12 +2225,12 @@ async function adicionarCampanha(btn) {
     if (editandoCampanhaId) {
       await api('/movatak/admin/campanhas/' + editandoCampanhaId, {
         method: 'PATCH',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo })
       });
     } else {
       await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
         method: 'POST',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id })
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo })
       });
     }
     cancelarEdicaoCampanha();
@@ -2263,6 +2265,8 @@ function editarCampanha(id) {
     campSel.value = targetVal;
   }
   editandoCampanhaId = id;
+  const questEl = document.getElementById('fu-campanha-questionario');
+  if (questEl) questEl.checked = c.questionario_ativo !== false;
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Salvar edição';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = '';
   const statusEl = document.getElementById('fu-campanha-status');
@@ -2280,6 +2284,7 @@ function cancelarEdicaoCampanha() {
     t.value = '';
   }
   const tipo = document.getElementById('fu-campanha-investimento-tipo'); if (tipo) tipo.value = 'diario';
+  const questEl = document.getElementById('fu-campanha-questionario'); if (questEl) questEl.checked = true;
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Adicionar';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = 'none';
 }
@@ -2825,6 +2830,7 @@ function renderFunilAtendimento() {
     board.innerHTML = '<div class="state-row" style="grid-column:1/-1">Nenhuma etapa encontrada.</div>';
     return;
   }
+  const SLUGS_SISTEMA = ['lead','auto_atendimento','followup','negociacao','cliente','descartado'];
   const htmlEtapas = colunas.map((col, __i) => {
     col.__idx = __i;
     const leads = col.leads || [];
@@ -2832,6 +2838,9 @@ function renderFunilAtendimento() {
     const sync = col.zapi_tag_id
       ? '<span class="funil-sync ok">WhatsApp OK</span>'
       : '<span class="funil-sync pendente">Sem sync</span>';
+    const ehSistema = SLUGS_SISTEMA.includes(col.etapa_sistema);
+    const btnExcluir = ehSistema ? '' : `<button onclick="excluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
+            style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--red);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;margin-left:6px">🗑</button>`;
     return `<div class="funil-col" data-coluna="${col.id}" data-col-index="${col.__idx}"
               style="border-top:3px solid ${cor}"
               ondragover="funilColunaDragOver(event)" ondrop="funilColunaOuLeadDrop(event, ${col.id})" ondragleave="funilDragLeave(event)">
@@ -2852,7 +2861,7 @@ function renderFunilAtendimento() {
             <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
           </div>
         </div>
-        ${sync}
+        <div style="display:flex;align-items:center;gap:4px">${sync}${btnExcluir}</div>
       </div>
       <div class="funil-col-comando" style="margin-bottom:8px">
         <input type="text" value="${escapeHtml(col.comando || '')}" placeholder="Comando p/ mover (ex: #pagamento)"
@@ -3175,6 +3184,24 @@ async function salvarComandoColuna(colunaId, valor) {
   }
 }
 
+async function excluirColuna(colunaId, nome) {
+  const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+  const qtdLeads = col && col.leads ? col.leads.length : 0;
+  const aviso = qtdLeads
+    ? `Excluir a etapa "${nome}"?\n\nOs ${qtdLeads} lead(s) desta etapa voltarão para "Novo contato". Esta ação não pode ser desfeita.`
+    : `Excluir a etapa "${nome}"?\n\nEsta ação não pode ser desfeita.`;
+  if (!confirm(aviso)) return;
+  const status = document.getElementById('funil-status');
+  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Excluindo etapa...'; }
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId, { method: 'DELETE' });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Etapa excluída.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao excluir: ' + e.message; }
+  }
+}
+
 function garantirModalMensagemKanban() {
   let modal = document.getElementById('modal-msg-kanban');
   if (modal) return modal;
@@ -3413,6 +3440,11 @@ async function sincronizarColunaWhatsapp(colunaId) {
         <button class="btn-cancel" id="btn-camp-cancel" style="display:none;padding:8px 14px" onclick="cancelarEdicaoCampanha()">Cancelar edição</button>
       </div>
       <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text2);cursor:pointer;user-select:none">
+        <input type="checkbox" id="fu-campanha-questionario" checked style="cursor:pointer">
+        Ativar autoatendimento (questionário) para esta campanha
+        <span class="fu-hint" style="margin:0">— desmarque para a campanha ir direto ao follow-up, sem questionário (ex: DTF Têxtil).</span>
+      </label>
       <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
       <div id="fu-campanhas-box"></div>
     </div>
