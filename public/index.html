@@ -2825,17 +2825,21 @@ function renderFunilAtendimento() {
     board.innerHTML = '<div class="state-row" style="grid-column:1/-1">Nenhuma etapa encontrada.</div>';
     return;
   }
-  const htmlEtapas = colunas.map(col => {
+  const htmlEtapas = colunas.map((col, __i) => {
+    col.__idx = __i;
     const leads = col.leads || [];
     const cor = col.cor || '#6b7280';
     const sync = col.zapi_tag_id
       ? '<span class="funil-sync ok">WhatsApp OK</span>'
       : '<span class="funil-sync pendente">Sem sync</span>';
-    return `<div class="funil-col" data-coluna="${col.id}"
+    return `<div class="funil-col" data-coluna="${col.id}" data-col-index="${col.__idx}"
               style="border-top:3px solid ${cor}"
-              ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)" ondrop="funilDrop(event, ${col.id})">
+              ondragover="funilColunaDragOver(event)" ondrop="funilColunaOuLeadDrop(event, ${col.id})" ondragleave="funilDragLeave(event)">
       <div class="funil-col-head">
         <div style="display:flex;align-items:center;gap:8px">
+          <span class="funil-col-handle" title="Arraste para reordenar" draggable="true"
+            ondragstart="funilColunaDragStart(event, ${col.id})" ondragend="funilColunaDragEnd(event)"
+            style="cursor:grab;color:var(--text3);font-size:14px;user-select:none;flex-shrink:0">⠿</span>
           <input type="color" value="${cor}" title="Cor da coluna"
             style="width:18px;height:18px;border:none;background:none;cursor:pointer;padding:0;border-radius:3px;flex-shrink:0"
             onchange="atualizarCorColuna(${col.id}, this.value, this.closest('.funil-col'))">
@@ -2845,6 +2849,12 @@ function renderFunilAtendimento() {
           </div>
         </div>
         ${sync}
+      </div>
+      <div class="funil-col-comando" style="margin-bottom:8px">
+        <input type="text" value="${escapeHtml(col.comando || '')}" placeholder="Comando p/ mover (ex: #pagamento)"
+          title="Digite este comando na conversa (você/vendedor) para mover o lead até esta coluna"
+          style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--mono)"
+          onchange="salvarComandoColuna(${col.id}, this.value)">
       </div>
       <div class="funil-col-actions">
         <label style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none">
@@ -3045,15 +3055,6 @@ function funilDragLeave(ev) {
   }
 }
 
-async function funilDrop(ev, colunaId) {
-  ev.preventDefault();
-  const col = ev.currentTarget;
-  if (col && col.classList) col.classList.remove('drag-over');
-  const leadId = (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || funilLeadArrastando;
-  if (!leadId || !colunaId) return;
-  await moverLeadFunil(Number(leadId), Number(colunaId));
-}
-
 async function moverLeadFunil(leadId, colunaId) {
   const status = document.getElementById('funil-status');
   if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Movendo lead...'; }
@@ -3068,6 +3069,87 @@ async function moverLeadFunil(leadId, colunaId) {
   } catch (e) {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao mover: ' + e.message; }
     await carregarFunilAtendimento();
+  }
+}
+
+// ===== Reordenar colunas (drag pelo handle ⠿) =====
+let funilColunaArrastando = null;
+
+function funilColunaDragStart(ev, colunaId) {
+  funilColunaArrastando = Number(colunaId);
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('application/x-coluna', String(colunaId));
+  }
+  ev.stopPropagation();
+}
+
+function funilColunaDragEnd(ev) {
+  funilColunaArrastando = null;
+  document.querySelectorAll('.funil-col.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function funilColunaDragOver(ev) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.add('drag-over');
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+}
+
+// Drop unificado: se estiver arrastando uma coluna, reordena; senão trata como lead.
+async function funilColunaOuLeadDrop(ev, colunaAlvoId) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.remove('drag-over');
+
+  if (funilColunaArrastando) {
+    const origem = funilColunaArrastando;
+    funilColunaArrastando = null;
+    if (origem === Number(colunaAlvoId)) return;
+    await reordenarColunas(origem, Number(colunaAlvoId));
+    return;
+  }
+  // senão, é um lead
+  const leadId = (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || funilLeadArrastando;
+  if (!leadId || !colunaAlvoId) return;
+  await moverLeadFunil(Number(leadId), Number(colunaAlvoId));
+}
+
+async function reordenarColunas(origemId, alvoId) {
+  const cols = (funilState.colunas || []).slice();
+  const iOrigem = cols.findIndex(c => Number(c.id) === origemId);
+  const iAlvo = cols.findIndex(c => Number(c.id) === alvoId);
+  if (iOrigem < 0 || iAlvo < 0) return;
+  const [movida] = cols.splice(iOrigem, 1);
+  cols.splice(iAlvo, 0, movida);
+  funilState.colunas = cols; // atualiza local imediatamente
+  renderFunilAtendimento();
+  const status = document.getElementById('funil-status');
+  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Salvando nova ordem...'; }
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/colunas/reordenar', {
+      method: 'POST',
+      body: JSON.stringify({ ordem: cols.map(c => Number(c.id)) })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Ordem das colunas atualizada.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao reordenar: ' + e.message; }
+    await carregarFunilAtendimento();
+  }
+}
+
+async function salvarComandoColuna(colunaId, valor) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId, {
+      method: 'PATCH',
+      body: JSON.stringify({ comando: String(valor || '').trim() })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.comando = String(valor || '').trim();
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Comando da coluna salvo.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao salvar comando: ' + e.message; }
   }
 }
 
