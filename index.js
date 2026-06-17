@@ -1912,15 +1912,25 @@ function textoBateGatilho(texto, gatilho) {
   const trigger = normalizarGatilho(gatilho);
   if (!trigger || !msg) return false;
 
-  // Comparação principal: mensagem contém gatilho ou gatilho contém mensagem.
-  // A segunda condição ajuda quando o anúncio/WhatsApp corta parte do texto.
-  if (msg.includes(trigger) || trigger.includes(msg)) return true;
+  // Match forte: a mensagem contém o gatilho inteiro (cliente colou a frase do anúncio).
+  if (msg.includes(trigger)) return true;
+
+  // Match reverso (gatilho contém a mensagem): só vale quando a mensagem é
+  // substancial — pelo menos 12 caracteres e 3 palavras. Isso evita que respostas
+  // curtas do questionário ("Esse", "internet", "sim") sejam confundidas com o
+  // gatilho só por aparecerem dentro da frase do anúncio.
+  const msgPalavras = msg.split(' ').filter(Boolean).length;
+  const msgSubstancial = msg.length >= 12 && msgPalavras >= 3;
+  if (msgSubstancial && trigger.includes(msg)) return true;
 
   // Fallback seguro: ignora o prefixo antes de >> e compara o corpo da frase.
   // Ex.: "PROV>> Olá!..." e "PROV >> Olá!..."
   const corpoMsg = msg.includes('>>') ? msg.split('>>').slice(1).join('>>').trim() : msg;
   const corpoTrigger = trigger.includes('>>') ? trigger.split('>>').slice(1).join('>>').trim() : trigger;
-  return !!corpoTrigger && !!corpoMsg && (corpoMsg.includes(corpoTrigger) || corpoTrigger.includes(corpoMsg));
+  if (!corpoTrigger || !corpoMsg) return false;
+  if (corpoMsg.includes(corpoTrigger)) return true;
+  const corpoMsgSubstancial = corpoMsg.length >= 12 && corpoMsg.split(' ').filter(Boolean).length >= 3;
+  return corpoMsgSubstancial && corpoTrigger.includes(corpoMsg);
 }
 
 // Verifica se o texto contém algum dos comandos da lista
@@ -2003,6 +2013,27 @@ function textoBateComandoAtivar(texto, comandoAtivar) {
   const c = String(comandoAtivar || '').trim();
   if (!c) return false;
   return contemComando(texto, [c]);
+}
+
+// Procura uma coluna do funil cujo "comando" bate o texto e move o lead pra ela.
+// Retorna true se moveu. Usado pelos comandos de coluna (fromMe).
+async function moverLeadPorComandoColuna(cliente, lead, texto) {
+  try {
+    const cols = await query(
+      `SELECT id, nome, comando FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND comando IS NOT NULL AND TRIM(comando) <> ''`,
+      [cliente.id]
+    );
+    const alvo = cols.rows.find(c => contemComando(texto, [c.comando]));
+    if (!alvo) return false;
+    await moverLeadParaColunaFunil(lead.id, alvo.id, false);
+    await registrarEventoLead(lead.id, cliente.id, 'movido_por_comando', `Lead movido para "${alvo.nome}" por comando`, { comando: alvo.comando, coluna_id: alvo.id }).catch(() => null);
+    console.log(`[zapi] Lead ${lead.id} movido para coluna "${alvo.nome}" por comando`);
+    return true;
+  } catch (e) {
+    console.error('[comando-coluna]', e.message);
+    return false;
+  }
 }
 
 // Reinicia o autoatendimento de um lead do zero: religa a automação, fecha
@@ -2207,7 +2238,15 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         [cliente.id]
       );
 
-      const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows, cliente.questionario_comando_parar, cliente.questionario_comando_ativar);
+      const colsComandoPre = await query(
+        `SELECT comando FROM movatak_funil_colunas
+          WHERE cliente_id=$1 AND ativo=true AND comando IS NOT NULL AND TRIM(comando) <> ''`,
+        [cliente.id]
+      ).catch(() => ({ rows: [] }));
+      const comandosColuna = colsComandoPre.rows.map(c => c.comando);
+
+      const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows, cliente.questionario_comando_parar, cliente.questionario_comando_ativar)
+        || contemComando(texto, comandosColuna);
       const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatLid, ehComandoInterno);
 
       if (!leadFromMe) {
@@ -2343,6 +2382,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
+      // -- Comando: mover lead para uma coluna do kanban --
+      if (await moverLeadPorComandoColuna(cliente, lead, texto)) {
+        return;
+      }
+
       return;
     }
 
@@ -2413,9 +2457,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, lead.id]);
       }
 
-      // Se o lead ja existia e clicou no anuncio/frase-gatilho de novo,
-      // reabre o atendimento e agenda novamente o FU1, exceto se ja estiver convertido.
-      if (triggerOk && lead.etapa !== 'cliente') {
+      // Reentrada por gatilho só vale para leads "frios": novo contato, em follow-up
+      // ou descartado. Nunca reativa quem está no meio do questionário (auto_atendimento),
+      // já qualificado (negociacao) ou fechado (cliente) — isso causava o reinício do fluxo.
+      const etapasReentrada = ['lead', 'followup', 'descartado'];
+      if (triggerOk && etapasReentrada.includes(lead.etapa)) {
         // Não reativar o FU1 se o lead já está em conversa ativa (respondeu nas últimas horas).
         // Evita reenviar boas-vindas/follow-up quando a mensagem com gatilho é continuação do papo.
         if (await leadRespondeuRecentemente(lead.id, MOVATAK_REENTRADA_FU1_HORAS)) {
@@ -4365,6 +4411,7 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS zapi_tag_id TEXT,
     ADD COLUMN IF NOT EXISTS zapi_sync_erro TEXT,
     ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
+    ADD COLUMN IF NOT EXISTS comando TEXT,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
 
@@ -4495,7 +4542,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     const clienteId = parseInt(req.params.id, 10);
     await garantirFunilPadraoCliente(clienteId);
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true
         ORDER BY ordem ASC, id ASC`,
@@ -4581,20 +4628,41 @@ app.post('/movatak/admin/clientes/:id/funil/colunas', authMovatak, async (req, r
 app.patch('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaFunil();
-    const { nome, ordem, ativo, cor } = req.body || {};
+    const { nome, ordem, ativo, cor, comando } = req.body || {};
     const r = await query(
       `UPDATE movatak_funil_colunas
           SET nome = COALESCE($1, nome),
               ordem = COALESCE($2, ordem),
               ativo = COALESCE($3, ativo),
               cor = CASE WHEN $5::text IS NULL THEN cor ELSE $5 END,
+              comando = CASE WHEN $6::text IS NULL THEN comando ELSE NULLIF($6, '') END,
               atualizado_em = NOW()
         WHERE id = $4
         RETURNING *`,
-      [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id, cor !== undefined ? (cor || null) : null]
+      [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id, cor !== undefined ? (cor || null) : null, comando !== undefined ? String(comando).trim() : null]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/funil/colunas/reordenar', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaFunil();
+    const clienteId = parseInt(req.params.id, 10);
+    const ordem = Array.isArray(req.body?.ordem) ? req.body.ordem : null;
+    if (!ordem || !ordem.length) return res.status(400).json({ error: 'Envie ordem: [ids...] na sequência desejada.' });
+    let pos = 1;
+    for (const colId of ordem) {
+      const id = parseInt(colId, 10);
+      if (!Number.isFinite(id)) continue;
+      await query(
+        `UPDATE movatak_funil_colunas SET ordem=$1, atualizado_em=NOW() WHERE id=$2 AND cliente_id=$3`,
+        [pos, id, clienteId]
+      ).catch(() => null);
+      pos++;
+    }
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
