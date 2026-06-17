@@ -3688,6 +3688,15 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
         : '⚠️ Vou confirmar a disponibilidade na sua região e já te retorno.';
     }
 
+    // "Encerrar após esta pergunta": independente do tipo, ao responder esta
+    // pergunta o questionário vai direto para a mensagem final (com recomendação).
+    if (passo.encerrar_apos) {
+      await query(`UPDATE movatak_questionario_estado SET respostas=$1::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$2`, [JSON.stringify(respostas), estado.id]).catch(() => null);
+      if (notaCep) await enviarMsgQuestionario(cliente, lead.telefone, notaCep, '').catch(() => null);
+      await finalizarQuestionario(cliente, lead, respostas);
+      return;
+    }
+
     // Salto condicional: se a pergunta (opções/sim_não) define um destino para a
     // opção escolhida, pula para essa pergunta ou encerra (__fim__). Senão, segue linear.
     let proximoIdx = idx + 1;
