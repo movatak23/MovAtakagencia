@@ -2030,6 +2030,38 @@ async function carregarTemplatesFollowup() {
   }
 }
 
+// Carrega as mensagens do template selecionado nos campos abaixo, SEM salvar nada.
+// Só visualização — para salvar de fato, o usuário usa "Aplicar template".
+async function previewTemplateFollowup() {
+  const sel = document.getElementById('fu-template-select');
+  const template = sel ? sel.value : '';
+  const statusEl = document.getElementById('fu-template-status');
+  if (!template) return;
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Carregando mensagens do template...'; }
+    const t = await api('/movatak/admin/clientes/' + fuId + '/template-conteudo?template=' + encodeURIComponent(template));
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    const fu = t.followup_v2 || {};
+    const fu1 = fu.fu1 || {};
+    const fu2 = fu.fu2 || {};
+    setVal('fu1-msg1', fu1.msg1);
+    setVal('fu1-msg2', fu1.msg2);
+    setVal('fu2-msg1', fu2.msg1);
+    setVal('fu2-msg2', fu2.msg2);
+    setVal('fu2-msg3', fu2.msg3);
+    setVal('fu-trigger', t.trigger_msg);
+    setVal('fu-boas-vindas', t.boas_vindas_msg);
+    const cmd = t.comandos || {};
+    const joinCmd = (a) => Array.isArray(a) ? a.join(', ') : (a || '');
+    setVal('fu-cmd-convertido', joinCmd(cmd.convertido));
+    setVal('fu-cmd-descartar', joinCmd(cmd.descartar));
+    setVal('fu-cmd-desfazer', joinCmd(cmd.desfazer));
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Pré-visualizando "' + (t.nome || '') + '". Para salvar como follow-up do cliente, clique em Aplicar template.'; }
+  } catch (e) {
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Erro ao carregar template: ' + e.message; }
+  }
+}
+
 async function aplicarTemplateFollowup() {
   const sel = document.getElementById('fu-template-select');
   const template = sel ? sel.value : '';
@@ -3364,7 +3396,7 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Escolha primeiro um modelo pronto. Ao aplicar, ele preenche automaticamente FU1, FU2, boas-vindas e comandos. Depois você ajusta cada campo abaixo.</div>
       <label class="fu-label">Template pronto</label>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1"></select>
+        <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1" onchange="previewTemplateFollowup()"></select>
         <button class="btn-add-small" onclick="aplicarTemplateFollowup()">Aplicar template</button>
         <button class="btn-add-small" onclick="criarTemplateFollowup()">+ Criar template</button>
         <button class="btn-cancel" style="padding:8px 14px" onclick="excluirTemplateFollowupSelecionado()">Excluir template</button>
@@ -3378,7 +3410,7 @@ async function sincronizarColunaWhatsapp(colunaId) {
         </div>
         <div class="fu-hint">O template será criado com os textos atuais deste cliente. Preencha ou ajuste os campos antes de salvar.</div>
       </div>
-      <div class="fu-hint">Aplicar substitui as mensagens atuais. Criar template salva os campos atuais como modelo reutilizável.</div>
+      <div class="fu-hint">Selecionar um template já mostra as mensagens dele abaixo (pré-visualização). Aplicar salva essas mensagens como follow-up do cliente. Criar template salva os campos atuais como modelo reutilizável.</div>
       <div id="fu-template-status" class="fu-hint" style="margin-top:8px"></div>
     </div>
 
