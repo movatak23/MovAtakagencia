@@ -3418,19 +3418,31 @@ function interpretarResposta(passo, texto) {
   }
   if (passo.tipo === 'sim_nao') {
     const l = t.toLowerCase();
-    if (l === '1' || l === 'sim' || l === 's') return { ok: true, valor: 'Sim' };
-    if (l === '2' || l === 'nao' || l === 'não' || l === 'n') return { ok: true, valor: 'Não' };
+    if (l === '1' || l === 'sim' || l === 's') return { ok: true, valor: 'Sim', indice: 1 };
+    if (l === '2' || l === 'nao' || l === 'não' || l === 'n') return { ok: true, valor: 'Não', indice: 2 };
     return { ok: false };
   }
   if (passo.tipo === 'opcoes') {
     const ops = Array.isArray(passo.opcoes) ? passo.opcoes : [];
     const n = parseInt(t, 10);
-    if (!isNaN(n) && n >= 1 && n <= ops.length) return { ok: true, valor: ops[n - 1] };
-    const match = ops.find(o => String(o).trim().toLowerCase() === t.toLowerCase());
-    if (match) return { ok: true, valor: match };
+    if (!isNaN(n) && n >= 1 && n <= ops.length) return { ok: true, valor: ops[n - 1], indice: n };
+    const match = ops.findIndex(o => String(o).trim().toLowerCase() === t.toLowerCase());
+    if (match >= 0) return { ok: true, valor: ops[match], indice: match + 1 };
     return { ok: false };
   }
   return { ok: true, valor: t }; // texto livre
+}
+
+// Resolve o próximo índice de passo considerando saltos condicionais.
+// passo.saltos: { "<indice_opcao>": "<id_destino>" | "__fim__" }
+// Retorna: índice do passo destino, -1 para encerrar (fim), ou null para seguir linear (idx+1).
+function resolverSaltoQuestionario(passo, indiceOpcao, passos) {
+  if (!passo || !passo.saltos || typeof passo.saltos !== 'object') return null;
+  const destino = passo.saltos[String(indiceOpcao)];
+  if (!destino) return null;
+  if (destino === '__fim__') return -1;
+  const idxDestino = passos.findIndex(p => p.id === destino);
+  return idxDestino >= 0 ? idxDestino : null; // destino inválido → segue linear
 }
 
 // Pontuação: cada pergunta "opções numeradas" pontua pela posição da opção
@@ -3676,7 +3688,22 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
         : '⚠️ Vou confirmar a disponibilidade na sua região e já te retorno.';
     }
 
-    await avancarQuestionario(cliente, lead, estado.id, respostas, idx + 1, notaCep);
+    // Salto condicional: se a pergunta (opções/sim_não) define um destino para a
+    // opção escolhida, pula para essa pergunta ou encerra (__fim__). Senão, segue linear.
+    let proximoIdx = idx + 1;
+    if ((passo.tipo === 'opcoes' || passo.tipo === 'sim_nao') && interp.indice) {
+      const destino = resolverSaltoQuestionario(passo, interp.indice, passos);
+      if (destino === -1) {
+        // Salto para o fim: grava respostas e finaliza.
+        await query(`UPDATE movatak_questionario_estado SET respostas=$1::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$2`, [JSON.stringify(respostas), estado.id]).catch(() => null);
+        if (notaCep) await enviarMsgQuestionario(cliente, lead.telefone, notaCep, '').catch(() => null);
+        await finalizarQuestionario(cliente, lead, respostas);
+        return;
+      }
+      if (destino !== null) proximoIdx = destino;
+    }
+
+    await avancarQuestionario(cliente, lead, estado.id, respostas, proximoIdx, notaCep);
   } catch (e) {
     console.error('[questionario][processar] erro:', e.message);
   }
