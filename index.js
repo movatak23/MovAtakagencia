@@ -330,6 +330,24 @@ async function reentradaFU1Permitida(leadId) {
   }
 }
 
+// Verdadeiro se o lead já estava em conversa ativa: tem 2+ mensagens de entrada
+// na janela de horas (a mensagem atual já foi gravada antes desta checagem, então
+// exigimos pelo menos mais uma anterior). Evita reativar o FU1 no meio da conversa.
+async function leadRespondeuRecentemente(leadId, horas) {
+  try {
+    const r = await query(
+      `SELECT COUNT(*)::int AS n FROM movatak_conversas
+        WHERE lead_id = $1 AND direcao = 'entrada'
+          AND criado_em >= NOW() - ($2 || ' hours')::INTERVAL`,
+      [leadId, horas]
+    );
+    return (r.rows[0] ? r.rows[0].n : 0) >= 2;
+  } catch (e) {
+    console.error('[anti-spam][resposta-recente]', e.message);
+    return false;
+  }
+}
+
 async function localizarCampanhaPorGatilho(clienteId, texto) {
   try {
     const r = await query(
@@ -2398,6 +2416,17 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Se o lead ja existia e clicou no anuncio/frase-gatilho de novo,
       // reabre o atendimento e agenda novamente o FU1, exceto se ja estiver convertido.
       if (triggerOk && lead.etapa !== 'cliente') {
+        // Não reativar o FU1 se o lead já está em conversa ativa (respondeu nas últimas horas).
+        // Evita reenviar boas-vindas/follow-up quando a mensagem com gatilho é continuação do papo.
+        if (await leadRespondeuRecentemente(lead.id, MOVATAK_REENTRADA_FU1_HORAS)) {
+          await registrarEventoLead(lead.id, cliente.id, 'reentrada_ignorada_conversa_ativa', 'Reentrada FU1 ignorada: lead em conversa ativa', { telefone }).catch(() => null);
+          console.log(`[anti-spam] reentrada FU1 ignorada (conversa ativa) -> lead ${lead.id}`);
+          if (lead.etapa === 'followup') {
+            await query(`UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`, [lead.id]);
+            await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]);
+          }
+          return;
+        }
         if (!(await reentradaFU1Permitida(lead.id))) {
           await registrarEventoLead(lead.id, cliente.id, 'anti_spam_reentrada', 'Reentrada no FU1 bloqueada por intervalo mínimo', { telefone, horas: MOVATAK_REENTRADA_FU1_HORAS });
           console.log(`[anti-spam] reentrada FU1 bloqueada -> lead ${lead.id}`);
