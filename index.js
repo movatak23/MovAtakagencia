@@ -3750,7 +3750,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) =
                     THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
                     ELSE l.campanha_id = c.id
                END)
-        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
+        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
     );
