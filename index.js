@@ -2296,9 +2296,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && cliente.questionario_ativo) {
       const estQ = await query(
         `SELECT * FROM movatak_questionario_estado
-          WHERE cliente_id = $1 AND telefone = $2 AND status = 'em_andamento'
+          WHERE cliente_id = $1 AND lead_id = $2 AND status = 'em_andamento'
           ORDER BY id DESC LIMIT 1`,
-        [cliente.id, telefone]
+        [cliente.id, lead.id]
       ).catch(() => ({ rows: [] }));
       if (estQ.rows.length) {
         await processarRespostaQuestionario(cliente, lead, estQ.rows[0], texto);
