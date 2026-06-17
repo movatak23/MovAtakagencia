@@ -3320,6 +3320,14 @@ async function garantirEstruturaPlanos() {
   )`).catch(() => null);
   await query(`ALTER TABLE movatak_planos ADD COLUMN IF NOT EXISTS valor NUMERIC`).catch(() => null);
   await query(`ALTER TABLE movatak_planos ADD COLUMN IF NOT EXISTS nota_minima INTEGER DEFAULT 0`).catch(() => null);
+  // Vínculo plano <-> template de questionário (muitos-para-muitos).
+  // Plano sem nenhum vínculo aparece em todos os questionários (compatível com o comportamento atual).
+  await query(`CREATE TABLE IF NOT EXISTS movatak_plano_templates (
+    plano_id INTEGER NOT NULL,
+    template_id INTEGER NOT NULL,
+    PRIMARY KEY (plano_id, template_id)
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_plano_templates_tpl ON movatak_plano_templates(template_id)`).catch(() => null);
 }
 
 function normalizarCep(cep) {
@@ -3444,7 +3452,33 @@ async function calcularRecomendacao(cliente, respostas) {
   try {
     const total = calcularPontuacao(cliente, respostas);
     await garantirEstruturaPlanos();
-    const rp = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [cliente.id]);
+    const tplId = cliente.__quest_template_id || null;
+    let rp;
+    if (tplId) {
+      // Planos vinculados a este template OU sem nenhum vínculo (aparecem em todos).
+      rp = await query(
+        `SELECT p.id, p.nome, p.valor, p.nota_minima
+           FROM movatak_planos p
+          WHERE p.cliente_id = $1
+            AND (
+              EXISTS (SELECT 1 FROM movatak_plano_templates pt WHERE pt.plano_id = p.id AND pt.template_id = $2)
+              OR NOT EXISTS (SELECT 1 FROM movatak_plano_templates pt2 WHERE pt2.plano_id = p.id)
+            )
+          ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
+        [cliente.id, tplId]
+      );
+    } else {
+      // Questionário do cliente (sem template): planos sem vínculo a nenhum template.
+      // Isso evita que um produto exclusivo de um template vaze para o questionário padrão.
+      rp = await query(
+        `SELECT p.id, p.nome, p.valor, p.nota_minima
+           FROM movatak_planos p
+          WHERE p.cliente_id = $1
+            AND NOT EXISTS (SELECT 1 FROM movatak_plano_templates pt WHERE pt.plano_id = p.id)
+          ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
+        [cliente.id]
+      );
+    }
     const planos = rp.rows || [];
     if (!planos.length) return { plano: null, total };
     let escolhido = planos[0]; // padrão: menor faixa
@@ -4140,7 +4174,16 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
 app.get('/movatak/admin/clientes/:id/planos', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
-    const r = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [req.params.id]);
+    const r = await query(
+      `SELECT p.id, p.nome, p.valor, p.nota_minima,
+              COALESCE(array_agg(pt.template_id) FILTER (WHERE pt.template_id IS NOT NULL), '{}') AS template_ids
+         FROM movatak_planos p
+         LEFT JOIN movatak_plano_templates pt ON pt.plano_id = p.id
+        WHERE p.cliente_id = $1
+        GROUP BY p.id, p.nome, p.valor, p.nota_minima
+        ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
+      [req.params.id]
+    );
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4161,7 +4204,7 @@ app.post('/movatak/admin/clientes/:id/planos', authMovatak, async (req, res) => 
 app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
-    const { nome, valor, nota_minima } = req.body || {};
+    const { nome, valor, nota_minima, template_ids } = req.body || {};
     await query(
       `UPDATE movatak_planos
           SET nome = COALESCE($1, nome),
@@ -4175,6 +4218,16 @@ app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
         req.params.id
       ]
     );
+    // Atualiza os vínculos de template, se enviados (lista completa = substitui tudo).
+    if (Array.isArray(template_ids)) {
+      await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]);
+      for (const tid of template_ids) {
+        const t = parseInt(tid, 10);
+        if (Number.isFinite(t)) {
+          await query('INSERT INTO movatak_plano_templates (plano_id, template_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.params.id, t]).catch(() => null);
+        }
+      }
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4182,6 +4235,7 @@ app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
 app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
+    await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]).catch(() => null);
     await query('DELETE FROM movatak_planos WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
