@@ -2460,7 +2460,8 @@ async function carregarQuestNoEditor() {
       opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
       imagem: p.imagem || '',
       delay_segundos: Math.max(0, parseInt(p.delay_segundos ?? p.delaySegundos ?? 0, 10) || 0),
-      aguardar: p.aguardar !== false
+      aguardar: p.aguardar !== false,
+      saltos: (p.saltos && typeof p.saltos === 'object') ? p.saltos : {}
     }));
     questState.introImagem = r.intro_imagem || '';
     questState.finalImagem = r.final_imagem || '';
@@ -2553,6 +2554,27 @@ function renderQuestPassos() {
     const opcoesField = p.tipo === 'opcoes'
       ? `<input type="text" class="fu-textarea quest-mini" placeholder="Opções separadas por vírgula. Ex: Trabalho, Estudo, Jogos" value="${escAttr(p.opcoes.join(', '))}" oninput="questSetPasso(${i},'opcoes',this.value)">`
       : '';
+    // UI de saltos condicionais (opções e sim/não)
+    let saltosField = '';
+    if (p.tipo === 'opcoes' || p.tipo === 'sim_nao') {
+      const labels = p.tipo === 'sim_nao' ? ['Sim', 'Não'] : (p.opcoes || []);
+      if (labels.length) {
+        const destinos = (selIdx) => {
+          const atual = (p.saltos && p.saltos[String(selIdx)]) || '';
+          const optsPerg = questState.passos
+            .filter((pp, j) => j !== i && (pp.id || '').trim())
+            .map(pp => `<option value="${escAttr(pp.id)}" ${atual === pp.id ? 'selected' : ''}>→ ${escAttr(pp.id)}${pp.pergunta_curta ? ' ('+escAttr(pp.pergunta_curta)+')' : ''}</option>`).join('');
+          return `<option value="" ${!atual ? 'selected' : ''}>Seguir normal</option>${optsPerg}<option value="__fim__" ${atual === '__fim__' ? 'selected' : ''}>Encerrar (recomendar)</option>`;
+        };
+        saltosField = `<div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:8px;margin:4px 0">
+          <div class="fu-hint" style="margin-bottom:6px">Saltos condicionais — para onde ir conforme a escolha:</div>
+          ${labels.map((lab, k) => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+            <span style="font-size:12px;color:var(--text2);min-width:90px">${k + 1} - ${escapeHtml(lab)}</span>
+            <select class="fu-textarea quest-mini" style="margin:0;max-width:260px" onchange="questSetSalto(${i},${k + 1},this.value)">${destinos(k + 1)}</select>
+          </div>`).join('')}
+        </div>`;
+      }
+    }
     return `<div class="quest-card">
       <div class="quest-card-head">
         <span class="quest-num">#${i + 1}</span>
@@ -2564,6 +2586,7 @@ function renderQuestPassos() {
       </div>
       <input type="text" class="fu-textarea quest-mini" placeholder="Pergunta enviada ao lead" value="${escAttr(p.pergunta)}" oninput="questSetPasso(${i},'pergunta',this.value)">
       ${opcoesField}
+      ${saltosField}
       <div class="quest-row2">
         <input type="text" class="fu-textarea quest-mini" placeholder="ID p/ regras (ex: pessoas)" value="${escAttr(p.id)}" oninput="questSetPasso(${i},'id',this.value)">
         <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
@@ -2577,6 +2600,13 @@ function renderQuestPassos() {
       <label class="quest-aguardar"><input type="checkbox" ${p.aguardar !== false ? 'checked' : ''} onchange="questSetPasso(${i},'aguardar',this.checked)"> Aguardar resposta do lead <span class="quest-aguardar-hint">(desmarque p/ só enviar material e seguir)</span></label>
     </div>`;
   }).join('');
+}
+
+function questSetSalto(i, indiceOpcao, destino) {
+  if (!questState.passos[i]) return;
+  if (!questState.passos[i].saltos) questState.passos[i].saltos = {};
+  if (destino) questState.passos[i].saltos[String(indiceOpcao)] = destino;
+  else delete questState.passos[i].saltos[String(indiceOpcao)];
 }
 
 function questSetPasso(i, campo, valor) {
@@ -2687,7 +2717,8 @@ async function salvarQuestionario() {
         opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
         imagem: p.imagem || '',
         delay_segundos: Math.max(0, parseInt(p.delay_segundos, 10) || 0),
-        aguardar: p.aguardar !== false
+        aguardar: p.aguardar !== false,
+        saltos: (p.tipo === 'opcoes' || p.tipo === 'sim_nao') && p.saltos && Object.keys(p.saltos).length ? p.saltos : undefined
       }));
     // Destino: template de autoatendimento OU questionário do cliente.
     if (questState.templateId) {
