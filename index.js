@@ -4896,6 +4896,60 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   return { ok: true, coluna: { id: colunaId, nome: row.coluna_nome, etapa_sistema: etapa } };
 }
 
+app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    const telefoneRaw = String(req.query.telefone || '').trim();
+    if (!telefoneRaw) return res.status(400).json({ error: 'Informe o telefone.' });
+    const variantes = variantesTelefone(telefoneRaw);
+    if (!variantes.length) return res.status(400).json({ error: 'Telefone inválido.' });
+
+    const ph = variantes.map((_, i) => '$' + (i + 2)).join(',');
+    const rl = await query(
+      `SELECT l.*, camp.nome AS campanha_nome, camp.template_id AS camp_template_id,
+              camp.questionario_ativo AS camp_quest_ativo, camp.questionario_template_id AS camp_quest_template_id,
+              ft.nome AS template_followup_nome, qt.nome AS template_quest_nome
+         FROM movatak_leads l
+         LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
+         LEFT JOIN movatak_followup_templates ft ON ft.id = COALESCE(camp.template_id, l.template_id_origem)
+         LEFT JOIN movatak_questionario_templates qt ON qt.id = camp.questionario_template_id
+        WHERE l.cliente_id = $1 AND l.telefone IN (${ph})
+        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC LIMIT 1`,
+      [clienteId, ...variantes]
+    );
+    if (!rl.rows.length) return res.json({ encontrado: false, variantes_buscadas: variantes });
+    const lead = rl.rows[0];
+
+    const [estado, eventos, followups] = await Promise.all([
+      query(`SELECT id, passo_idx, tentativas_invalidas, status, atualizado_em FROM movatak_questionario_estado WHERE lead_id = $1 ORDER BY id DESC LIMIT 3`, [lead.id]).catch(() => ({ rows: [] })),
+      query(`SELECT tipo, descricao, criado_em FROM movatak_lead_eventos WHERE lead_id = $1 ORDER BY id DESC LIMIT 15`, [lead.id]).catch(() => ({ rows: [] })),
+      query(`SELECT sequencia_fu, etapa_seq, status, proximo_envio FROM movatak_followup WHERE lead_id = $1 ORDER BY COALESCE(sequencia_fu,1), etapa_seq`, [lead.id]).catch(() => ({ rows: [] }))
+    ]);
+
+    // Qual fonte de questionário este lead usa?
+    let fonteQuest = 'Questionário do cliente (padrão)';
+    if (lead.camp_quest_ativo === false) fonteQuest = 'Sem autoatendimento (vai direto ao follow-up)';
+    else if (lead.camp_quest_template_id) fonteQuest = 'Modelo: ' + (lead.template_quest_nome || ('#' + lead.camp_quest_template_id));
+
+    res.json({
+      encontrado: true,
+      variantes_buscadas: variantes,
+      lead: {
+        id: lead.id, nome: lead.nome, telefone: lead.telefone, etapa: lead.etapa,
+        automacao_pausada: lead.automacao_pausada,
+        campanha: lead.campanha_nome || null,
+        gatilho_detectado: lead.gatilho_detectado || null,
+        template_followup: lead.template_followup_nome || 'Padrão do cliente',
+        fonte_questionario: fonteQuest,
+        criado_em: lead.criado_em, atualizado_em: lead.atualizado_em
+      },
+      questionario_estado: estado.rows,
+      eventos: eventos.rows,
+      followups: followups.rows
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
