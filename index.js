@@ -1940,9 +1940,18 @@ function textoBateGatilho(texto, gatilho) {
 function contemComando(texto, comandos) {
   if (!Array.isArray(comandos) || !comandos.length) return false;
   const t = normalizarComandoComparacao(texto);
+  if (!t) return false;
   return comandos.some(cmd => {
     const c = normalizarComandoComparacao(cmd);
-    return c && (t === c || t.includes(c));
+    if (!c) return false;
+    if (t === c) return true;
+    // Comandos com # são delimitados e intencionais: podem aparecer em qualquer
+    // posição da mensagem (ex.: "Fechado! #ana").
+    if (c.startsWith('#')) return t.includes(c);
+    // Comandos sem # (ex.: slug de nome "ana") exigem correspondência como
+    // PALAVRA ISOLADA, para não casar com substrings ("banana", "semana").
+    const re = new RegExp('(^|[^a-z0-9])' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)');
+    return re.test(t);
   });
 }
 
@@ -3211,7 +3220,22 @@ app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', authMovatak, asy
 // ============================================================
 function erroEstruturaBanco(e) {
   const msg = String((e && e.message) || '').toLowerCase();
-  return msg.includes('does not exist') || msg.includes('não existe') || msg.includes('nao existe') || msg.includes('column') || msg.includes('relation');
+  // Apenas erros de ESTRUTURA AUSENTE (tabela/coluna que não existe) devem ser
+  // tratados como "migração ainda não aplicada". Erros de USO de coluna
+  // (ex.: "must appear in the GROUP BY clause", "is ambiguous") são bugs de query
+  // e NÃO podem ser silenciados — foi o que mascarou o bug do GROUP BY.
+  const estruturaAusente =
+    msg.includes('does not exist') ||
+    msg.includes('não existe') ||
+    msg.includes('nao existe') ||
+    msg.includes('undefined column') ||
+    msg.includes('undefined table');
+  const erroDeUso =
+    msg.includes('group by') ||
+    msg.includes('is ambiguous') ||
+    msg.includes('aggregate') ||
+    msg.includes('syntax error');
+  return estruturaAusente && !erroDeUso;
 }
 
 async function garantirEstruturaCampanhasTemplates() {
