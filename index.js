@@ -667,10 +667,11 @@ app.post('/movatak/webhook/mensagem', async (req, res) => {
     const cliente = r.rows.find(c => textoBateGatilho(mensagem, c.trigger_msg));
     if (!cliente) return res.json({ ok: true });
 
-    // Verificar se lead já existe para evitar duplicata
+    // Verificar se lead já existe para evitar duplicata (tolerante ao 9º dígito)
+    const _varDup = variantesTelefone(telefone);
     const existe = await query(
-      'SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
-      [cliente.id, telefone]
+      `SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varDup.map((_, i) => '$' + (i + 2)).join(',')})`,
+      [cliente.id, ..._varDup]
     );
     if (existe.rows.length) return res.json({ ok: true });
 
@@ -724,10 +725,11 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
 
     const cliente = rc.rows[0];
 
-    // Buscar lead
+    // Buscar lead (tolerante ao 9º dígito)
+    const _varRl = variantesTelefone(telefone);
     const rl = await query(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
-      [cliente.id, telefone]
+      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varRl.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+      [cliente.id, ..._varRl]
     );
     if (!rl.rows.length) return res.json({ ok: true });
 
@@ -1062,9 +1064,10 @@ app.post('/movatak/webhook/resposta', async (req, res) => {
 
     const clienteId = rc.rows[0].id;
 
+    const _varResp = variantesTelefone(telefone);
     const rl = await query(
-      `SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2 AND etapa = 'followup'`,
-      [clienteId, telefone]
+      `SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varResp.map((_, i) => '$' + (i + 2)).join(',')}) AND etapa = 'followup'`,
+      [clienteId, ..._varResp]
     );
     if (!rl.rows.length) return res.json({ ok: true });
 
@@ -2093,6 +2096,40 @@ function extrairTelefonePayload(body) {
   return null;
 }
 
+// Gera as variantes de um telefone BR considerando o 9º dígito do celular.
+// Ex.: "5581976041948" (com 9) e "558176041948" (sem 9) são tratados como o mesmo número.
+// Retorna lista de variantes (sempre inclui o original), sem duplicatas.
+function variantesTelefone(tel) {
+  const d = String(tel || '').replace(/\D/g, '');
+  if (!d) return [];
+  const set = new Set([d]);
+  // Formato BR: 55 (DDI) + DD (2) + número (8 ou 9 dígitos)
+  if (d.startsWith('55') && d.length >= 12) {
+    const ddi = d.slice(0, 2);
+    const ddd = d.slice(2, 4);
+    const numero = d.slice(4);
+    if (numero.length === 9 && numero[0] === '9') {
+      // tem o 9 → adiciona versão sem o 9
+      set.add(ddi + ddd + numero.slice(1));
+    } else if (numero.length === 8) {
+      // sem o 9 → adiciona versão com o 9
+      set.add(ddi + ddd + '9' + numero);
+    }
+  }
+  return Array.from(set);
+}
+
+// Busca um lead por telefone tolerando a diferença do 9º dígito.
+async function buscarLeadPorTelefone(clienteId, telefone, extraWhere = '', extraParams = []) {
+  const variantes = variantesTelefone(telefone);
+  if (!variantes.length) return { rows: [] };
+  const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
+  const sql = `SELECT * FROM movatak_leads
+                WHERE cliente_id = $1 AND telefone IN (${placeholders}) ${extraWhere}
+                ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`;
+  return query(sql, [clienteId, ...variantes, ...extraParams]).catch(() => ({ rows: [] }));
+}
+
 function extrairTextoPayloadZapi(body) {
   return (body.text && body.text.message) ? String(body.text.message)
     : (typeof body.text === 'string') ? String(body.text)
@@ -2121,9 +2158,12 @@ async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFal
   }
 
   if ((!rl || !rl.rows.length) && telefone) {
+    // Busca tolerante ao 9º dígito do celular (com/sem o 9).
+    const variantes = variantesTelefone(telefone);
+    const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
     rl = await query(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
-      [clienteId, telefone]
+      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${placeholders}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+      [clienteId, ...variantes]
     );
   }
 
@@ -2401,10 +2441,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Buscar lead pelo telefone
+    // Buscar lead pelo telefone (tolerante ao 9º dígito)
+    const _varMsg = variantesTelefone(telefone);
     const rl = await query(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone = $2',
-      [cliente.id, telefone]
+      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+      [cliente.id, ..._varMsg]
     );
     const lead = rl.rows[0] || null;
 
