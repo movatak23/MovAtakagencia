@@ -857,6 +857,7 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Início/Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
         <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
+        <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
       </td>
     </tr>`;
   }).join('');
@@ -2414,6 +2415,64 @@ const QUEST_TIPOS = [
   { v: 'cep',     t: 'CEP (verifica cobertura)' }
 ];
 
+let diagClienteId = null;
+function abrirDiagnostico(id) {
+  diagClienteId = id;
+  document.getElementById('diag-telefone').value = '';
+  document.getElementById('diag-resultado').innerHTML = '';
+  document.getElementById('modal-diagnostico').classList.add('open');
+  setTimeout(() => { const el = document.getElementById('diag-telefone'); if (el) el.focus(); }, 100);
+}
+
+async function rodarDiagnostico() {
+  const tel = document.getElementById('diag-telefone').value.trim();
+  const box = document.getElementById('diag-resultado');
+  if (!tel) { box.innerHTML = '<div class="fu-hint" style="color:var(--amber)">Digite um telefone.</div>'; return; }
+  box.innerHTML = '<div class="fu-hint">Buscando...</div>';
+  try {
+    const d = await api('/movatak/admin/clientes/' + diagClienteId + '/diagnostico?telefone=' + encodeURIComponent(tel));
+    if (!d.encontrado) {
+      box.innerHTML = '<div class="fu-hint" style="color:var(--amber)">Nenhum lead encontrado. Variantes buscadas: ' + (d.variantes_buscadas || []).join(', ') + '</div>';
+      return;
+    }
+    const L = d.lead;
+    const linha = (k, v) => `<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text3);min-width:150px;font-size:12px">${k}</span><span style="font-size:13px;color:var(--text)">${escapeHtml(String(v == null ? '—' : v))}</span></div>`;
+    const badge = (txt, cor) => `<span style="background:${cor};color:#fff;font-size:11px;padding:2px 8px;border-radius:10px">${escapeHtml(txt)}</span>`;
+    const estadoQuest = (d.questionario_estado || []).map(e =>
+      `<div style="font-size:12px;color:var(--text2);padding:3px 0">#${e.id} — passo ${e.passo_idx}, ${e.tentativas_invalidas || 0} erro(s), ${badge(e.status, e.status === 'em_andamento' ? 'var(--blue)' : (e.status === 'concluido' ? 'var(--green)' : 'var(--text3)'))}</div>`
+    ).join('') || '<div class="fu-hint">Nenhum questionário registrado.</div>';
+    const eventos = (d.eventos || []).map(ev =>
+      `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="color:var(--accent)">${escapeHtml(ev.tipo)}</span> <span style="color:var(--text3)">— ${escapeHtml(ev.descricao || '')}</span><br><span style="color:var(--text3);font-size:11px">${new Date(ev.criado_em).toLocaleString('pt-BR')}</span></div>`
+    ).join('') || '<div class="fu-hint">Nenhum evento.</div>';
+    const fups = (d.followups || []).map(f =>
+      `<div style="font-size:12px;color:var(--text2);padding:2px 0">FU${f.sequencia_fu || 1} msg${f.etapa_seq} — ${badge(f.status, f.status === 'pendente' ? 'var(--amber)' : 'var(--text3)')} ${f.proximo_envio ? '<span style="color:var(--text3)">' + new Date(f.proximo_envio).toLocaleString('pt-BR') + '</span>' : ''}</div>`
+    ).join('') || '<div class="fu-hint">Nenhum follow-up.</div>';
+
+    box.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="font-weight:700;margin-bottom:8px">${escapeHtml(L.nome || 'Lead')} ${L.automacao_pausada ? badge('automação pausada', 'var(--red)') : ''}</div>
+        ${linha('Telefone', L.telefone)}
+        ${linha('Etapa', L.etapa)}
+        ${linha('Campanha', L.campanha)}
+        ${linha('Gatilho detectado', L.gatilho_detectado)}
+        ${linha('Template follow-up', L.template_followup)}
+        ${linha('Fonte do questionário', L.fonte_questionario)}
+        ${linha('Criado em', new Date(L.criado_em).toLocaleString('pt-BR'))}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">Questionário</div>${estadoQuest}
+          <div style="font-weight:600;font-size:13px;margin:12px 0 8px">Follow-ups</div>${fups}
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px;max-height:300px;overflow-y:auto">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">Eventos recentes</div>${eventos}
+        </div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
 async function abrirQuestionario(id) {
   questState = { clienteId: id, templateId: null, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
   document.getElementById('quest-err').textContent = '';
@@ -3857,6 +3916,19 @@ async function sincronizarColunaWhatsapp(colunaId) {
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharFunilAtendimento()">Fechar</button>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-diagnostico">
+  <div class="modal" style="max-width:680px">
+    <button class="modal-close" onclick="document.getElementById('modal-diagnostico').classList.remove('open')">×</button>
+    <h3>🔍 Diagnóstico de Lead</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Digite o telefone para ver o estado completo do lead: qual template/questionário ele usa, eventos recentes e follow-ups. A busca ignora a diferença do 9º dígito.</p>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input type="text" id="diag-telefone" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Ex: 5581976041948" onkeydown="if(event.key==='Enter')rodarDiagnostico()">
+      <button class="btn-save" onclick="rodarDiagnostico()">Buscar</button>
+    </div>
+    <div id="diag-resultado"></div>
   </div>
 </div>
 
