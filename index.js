@@ -204,7 +204,9 @@ const MOVATAK_ADMIN_WA = '558176041948';
 
 async function zapiCriarEtiqueta(instance, token, clientToken, nome) {
   try {
-    const url = `https://api.z-api.io/instances/${instance}/token/${token}/tags`;
+    // Z-API: criação de tag é POST em /business/create-tag (somente contas Business).
+    // O caminho /tags é GET (listar) — usar POST nele retorna 405.
+    const url = `https://api.z-api.io/instances/${instance}/token/${token}/business/create-tag`;
     const res = await axios.post(url, { name: nome }, { headers: { 'Client-Token': clientToken } });
     return res.data;
   } catch(e) {
