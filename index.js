@@ -1303,9 +1303,10 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
 app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT l.*, p.nome AS plano_nome
+      `SELECT l.*, p.nome AS plano_nome, s.nome AS setor_nome, s.cor AS setor_cor
        FROM movatak_leads l
        LEFT JOIN movatak_planos p ON p.id = l.plano_id
+       LEFT JOIN movatak_setores s ON s.id = l.setor_id
        WHERE l.cliente_id = $1
        ORDER BY l.criado_em DESC
        LIMIT 200`,
@@ -1525,6 +1526,189 @@ app.delete('/movatak/admin/clientes/:clienteId/vendedores/:id', authMovatak, asy
     await query('UPDATE movatak_vendedores SET ativo = false WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// Setores (filas) — atendimento dividido por departamento dentro do mesmo WhatsApp
+// ============================================================
+
+// Listar setores de um cliente, com a lista de vendedores vinculados a cada um
+app.get('/movatak/admin/clientes/:id/setores', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT s.id, s.cliente_id, s.nome, s.cor, s.mensagem_saudacao, s.ordem_bot, s.ativo, s.criado_em,
+              COALESCE(
+                json_agg(
+                  json_build_object('id', v.id, 'nome', v.nome)
+                ) FILTER (WHERE v.id IS NOT NULL), '[]'
+              ) AS vendedores
+         FROM movatak_setores s
+         LEFT JOIN movatak_setor_vendedores sv ON sv.setor_id = s.id
+         LEFT JOIN movatak_vendedores v ON v.id = sv.vendedor_id AND COALESCE(v.ativo, true) = true
+        WHERE s.cliente_id = $1 AND COALESCE(s.ativo, true) = true
+        GROUP BY s.id
+        ORDER BY s.ordem_bot, s.nome`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch(e) {
+    console.error('[admin/setores:list]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Criar setor novo
+app.post('/movatak/admin/clientes/:id/setores', authMovatak, async (req, res) => {
+  try {
+    const { nome, cor, mensagem_saudacao, ordem_bot, vendedor_ids } = req.body;
+    if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
+
+    const rc = await query('SELECT id FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!rc.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+
+    const r = await query(
+      `INSERT INTO movatak_setores (cliente_id, nome, cor, mensagem_saudacao, ordem_bot)
+       VALUES ($1,$2,$3,$4,$5)
+       RETURNING id, cliente_id, nome, cor, mensagem_saudacao, ordem_bot, ativo, criado_em`,
+      [req.params.id, nome, cor || '#3B82F6', mensagem_saudacao || null, parseInt(ordem_bot) || 0]
+    );
+    const setor = r.rows[0];
+
+    // Vincula vendedores já na criação, se a lista foi enviada
+    if (Array.isArray(vendedor_ids) && vendedor_ids.length) {
+      for (const vid of vendedor_ids) {
+        await query(
+          `INSERT INTO movatak_setor_vendedores (setor_id, vendedor_id)
+           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+          [setor.id, parseInt(vid)]
+        );
+      }
+    }
+
+    res.json(setor);
+  } catch(e) {
+    console.error('[admin/setores:create]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Editar setor (nome, cor, mensagem, ordem)
+app.patch('/movatak/admin/setores/:id', authMovatak, async (req, res) => {
+  try {
+    const { nome, cor, mensagem_saudacao, ordem_bot } = req.body;
+    const r = await query(
+      `UPDATE movatak_setores
+          SET nome = COALESCE($1, nome),
+              cor = COALESCE($2, cor),
+              mensagem_saudacao = COALESCE($3, mensagem_saudacao),
+              ordem_bot = COALESCE($4, ordem_bot)
+        WHERE id = $5
+        RETURNING id, cliente_id, nome, cor, mensagem_saudacao, ordem_bot, ativo, criado_em`,
+      [nome || null, cor || null, mensagem_saudacao || null, ordem_bot != null ? parseInt(ordem_bot) : null, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Setor não encontrado.' });
+    res.json(r.rows[0]);
+  } catch(e) {
+    console.error('[admin/setores:edit]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Remover setor (soft delete)
+app.delete('/movatak/admin/setores/:id', authMovatak, async (req, res) => {
+  try {
+    await query('UPDATE movatak_setores SET ativo = false WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[admin/setores:delete]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Vincular ou desvincular um vendedor de um setor
+app.post('/movatak/admin/setores/:id/vendedores', authMovatak, async (req, res) => {
+  try {
+    const { vendedor_id } = req.body;
+    if (!vendedor_id) return res.status(400).json({ error: 'vendedor_id é obrigatório.' });
+    await query(
+      `INSERT INTO movatak_setor_vendedores (setor_id, vendedor_id)
+       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [req.params.id, parseInt(vendedor_id)]
+    );
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[admin/setores:vincular-vendedor]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/movatak/admin/setores/:id/vendedores/:vendedorId', authMovatak, async (req, res) => {
+  try {
+    await query(
+      'DELETE FROM movatak_setor_vendedores WHERE setor_id = $1 AND vendedor_id = $2',
+      [req.params.id, req.params.vendedorId]
+    );
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[admin/setores:desvincular-vendedor]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Transferir um lead para outro setor (e opcionalmente outro vendedor) — segue o
+// mesmo padrão de auditoria já usado em /movatak/admin/leads/:id/vendedor
+app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
+  try {
+    const setorDestinoId = req.body && req.body.setor_id ? parseInt(req.body.setor_id) : null;
+    const vendedorDestinoId = req.body && req.body.vendedor_id ? parseInt(req.body.vendedor_id) : null;
+    if (!setorDestinoId) return res.status(400).json({ error: 'setor_id é obrigatório.' });
+
+    const lead = await query(
+      'SELECT id, cliente_id, setor_id, vendedor_id FROM movatak_leads WHERE id = $1',
+      [req.params.id]
+    );
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const leadAtual = lead.rows[0];
+
+    const setorDestino = await query(
+      'SELECT id, nome, cliente_id FROM movatak_setores WHERE id = $1',
+      [setorDestinoId]
+    );
+    if (!setorDestino.rows.length) return res.status(404).json({ error: 'Setor de destino não encontrado.' });
+    if (setorDestino.rows[0].cliente_id !== leadAtual.cliente_id) {
+      return res.status(400).json({ error: 'Setor de destino não pertence ao mesmo cliente do lead.' });
+    }
+
+    if (vendedorDestinoId) {
+      await query(
+        `UPDATE movatak_leads SET setor_id = $1, vendedor_id = $2, atualizado_em = NOW() WHERE id = $3`,
+        [setorDestinoId, vendedorDestinoId, req.params.id]
+      );
+    } else {
+      await query(
+        `UPDATE movatak_leads SET setor_id = $1, atualizado_em = NOW() WHERE id = $2`,
+        [setorDestinoId, req.params.id]
+      );
+    }
+
+    await registrarEventoLead(
+      req.params.id,
+      leadAtual.cliente_id,
+      'transferencia_setor',
+      `Lead transferido para o setor ${setorDestino.rows[0].nome}`,
+      {
+        setor_origem_id: leadAtual.setor_id,
+        setor_destino_id: setorDestinoId,
+        vendedor_origem_id: leadAtual.vendedor_id,
+        vendedor_destino_id: vendedorDestinoId || leadAtual.vendedor_id
+      }
+    );
+
+    res.json({ ok: true });
+  } catch(e) {
+    console.error('[admin/leads:transferir-setor]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Ranking de vendedores
