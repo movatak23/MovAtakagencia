@@ -10,6 +10,8 @@ const { Pool } = require('pg');
 const cron = require('node-cron');
 const axios = require('axios');
 const crypto = require('crypto');
+const http = require('http');
+const { Server: SocketIOServer } = require('socket.io');
 
 const path = require('path');
 const app = express();
@@ -22,6 +24,39 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ============================================================
+// Socket.io — tela de atendimento em tempo real
+// Mantém app.listen funcionando igual antes: criamos um servidor HTTP
+// explícito só para poder amarrar o socket nele, sem mudar nenhuma rota.
+// ============================================================
+const httpServer = http.createServer(app);
+const io = new SocketIOServer(httpServer, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
+io.use((socket, next) => {
+  const secret = socket.handshake.auth && socket.handshake.auth.secret;
+  if (secret !== process.env.MOVATAK_SECRET) {
+    return next(new Error('Não autorizado.'));
+  }
+  next();
+});
+
+io.on('connection', (socket) => {
+  // Cada painel entra na "sala" do cliente que está vendo, para não
+  // receber eventos de outros ISPs clientes do Movatak.
+  socket.on('entrar-cliente', (clienteId) => {
+    if (clienteId) socket.join(`cliente-${clienteId}`);
+  });
+});
+
+// Chame esta função em qualquer ponto do código que precise avisar o
+// painel em tempo real sobre uma mensagem nova de um lead.
+function emitirMensagemLead(clienteId, leadId, mensagem) {
+  if (!clienteId) return;
+  io.to(`cliente-${clienteId}`).emit('mensagem:nova', { leadId, mensagem });
+}
 
 // Logs completos somente quando necessário. Em produção, deixe MOVATAK_DEBUG=false
 // para não poluir o Railway com payloads grandes da Z-API/Rastreiobot.
@@ -4740,6 +4775,15 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl)
     `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url) VALUES ($1,$2,$3,$4,$5)`,
     [leadId, clienteId, direcao, conteudo || null, midiaUrl || null]
   ).catch(e => console.error('[conversa] erro ao registrar:', e.message));
+
+  // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
+  // sem precisar dar reload na tela.
+  emitirMensagemLead(clienteId, leadId, {
+    direcao,
+    conteudo: conteudo || '',
+    midia_url: midiaUrl || null,
+    criado_em: new Date().toISOString()
+  });
 }
 
 async function garantirEstruturaMensagensRapidas() {
@@ -5444,7 +5488,7 @@ app.get('/movatak/version', (req, res) => {
 // Start
 // ============================================================
 const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
   garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
   garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
