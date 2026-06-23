@@ -5435,7 +5435,8 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
               l.criado_em, l.atualizado_em, l.convertido_em,
               v.nome AS vendedor_nome,
               p.nome AS plano_nome, p.valor AS plano_valor,
-              COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes
+              COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
+              MIN(COALESCE(f.sequencia_fu,1)) FILTER (WHERE f.status='pendente')::int AS fu_sequencia_ativa
          FROM movatak_leads l
          LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
          LEFT JOIN movatak_planos p ON p.id = l.plano_id
