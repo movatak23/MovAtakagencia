@@ -2960,7 +2960,8 @@ app.patch('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (re
           .map(m => ({
             resposta: String(m.resposta).trim().toLowerCase(),
             setor_id: parseInt(m.setor_id),
-            coluna_id: m.coluna_id ? parseInt(m.coluna_id) : null
+            coluna_id: m.coluna_id ? parseInt(m.coluna_id) : null,
+            template_id: m.template_id ? parseInt(m.template_id) : null
           }))
       : [];
 
@@ -3906,6 +3907,40 @@ async function avancarQuestionario(cliente, lead, estadoId, respostas, fromIdx, 
   }
 }
 
+// Inicia um questionário/autoatendimento específico (por template) para um lead.
+// Usado pelo Menu de Atendimento: a opção escolhida pode disparar um autoatendimento próprio.
+async function iniciarQuestionarioPorTemplate(cliente, lead, templateId) {
+  try {
+    const r = await query(
+      `SELECT * FROM movatak_questionario_templates WHERE id = $1 AND ativo = true`,
+      [templateId]
+    );
+    if (!r.rows.length) {
+      // Template não encontrado: cai no follow-up normal para não travar o lead.
+      await agendarFollowupV2(lead.id, cliente.id, 1, true);
+      await enviarFollowupsPendentesDoLead(lead.id, 1);
+      return;
+    }
+    const qt = r.rows[0];
+    const clienteEfetivo = {
+      ...cliente,
+      questionario_ativo: true,
+      questionario_intro: qt.intro,
+      questionario_final: qt.final,
+      questionario_intro_imagem: qt.intro_imagem,
+      questionario_final_imagem: qt.final_imagem,
+      questionario_passos: qt.passos || [],
+      questionario_recomendacao: qt.recomendacao || [],
+      questionario_comando_parar: qt.comando_parar,
+      questionario_comando_ativar: qt.comando_ativar,
+      __quest_template_id: qt.id
+    };
+    await iniciarQuestionario(clienteEfetivo, lead);
+  } catch (e) {
+    console.error('[menu][template]', e.message);
+  }
+}
+
 // Retorna um objeto "cliente efetivo": uma cópia do cliente com os campos de
 // questionário sobrescritos pelo template de autoatendimento vinculado à campanha
 // do lead. Se a campanha não tem template, usa o questionário do próprio cliente.
@@ -3990,7 +4025,11 @@ async function processarRespostaMenu(cliente, lead, estado, texto) {
         await query('UPDATE movatak_leads SET funil_coluna_id=$1, atualizado_em=NOW() WHERE id=$2', [escolha.coluna_id, lead.id]).catch(() => null);
       }
       await query(`UPDATE movatak_menu_estado SET status='concluido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
-      await registrarEventoLead(lead.id, cliente.id, 'menu_respondido', 'Lead escolheu setor pelo menu', { resposta: resp, setor_id: escolha.setor_id, coluna_id: escolha.coluna_id || null }).catch(() => null);
+      await registrarEventoLead(lead.id, cliente.id, 'menu_respondido', 'Lead escolheu setor pelo menu', { resposta: resp, setor_id: escolha.setor_id, coluna_id: escolha.coluna_id || null, template_id: escolha.template_id || null }).catch(() => null);
+      // Se a opção aponta para um autoatendimento próprio, inicia ele agora.
+      if (escolha.template_id) {
+        await iniciarQuestionarioPorTemplate(cliente, lead, escolha.template_id).catch(e => console.error('[menu][template-start]', e.message));
+      }
       return true;
     }
 
