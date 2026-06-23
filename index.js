@@ -1283,7 +1283,8 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
     const r = await query(
-      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido
+      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
+              boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -1298,7 +1299,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido } = req.body;
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance) {
       return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
@@ -1311,6 +1312,9 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
     if (permissoes_portal) { campos.push('permissoes_portal = $' + idx + '::jsonb'); valores.push(JSON.stringify(normalizarPermissoes(permissoes_portal))); idx++; }
     if (acao_arquivar_ao_final !== undefined) { campos.push('acao_arquivar_ao_final = $' + idx); valores.push(!!acao_arquivar_ao_final); idx++; }
     if (acao_marcar_nao_lido !== undefined) { campos.push('acao_marcar_nao_lido = $' + idx); valores.push(!!acao_marcar_nao_lido); idx++; }
+    if (boas_vindas_lead_msg1 !== undefined) { campos.push('boas_vindas_lead_msg1 = $' + idx); valores.push(boas_vindas_lead_msg1 || null); idx++; }
+    if (boas_vindas_lead_msg2 !== undefined) { campos.push('boas_vindas_lead_msg2 = $' + idx); valores.push(boas_vindas_lead_msg2 || null); idx++; }
+    if (boas_vindas_lead_delay !== undefined) { campos.push('boas_vindas_lead_delay = $' + idx); valores.push(parseInt(boas_vindas_lead_delay) || 5); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
@@ -1742,41 +1746,6 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
     res.json({ ok: true });
   } catch(e) {
     console.error('[admin/leads:transferir-setor]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Marcar / desmarcar conversa como não lida.
-// Atualiza o marcador interno (coluna nao_lida) e, se zapi=true, também marca
-// como não lida no WhatsApp real do cliente via Z-API.
-app.patch('/movatak/admin/leads/:id/nao-lida', authMovatak, async (req, res) => {
-  try {
-    const naoLida = req.body && req.body.nao_lida !== undefined ? !!req.body.nao_lida : true;
-    const usarZapi = req.body && req.body.zapi === true;
-
-    const lead = await query('SELECT id, cliente_id, telefone FROM movatak_leads WHERE id = $1', [req.params.id]);
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const l = lead.rows[0];
-
-    await query('UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2', [naoLida, req.params.id]);
-
-    let zapiOk = null;
-    if (usarZapi && naoLida) {
-      const c = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id = $1', [l.cliente_id]);
-      if (c.rows.length && c.rows[0].zapi_instance) {
-        try {
-          await zapiMarcarNaoLido(c.rows[0].zapi_instance, c.rows[0].zapi_token, c.rows[0].zapi_client_token, l.telefone);
-          zapiOk = true;
-        } catch (e) {
-          console.error('[nao-lida][zapi]', e.message);
-          zapiOk = false;
-        }
-      }
-    }
-
-    res.json({ ok: true, nao_lida: naoLida, zapi: zapiOk });
-  } catch (e) {
-    console.error('[admin/leads:nao-lida]', e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -2861,6 +2830,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const deveIniciarQuest = campanhaPermiteQuest && (temTemplateQuest || cliente.questionario_ativo);
       const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid, campanha_id: campanhaDetectada ? campanhaDetectada.id : null };
 
+      // PASSO ZERO: Boas-Vindas ao Lead (saudação independente, invisível ao sistema).
+      // Enviada antes de qualquer fluxo, se preenchida. Não afeta o follow-up.
+      await enviarBoasVindasLead(cliente, telefone);
+
       // Menu de Atendimento "na entrada": manda as boas-vindas (FU1) e o menu,
       // e PARA aqui — o questionário/follow-up segue só após o lead escolher o setor.
       if (cliente.menu_atend_ativo && cliente.menu_atend_posicao === 'apos_boas_vindas') {
@@ -2965,7 +2938,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
 app.get('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req, res) => {
   try {
     const r = await query(
-      `SELECT menu_atend_ativo, menu_atend_texto, menu_atend_posicao, menu_atend_mapa
+      `SELECT menu_atend_ativo, menu_atend_texto, menu_atend_posicao, menu_atend_mapa, menu_atend_marcar_nao_lido
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -2975,7 +2948,8 @@ app.get('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req,
       ativo: !!row.menu_atend_ativo,
       texto: row.menu_atend_texto || '',
       posicao: row.menu_atend_posicao || 'apos_boas_vindas',
-      mapa: Array.isArray(row.menu_atend_mapa) ? row.menu_atend_mapa : []
+      mapa: Array.isArray(row.menu_atend_mapa) ? row.menu_atend_mapa : [],
+      marcar_nao_lido: !!row.menu_atend_marcar_nao_lido
     });
   } catch (e) {
     console.error('[menu-atendimento:get]', e.message);
@@ -2986,7 +2960,7 @@ app.get('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req,
 // Salvar a configuração do menu
 app.patch('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req, res) => {
   try {
-    const { ativo, texto, posicao, mapa } = req.body || {};
+    const { ativo, texto, posicao, mapa, marcar_nao_lido } = req.body || {};
     const posicaoValida = ['apos_boas_vindas', 'apos_questionario'].includes(posicao) ? posicao : 'apos_boas_vindas';
     // mapa = lista de { resposta, setor_id, coluna_id }
     const mapaLimpo = Array.isArray(mapa)
@@ -3005,11 +2979,12 @@ app.patch('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (re
           SET menu_atend_ativo = $1,
               menu_atend_texto = $2,
               menu_atend_posicao = $3,
-              menu_atend_mapa = $4::jsonb
-        WHERE id = $5`,
-      [!!ativo, texto || null, posicaoValida, JSON.stringify(mapaLimpo), req.params.id]
+              menu_atend_mapa = $4::jsonb,
+              menu_atend_marcar_nao_lido = $5
+        WHERE id = $6`,
+      [!!ativo, texto || null, posicaoValida, JSON.stringify(mapaLimpo), !!marcar_nao_lido, req.params.id]
     );
-    res.json({ ok: true, ativo: !!ativo, texto: texto || '', posicao: posicaoValida, mapa: mapaLimpo });
+    res.json({ ok: true, ativo: !!ativo, texto: texto || '', posicao: posicaoValida, mapa: mapaLimpo, marcar_nao_lido: !!marcar_nao_lido });
   } catch (e) {
     console.error('[menu-atendimento:patch]', e.message);
     res.status(500).json({ error: e.message });
@@ -4014,6 +3989,28 @@ async function resolverQuestionarioDoLead(cliente, lead) {
 // Menu de Atendimento — execução no fluxo da conversa
 // ============================================================
 
+// Envia a Boas-Vindas ao Lead (mensagem de saudação independente do follow-up).
+// É o "passo zero": enviada na entrada, se preenchida. NÃO gera evento, NÃO
+// registra conversa, NÃO marca o lead — é totalmente invisível para o sistema.
+// Não interfere na mecânica de follow-up, que segue normalmente depois.
+async function enviarBoasVindasLead(cliente, telefone) {
+  try {
+    const msg1 = (cliente.boas_vindas_lead_msg1 || '').trim();
+    const msg2 = (cliente.boas_vindas_lead_msg2 || '').trim();
+    if (!msg1 && !msg2) return; // nada preenchido → não envia nada (comportamento idêntico ao de hoje)
+    if (msg1) {
+      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg1).catch(e => console.error('[boas-vindas][msg1]', e.message));
+    }
+    if (msg2) {
+      const delaySeg = Math.min(Math.max(parseInt(cliente.boas_vindas_lead_delay) || 5, 1), 60);
+      await new Promise(r => setTimeout(r, delaySeg * 1000));
+      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg2).catch(e => console.error('[boas-vindas][msg2]', e.message));
+    }
+  } catch (e) {
+    console.error('[boas-vindas]', e.message);
+  }
+}
+
 // Envia o menu de atendimento para o lead e cria o estado "aguardando escolha".
 async function enviarMenuAtendimento(cliente, lead) {
   try {
@@ -4064,6 +4061,11 @@ async function processarRespostaMenu(cliente, lead, estado, texto) {
       // Se a opção aponta para um autoatendimento próprio, inicia ele agora.
       if (escolha.template_id) {
         await iniciarQuestionarioPorTemplate(cliente, lead, escolha.template_id).catch(e => console.error('[menu][template-start]', e.message));
+      }
+      // Ação automática ao final do menu: marcar como não lido no WhatsApp (via Z-API)
+      if (cliente.menu_atend_marcar_nao_lido && cliente.zapi_instance) {
+        await zapiMarcarNaoLido(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone)
+          .catch(e => console.error('[menu][nao-lido]', e.message));
       }
       return true;
     }
@@ -5428,7 +5430,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       filtroSetorSql = ' AND l.setor_id = $2';
     }
     const leads = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id, l.nao_lida,
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
               s.nome AS setor_nome, s.cor AS setor_cor,
               l.criado_em, l.atualizado_em, l.convertido_em,
               v.nome AS vendedor_nome,
