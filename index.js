@@ -2899,6 +2899,64 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================
+// Menu de Atendimento — lead escolhe o setor digitando uma opção
+// ============================================================
+
+// Ler a configuração do menu de um cliente
+app.get('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT menu_atend_ativo, menu_atend_texto, menu_atend_posicao, menu_atend_mapa
+         FROM movatak_clientes WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const row = r.rows[0];
+    res.json({
+      ativo: !!row.menu_atend_ativo,
+      texto: row.menu_atend_texto || '',
+      posicao: row.menu_atend_posicao || 'apos_boas_vindas',
+      mapa: Array.isArray(row.menu_atend_mapa) ? row.menu_atend_mapa : []
+    });
+  } catch (e) {
+    console.error('[menu-atendimento:get]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Salvar a configuração do menu
+app.patch('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req, res) => {
+  try {
+    const { ativo, texto, posicao, mapa } = req.body || {};
+    const posicaoValida = ['apos_boas_vindas', 'apos_questionario'].includes(posicao) ? posicao : 'apos_boas_vindas';
+    // mapa = lista de { resposta, setor_id, coluna_id }
+    const mapaLimpo = Array.isArray(mapa)
+      ? mapa
+          .filter(m => m && m.resposta != null && String(m.resposta).trim() !== '' && m.setor_id)
+          .map(m => ({
+            resposta: String(m.resposta).trim().toLowerCase(),
+            setor_id: parseInt(m.setor_id),
+            coluna_id: m.coluna_id ? parseInt(m.coluna_id) : null
+          }))
+      : [];
+
+    await query(
+      `UPDATE movatak_clientes
+          SET menu_atend_ativo = $1,
+              menu_atend_texto = $2,
+              menu_atend_posicao = $3,
+              menu_atend_mapa = $4::jsonb
+        WHERE id = $5`,
+      [!!ativo, texto || null, posicaoValida, JSON.stringify(mapaLimpo), req.params.id]
+    );
+    res.json({ ok: true, ativo: !!ativo, texto: texto || '', posicao: posicaoValida, mapa: mapaLimpo });
+  } catch (e) {
+    console.error('[menu-atendimento:patch]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Atualizar comando de um vendedor
 app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res) => {
   try {
