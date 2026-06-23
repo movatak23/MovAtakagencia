@@ -1650,11 +1650,7 @@ async function salvarFU() {
   const fu2_msg1 = document.getElementById('fu2-msg1').value.trim();
   const fu2_msg2 = document.getElementById('fu2-msg2').value.trim();
   const fu2_msg3 = document.getElementById('fu2-msg3').value.trim();
-  // Validação: pelo menos uma mensagem do FU1
-  if (!fu1_msg1 && !fu1_msg2) {
-    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem no Follow up 1.';
-    return;
-  }
+  // Nenhum campo do Followup é obrigatório — o cliente preenche apenas o que usar.
   document.getElementById('btn-fu-save').textContent = 'Salvando...';
   document.getElementById('fu-err').textContent = '';
   try {
@@ -4111,7 +4107,7 @@ async function sincronizarColunaWhatsapp(colunaId) {
 
     <!-- BLOCO 2: FOLLOW UP 1 -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Boas Vindas - Lead</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Follow up 1</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Enviadas imediatamente quando o lead chega. Se não responder em 1 hora, vai para o Follow up 2.</div>
       <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
       <textarea class="fu-textarea" id="fu1-msg1" rows="3" placeholder="Ex: Olá {nome}! Bem-vindo(a). Você está disponível para prosseguirmos?"></textarea>
