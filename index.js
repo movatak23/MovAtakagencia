@@ -2698,6 +2698,21 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
+    // ===== MENU DE ATENDIMENTO EM ANDAMENTO (lead escolhendo setor) =====
+    // Só age se o cliente tem o menu ativo E existe um estado aguardando para o lead.
+    if (lead && cliente.menu_atend_ativo) {
+      const estMenu = await query(
+        `SELECT * FROM movatak_menu_estado
+          WHERE cliente_id = $1 AND lead_id = $2 AND status = 'aguardando'
+          ORDER BY id DESC LIMIT 1`,
+        [cliente.id, lead.id]
+      ).catch(() => ({ rows: [] }));
+      if (estMenu.rows.length) {
+        await processarRespostaMenu(cliente, lead, estMenu.rows[0], texto);
+        return;
+      }
+    }
+
     // ===== QUESTIONÁRIO EM ANDAMENTO (venda consultiva) =====
     // Se existe um estado em andamento para o lead, a mensagem é tratada pelo
     // motor do questionário. Não depende do flag global do cliente, pois o
@@ -2810,7 +2825,15 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const temTemplateQuest = campanhaDetectada && campanhaDetectada.questionario_template_id;
       const deveIniciarQuest = campanhaPermiteQuest && (temTemplateQuest || cliente.questionario_ativo);
       const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid, campanha_id: campanhaDetectada ? campanhaDetectada.id : null };
-      if (deveIniciarQuest) {
+
+      // Menu de Atendimento "na entrada": manda as boas-vindas (FU1) e o menu,
+      // e PARA aqui — o questionário/follow-up segue só após o lead escolher o setor.
+      if (cliente.menu_atend_ativo && cliente.menu_atend_posicao === 'apos_boas_vindas') {
+        await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
+        await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
+        await enviarMenuAtendimento(cliente, leadObj);
+        console.log(`[zapi] Novo lead + menu de atendimento (entrada) -> ${telefone} (${cliente.nome})`);
+      } else if (deveIniciarQuest) {
         await iniciarQuestionario(cliente, leadObj);
         console.log(`[zapi] Novo lead + questionario iniciado -> ${telefone} (${cliente.nome})`);
       } else {
@@ -3917,6 +3940,70 @@ async function resolverQuestionarioDoLead(cliente, lead) {
   }
 }
 
+// ============================================================
+// Menu de Atendimento — execução no fluxo da conversa
+// ============================================================
+
+// Envia o menu de atendimento para o lead e cria o estado "aguardando escolha".
+async function enviarMenuAtendimento(cliente, lead) {
+  try {
+    const texto = (cliente.menu_atend_texto || '').trim();
+    if (!texto) return false;
+    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, texto);
+    await registrarConversa(lead.id, cliente.id, 'saida', texto, null).catch(() => null);
+    // Pausa o follow-up enquanto o lead decide o setor
+    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]).catch(() => null);
+    // Cria/atualiza o estado de menu (encerra estados antigos do mesmo lead)
+    await query(`UPDATE movatak_menu_estado SET status='cancelado', atualizado_em=NOW() WHERE lead_id=$1 AND status='aguardando'`, [lead.id]).catch(() => null);
+    await query(
+      `INSERT INTO movatak_menu_estado (cliente_id, lead_id, status, tentativas) VALUES ($1, $2, 'aguardando', 0)`,
+      [cliente.id, lead.id]
+    );
+    await registrarEventoLead(lead.id, cliente.id, 'menu_enviado', 'Menu de atendimento enviado ao lead', {}).catch(() => null);
+    return true;
+  } catch (e) {
+    console.error('[menu][enviar]', e.message);
+    return false;
+  }
+}
+
+// Processa a resposta do lead ao menu. Retorna true se tratou (e o fluxo deve parar aqui).
+async function processarRespostaMenu(cliente, lead, estado, texto) {
+  try {
+    const mapa = Array.isArray(cliente.menu_atend_mapa) ? cliente.menu_atend_mapa : [];
+    const resp = String(texto || '').trim().toLowerCase();
+
+    // Tenta casar por resposta exata (número) OU pelo nome do setor
+    let escolha = mapa.find(m => String(m.resposta).trim().toLowerCase() === resp);
+    if (!escolha) {
+      // Casa pelo nome do setor digitado
+      const setoresRes = await query('SELECT id, nome FROM movatak_setores WHERE cliente_id=$1', [cliente.id]).catch(() => ({ rows: [] }));
+      const setorPorNome = setoresRes.rows.find(s => String(s.nome).trim().toLowerCase() === resp);
+      if (setorPorNome) escolha = mapa.find(m => Number(m.setor_id) === Number(setorPorNome.id));
+    }
+
+    if (escolha) {
+      // Grava o setor
+      await query('UPDATE movatak_leads SET setor_id=$1, atualizado_em=NOW() WHERE id=$2', [escolha.setor_id, lead.id]);
+      // Move para a coluna do kanban, se a opção tiver coluna definida
+      if (escolha.coluna_id) {
+        await query('UPDATE movatak_leads SET funil_coluna_id=$1, atualizado_em=NOW() WHERE id=$2', [escolha.coluna_id, lead.id]).catch(() => null);
+      }
+      await query(`UPDATE movatak_menu_estado SET status='concluido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
+      await registrarEventoLead(lead.id, cliente.id, 'menu_respondido', 'Lead escolheu setor pelo menu', { resposta: resp, setor_id: escolha.setor_id, coluna_id: escolha.coluna_id || null }).catch(() => null);
+      return true;
+    }
+
+    // Resposta inválida → vai para atendimento humano (recurso existente)
+    await query(`UPDATE movatak_menu_estado SET status='invalido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
+    await pararAtendimentoLead(cliente.id, lead.id, 'menu_invalido', texto).catch(e => console.error('[menu][parar]', e.message));
+    return true;
+  } catch (e) {
+    console.error('[menu][resposta]', e.message);
+    return false;
+  }
+}
+
 async function iniciarQuestionario(cliente, lead) {
   try {
     cliente = await resolverQuestionarioDoLead(cliente, lead);
@@ -4112,6 +4199,12 @@ async function finalizarQuestionario(cliente, lead, respostas) {
     }
 
     await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
+
+    // Menu de Atendimento "após questionário": agora que o lead terminou as
+    // perguntas, oferece o menu de setor (se ativo e configurado para esta posição).
+    if (cliente.menu_atend_ativo && cliente.menu_atend_posicao === 'apos_questionario') {
+      await enviarMenuAtendimento(cliente, lead).catch(e => console.error('[menu][pos-quest]', e.message));
+    }
   } catch (e) {
     console.error('[questionario][finalizar] erro:', e.message);
   }
