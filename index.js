@@ -1746,6 +1746,41 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
   }
 });
 
+// Marcar / desmarcar conversa como não lida.
+// Atualiza o marcador interno (coluna nao_lida) e, se zapi=true, também marca
+// como não lida no WhatsApp real do cliente via Z-API.
+app.patch('/movatak/admin/leads/:id/nao-lida', authMovatak, async (req, res) => {
+  try {
+    const naoLida = req.body && req.body.nao_lida !== undefined ? !!req.body.nao_lida : true;
+    const usarZapi = req.body && req.body.zapi === true;
+
+    const lead = await query('SELECT id, cliente_id, telefone FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const l = lead.rows[0];
+
+    await query('UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2', [naoLida, req.params.id]);
+
+    let zapiOk = null;
+    if (usarZapi && naoLida) {
+      const c = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id = $1', [l.cliente_id]);
+      if (c.rows.length && c.rows[0].zapi_instance) {
+        try {
+          await zapiMarcarNaoLido(c.rows[0].zapi_instance, c.rows[0].zapi_token, c.rows[0].zapi_client_token, l.telefone);
+          zapiOk = true;
+        } catch (e) {
+          console.error('[nao-lida][zapi]', e.message);
+          zapiOk = false;
+        }
+      }
+    }
+
+    res.json({ ok: true, nao_lida: naoLida, zapi: zapiOk });
+  } catch (e) {
+    console.error('[admin/leads:nao-lida]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Ranking de vendedores
 app.get('/movatak/admin/clientes/:id/ranking', authMovatak, async (req, res) => {
   try {
@@ -5393,7 +5428,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       filtroSetorSql = ' AND l.setor_id = $2';
     }
     const leads = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id, l.nao_lida,
               s.nome AS setor_nome, s.cor AS setor_cor,
               l.criado_em, l.atualizado_em, l.convertido_em,
               v.nome AS vendedor_nome,
