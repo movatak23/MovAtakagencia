@@ -865,7 +865,7 @@ function renderClientes(clientes) {
       <td class="td-mono" style="font-size:13px">—</td>
       <td>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
-        <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Início/Followup</button>
+        <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
         <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
         <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
@@ -3696,11 +3696,29 @@ function enableDragScroll(el) {
   });
 }
 
+// Cor do badge de follow-up conforme a sequência pendente (FU1, FU2, FU3...).
+// Esquema progressivo: começa frio (azul) e esquenta (âmbar → vermelho).
+function corFollowup(seq) {
+  const mapa = {
+    1: { bg: 'rgba(56,138,221,.15)',  fg: '#5aa9ef', label: 'FU1' },
+    2: { bg: 'rgba(245,166,35,.15)',  fg: '#f5a623', label: 'FU2' },
+    3: { bg: 'rgba(229,103,60,.15)',  fg: '#e5673c', label: 'FU3' }
+  };
+  return mapa[seq] || { bg: 'rgba(220,53,69,.15)', fg: '#e35d6a', label: 'FU' + seq };
+}
+
+function renderBadgeFollowup(lead) {
+  const seq = lead.fu_sequencia_ativa || 1;
+  const c = corFollowup(seq);
+  const qtd = lead.followups_pendentes || 0;
+  return `<span class="funil-badge" title="${qtd} mensagem(ns) de follow-up pendente(s) na sequência ${c.label}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.fg}55">${c.label}</span>`;
+}
+
 function renderFunilCard(lead, colunaAtualId) {
   const nome = lead.nome || 'Lead sem nome';
   const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}${lead.plano_valor != null ? ' — R$ ' + formatarValorPlanoBR(lead.plano_valor) : ''}</div>` : '';
   const vendedor = lead.vendedor_nome ? `<div class="funil-card-line">Vendedor: ${escapeHtml(lead.vendedor_nome)}</div>` : '';
-  const pend = lead.followups_pendentes ? `<span class="funil-badge">${lead.followups_pendentes} FU</span>` : '';
+  const pend = lead.followups_pendentes ? renderBadgeFollowup(lead) : '';
   const options = (funilState.colunas || []).map(c => `<option value="${c.id}" ${Number(c.id) === Number(colunaAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`).join('');
   // Selo do setor — só aparece na visão "Todos" (quando não há setor filtrado)
   const seloSetor = (!funilState.setorAtivo && lead.setor_nome)
