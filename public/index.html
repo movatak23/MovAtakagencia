@@ -858,6 +858,7 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Início/Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
         <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
+        <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
         <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
       </td>
     </tr>`;
@@ -3120,6 +3121,153 @@ async function iniciarPaginaFunilAtendimento() {
   }
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
+}
+
+// ============================================================
+// Menu de Atendimento — configuração (botão na linha do cliente)
+// ============================================================
+let menuAtendState = { clienteId: null, setores: [], colunas: [], mapa: [] };
+
+async function abrirMenuAtendimento(id, nome) {
+  menuAtendState = { clienteId: id, setores: [], colunas: [], mapa: [] };
+  let modal = document.getElementById('modal-menu-atend');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'modal-menu-atend';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:620px;position:relative;max-height:90vh;overflow-y:auto">
+        <button class="modal-x" onclick="fecharMenuAtendimento()" title="Fechar">✕</button>
+        <h2 style="margin:0 0 4px;font-size:18px">Menu de Atendimento</h2>
+        <p class="fu-hint" id="menu-atend-cliente" style="margin:0 0 16px"></p>
+
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;user-select:none">
+          <input type="checkbox" id="menu-atend-ativo" style="cursor:pointer">
+          <span style="font-size:14px;font-weight:500">Ativar menu de atendimento</span>
+        </label>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Texto do menu</div>
+        <textarea id="menu-atend-texto" placeholder="Ex: Escolha o setor que deseja atendimento:&#10;1 - Comercial&#10;2 - Suporte&#10;3 - Financeiro"
+          style="width:100%;min-height:90px;padding:10px 12px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px;margin-bottom:16px"></textarea>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Quando enviar o menu</div>
+        <select id="menu-atend-posicao" style="width:100%;padding:9px 12px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);margin-bottom:16px">
+          <option value="apos_boas_vindas">Depois das boas-vindas (na entrada)</option>
+          <option value="apos_questionario">Depois do questionário</option>
+        </select>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Mapeamento das respostas</div>
+        <p class="fu-hint" style="margin:0 0 10px">Para cada resposta que o lead pode digitar, escolha o setor (obrigatório) e a coluna do kanban (opcional).</p>
+        <div id="menu-atend-mapa-lista" style="margin-bottom:10px"></div>
+        <button class="btn-cancel" style="padding:8px 14px;font-size:12px" onclick="adicionarLinhaMapa()">+ Adicionar resposta</button>
+
+        <div class="modal-btns" style="margin-top:20px">
+          <button class="btn-cancel" onclick="fecharMenuAtendimento()">Cancelar</button>
+          <button class="btn-save" id="menu-atend-salvar" onclick="salvarMenuAtendimento()">Salvar</button>
+        </div>
+        <div id="menu-atend-status" style="font-size:12px;margin-top:8px"></div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  document.getElementById('menu-atend-cliente').textContent = nome ? ('Cliente: ' + nome) : '';
+  modal.classList.add('open');
+
+  // Carrega setores, colunas e config em paralelo
+  try {
+    const [funil, config] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/funil'),
+      api('/movatak/admin/clientes/' + id + '/menu-atendimento')
+    ]);
+    menuAtendState.setores = funil.setores || [];
+    menuAtendState.colunas = funil.colunas || [];
+    menuAtendState.mapa = config.mapa || [];
+    document.getElementById('menu-atend-ativo').checked = !!config.ativo;
+    document.getElementById('menu-atend-texto').value = config.texto || '';
+    document.getElementById('menu-atend-posicao').value = config.posicao || 'apos_boas_vindas';
+    if (!menuAtendState.mapa.length) menuAtendState.mapa = [{ resposta: '', setor_id: '', coluna_id: '' }];
+    renderMapaMenu();
+  } catch (e) {
+    document.getElementById('menu-atend-status').style.color = 'var(--red)';
+    document.getElementById('menu-atend-status').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+function fecharMenuAtendimento() {
+  const modal = document.getElementById('modal-menu-atend');
+  if (modal) modal.classList.remove('open');
+}
+
+function renderMapaMenu() {
+  const lista = document.getElementById('menu-atend-mapa-lista');
+  if (!lista) return;
+  const setoresOpts = (idSel) => menuAtendState.setores.map(s =>
+    `<option value="${s.id}" ${Number(s.id) === Number(idSel) ? 'selected' : ''}>${escapeHtml(s.nome)}</option>`
+  ).join('');
+  const colunasOpts = (idSel) => menuAtendState.colunas.map(c =>
+    `<option value="${c.id}" ${Number(c.id) === Number(idSel) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`
+  ).join('');
+  lista.innerHTML = menuAtendState.mapa.map((m, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+      <input type="text" value="${escapeHtml(m.resposta || '')}" placeholder="Resposta" title="O que o lead digita (ex: 1)"
+        style="width:90px;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--mono);font-size:13px"
+        onchange="atualizarLinhaMapa(${i}, 'resposta', this.value)">
+      <select style="flex:1;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-size:13px"
+        onchange="atualizarLinhaMapa(${i}, 'setor_id', this.value)">
+        <option value="">Setor...</option>${setoresOpts(m.setor_id)}
+      </select>
+      <select style="flex:1;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-size:13px"
+        onchange="atualizarLinhaMapa(${i}, 'coluna_id', this.value)">
+        <option value="">Coluna (opcional)</option>${colunasOpts(m.coluna_id)}
+      </select>
+      <button onclick="removerLinhaMapa(${i})" title="Remover"
+        style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--red);font-size:13px;padding:6px 9px;cursor:pointer;flex-shrink:0">🗑</button>
+    </div>`).join('');
+}
+
+function adicionarLinhaMapa() {
+  menuAtendState.mapa.push({ resposta: '', setor_id: '', coluna_id: '' });
+  renderMapaMenu();
+}
+
+function removerLinhaMapa(i) {
+  menuAtendState.mapa.splice(i, 1);
+  if (!menuAtendState.mapa.length) menuAtendState.mapa.push({ resposta: '', setor_id: '', coluna_id: '' });
+  renderMapaMenu();
+}
+
+function atualizarLinhaMapa(i, campo, valor) {
+  if (menuAtendState.mapa[i]) menuAtendState.mapa[i][campo] = valor;
+}
+
+async function salvarMenuAtendimento() {
+  const status = document.getElementById('menu-atend-status');
+  const btn = document.getElementById('menu-atend-salvar');
+  const mapaValido = menuAtendState.mapa.filter(m => String(m.resposta).trim() && m.setor_id);
+  const ativo = document.getElementById('menu-atend-ativo').checked;
+  if (ativo && !mapaValido.length) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Com o menu ativo, mapeie ao menos uma resposta a um setor.';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    await api('/movatak/admin/clientes/' + menuAtendState.clienteId + '/menu-atendimento', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ativo,
+        texto: document.getElementById('menu-atend-texto').value,
+        posicao: document.getElementById('menu-atend-posicao').value,
+        mapa: mapaValido
+      })
+    });
+    status.style.color = 'var(--green)';
+    status.textContent = 'Menu de atendimento salvo.';
+  } catch (e) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Erro: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar';
+  }
 }
 
 async function abrirFunilAtendimento(id, nome) {
