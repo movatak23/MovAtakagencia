@@ -424,6 +424,16 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </div>
         <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
       </div>
+      <div class="form-field full">
+        <label>BOAS-VINDAS AO LEAD</label>
+        <div class="fu-hint" style="margin-bottom:8px">Saudação enviada assim que o lead chega, antes do follow-up. Se deixar em branco, nada é enviado. Não gera marcação no funil.</div>
+        <textarea id="f-boasvindas-msg1" class="fu-textarea" rows="2" placeholder="Mensagem 1 (ex: Olá! Seja bem-vindo à DTFclub.)"></textarea>
+        <textarea id="f-boasvindas-msg2" class="fu-textarea" rows="2" style="margin-top:8px" placeholder="Mensagem 2 (opcional)"></textarea>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <label style="font-size:12px;color:var(--text2);white-space:nowrap">Intervalo entre as mensagens (segundos):</label>
+          <input type="number" id="f-boasvindas-delay" min="1" max="60" value="5" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;width:80px">
+        </div>
+      </div>
       <div class="form-field full" id="planos-section" style="display:none">
         <label>PLANOS / PACOTES (usados na recomendação)</label>
         <div class="fu-hint" style="margin-bottom:8px">A recomendação soma a pontuação das perguntas de "opções numeradas" e sugere o plano de maior <strong>nota mínima</strong> que o lead alcançar. Cadastre do menor (nota baixa) para o maior (nota alta).</div>
@@ -915,6 +925,12 @@ async function abrirEdicao(id) {
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
     setPermissoesPortal(c.permissoes_portal || {});
+    const bvm1 = document.getElementById('f-boasvindas-msg1');
+    const bvm2 = document.getElementById('f-boasvindas-msg2');
+    const bvd  = document.getElementById('f-boasvindas-delay');
+    if (bvm1) bvm1.value = c.boas_vindas_lead_msg1 || '';
+    if (bvm2) bvm2.value = c.boas_vindas_lead_msg2 || '';
+    if (bvd)  bvd.value  = c.boas_vindas_lead_delay != null ? c.boas_vindas_lead_delay : 5;
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -946,7 +962,10 @@ async function salvarEdicao() {
         nome, whatsapp, zapi_instance, trigger_msg,
         zapi_token, zapi_client_token: zapi_ct,
         teto_cpl: cpl ? parseFloat(cpl) : null,
-        permissoes_portal: getPermissoesPortal()
+        permissoes_portal: getPermissoesPortal(),
+        boas_vindas_lead_msg1: (document.getElementById('f-boasvindas-msg1')?.value || '').trim(),
+        boas_vindas_lead_msg2: (document.getElementById('f-boasvindas-msg2')?.value || '').trim(),
+        boas_vindas_lead_delay: parseInt(document.getElementById('f-boasvindas-delay')?.value) || 5
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
@@ -3161,6 +3180,15 @@ async function abrirMenuAtendimento(id, nome) {
         <div id="menu-atend-mapa-lista" style="margin-bottom:10px"></div>
         <button class="btn-cancel" style="padding:8px 14px;font-size:12px" onclick="adicionarLinhaMapa()">+ Adicionar resposta</button>
 
+        <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Ação automática ao final do menu</div>
+          <p class="fu-hint" style="margin:0 0 10px">Executada no WhatsApp Business do cliente via Z-API após o lead escolher o setor.</p>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="menu-atend-nao-lido" style="cursor:pointer">
+            <span style="font-size:14px">Marcar como não lido</span>
+          </label>
+        </div>
+
         <div class="modal-btns" style="margin-top:20px">
           <button class="btn-cancel" onclick="fecharMenuAtendimento()">Cancelar</button>
           <button class="btn-save" id="menu-atend-salvar" onclick="salvarMenuAtendimento()">Salvar</button>
@@ -3186,6 +3214,8 @@ async function abrirMenuAtendimento(id, nome) {
     document.getElementById('menu-atend-ativo').checked = !!config.ativo;
     document.getElementById('menu-atend-texto').value = config.texto || '';
     document.getElementById('menu-atend-posicao').value = config.posicao || 'apos_boas_vindas';
+    const chkNaoLido = document.getElementById('menu-atend-nao-lido');
+    if (chkNaoLido) chkNaoLido.checked = !!config.marcar_nao_lido;
     if (!menuAtendState.mapa.length) menuAtendState.mapa = [{ resposta: '', setor_id: '', coluna_id: '' }];
     renderMapaMenu();
   } catch (e) {
@@ -3266,7 +3296,8 @@ async function salvarMenuAtendimento() {
         ativo,
         texto: document.getElementById('menu-atend-texto').value,
         posicao: document.getElementById('menu-atend-posicao').value,
-        mapa: mapaValido
+        mapa: mapaValido,
+        marcar_nao_lido: document.getElementById('menu-atend-nao-lido') ? document.getElementById('menu-atend-nao-lido').checked : false
       })
     });
     status.style.color = 'var(--green)';
@@ -3600,7 +3631,6 @@ function renderFunilCardVendedor(lead, vendedorAtualId) {
     <div class="funil-card-actions">
       <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
       <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
-      <button onclick="alternarNaoLida(${lead.id}, ${lead.nao_lida ? 'false' : 'true'})" title="${lead.nao_lida ? 'Marcar como lida' : 'Marcar como não lida'}" style="color:${lead.nao_lida ? 'var(--text2)' : 'var(--red)'};border-color:var(--border2)">${lead.nao_lida ? '✓ lida' : '● não lida'}</button>
       <select onchange="reatribuirVendedor(${lead.id},this.value)">${opts}</select>
     </div>
   </div>`;
@@ -3671,7 +3701,6 @@ function renderFunilCard(lead, colunaAtualId) {
   const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}${lead.plano_valor != null ? ' — R$ ' + formatarValorPlanoBR(lead.plano_valor) : ''}</div>` : '';
   const vendedor = lead.vendedor_nome ? `<div class="funil-card-line">Vendedor: ${escapeHtml(lead.vendedor_nome)}</div>` : '';
   const pend = lead.followups_pendentes ? `<span class="funil-badge">${lead.followups_pendentes} FU</span>` : '';
-  const badgeNaoLida = lead.nao_lida ? `<span title="Conversa não lida" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--red);margin-left:6px;flex-shrink:0"></span>` : '';
   const options = (funilState.colunas || []).map(c => `<option value="${c.id}" ${Number(c.id) === Number(colunaAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`).join('');
   // Selo do setor — só aparece na visão "Todos" (quando não há setor filtrado)
   const seloSetor = (!funilState.setorAtivo && lead.setor_nome)
@@ -3689,7 +3718,7 @@ function renderFunilCard(lead, colunaAtualId) {
       <input type="checkbox" class="funil-lead-check" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
         style="margin-right:6px;cursor:pointer;flex-shrink:0"
         onclick="event.stopPropagation()" onchange="atualizarSelecaoLote()">
-      <strong>${escapeHtml(nome)}</strong>${pend}${badgeNaoLida}${seloSetor}
+      <strong>${escapeHtml(nome)}</strong>${pend}${seloSetor}
     </div>
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
     ${plano}${vendedor}
@@ -3697,7 +3726,6 @@ function renderFunilCard(lead, colunaAtualId) {
     <div class="funil-card-actions">
       <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
       <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
-      <button onclick="alternarNaoLida(${lead.id}, ${lead.nao_lida ? 'false' : 'true'})" title="${lead.nao_lida ? 'Marcar como lida' : 'Marcar como não lida'}" style="color:${lead.nao_lida ? 'var(--text2)' : 'var(--red)'};border-color:var(--border2)">${lead.nao_lida ? '✓ lida' : '● não lida'}</button>
       <select onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
       ${seletorSetor}
     </div>
@@ -3715,19 +3743,6 @@ async function transferirSetorLead(leadId, setorId) {
     carregarFunilAtendimento();
   } catch (e) {
     alert('Erro ao transferir setor: ' + e.message);
-  }
-}
-
-// Marca/desmarca conversa como não lida (marcador interno + WhatsApp via Z-API)
-async function alternarNaoLida(leadId, naoLida) {
-  try {
-    await api('/movatak/admin/leads/' + leadId + '/nao-lida', {
-      method: 'PATCH',
-      body: JSON.stringify({ nao_lida: naoLida, zapi: naoLida })
-    });
-    carregarFunilAtendimento();
-  } catch (e) {
-    alert('Erro ao marcar não lida: ' + e.message);
   }
 }
 
