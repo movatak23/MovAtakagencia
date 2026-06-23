@@ -5183,6 +5183,7 @@ app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res)
 app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
+    const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
     await garantirFunilPadraoCliente(clienteId);
     const colunasRes = await query(
       `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando
@@ -5195,8 +5196,15 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     const colById = new Map(colunas.map(c => [Number(c.id), c]));
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
+    const params = [clienteId];
+    let filtroSetorSql = '';
+    if (setorFiltro) {
+      params.push(setorFiltro);
+      filtroSetorSql = ' AND l.setor_id = $2';
+    }
     const leads = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id,
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+              s.nome AS setor_nome, s.cor AS setor_cor,
               l.criado_em, l.atualizado_em, l.convertido_em,
               v.nome AS vendedor_nome,
               p.nome AS plano_nome, p.valor AS plano_valor,
@@ -5204,12 +5212,13 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
          FROM movatak_leads l
          LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
          LEFT JOIN movatak_planos p ON p.id = l.plano_id
+         LEFT JOIN movatak_setores s ON s.id = l.setor_id
          LEFT JOIN movatak_followup f ON f.lead_id = l.id
-        WHERE l.cliente_id=$1
-        GROUP BY l.id, v.nome, p.nome, p.valor
+        WHERE l.cliente_id=$1${filtroSetorSql}
+        GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
         ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
         LIMIT 500`,
-      [clienteId]
+      params
     );
 
     for (const lead of leads.rows) {
@@ -5231,7 +5240,15 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       leads: leads.rows.filter(l => l.vendedor_id === v.id)
     }));
 
-    res.json({ colunas, colunasVendedores });
+    // Setores do cliente (para os botões de seleção no topo do funil)
+    const setoresRes = await query(
+      `SELECT id, nome, cor FROM movatak_setores
+        WHERE cliente_id=$1 AND COALESCE(ativo,true)=true
+        ORDER BY ordem_bot ASC, nome ASC`,
+      [clienteId]
+    );
+
+    res.json({ colunas, colunasVendedores, setores: setoresRes.rows, setorAtivo: setorFiltro });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
