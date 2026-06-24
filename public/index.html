@@ -298,7 +298,6 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     <div class="header-right">
       <span id="header-status" style="font-size:12px;color:var(--text2)"></span>
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
-      <button class="btn-sair" onclick="abrirReset()" style="border-color:var(--amber);color:var(--amber)">Reset lead</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -1237,9 +1236,18 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   if (midiaPreview) midiaPreview.style.display = 'none';
   document.getElementById('painel-historico').innerHTML = '<div class="fu-hint">Carregando...</div>';
 
-  const painel = document.getElementById('funil-painel');
-  if (painel) painel.style.right = '0';
+  const vazio = document.getElementById('funil-chat-vazio');
+  const conteudo = document.getElementById('funil-chat-conteudo');
+  if (vazio) vazio.style.display = 'none';
+  if (conteudo) conteudo.style.display = 'flex';
+  marcarItemInboxAtivo(leadId);
   painelTab('conversa');
+
+  const btnArq = document.getElementById('btn-arquivar-lead');
+  if (btnArq) {
+    const leadLocal = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+    btnArq.textContent = (leadLocal && leadLocal.arquivado) ? '↩ Desarquivar' : '🗄 Arquivar';
+  }
 
   // Conversa + Histórico em paralelo
   try {
@@ -1264,12 +1272,39 @@ async function abrirPainelLead(leadId, nomeAbrev) {
       ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
       : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
   }
+
+  // Marca como lido (caixa de entrada + kanban) — não bloqueia a abertura da conversa.
+  marcarLeadComoLido(leadId);
+}
+
+// Atualiza o estado local (sem reload de rede) pra badge de não-lido desaparecer na hora.
+async function marcarLeadComoLido(leadId) {
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+  if (lead) lead.nao_lida = false;
+  renderInboxFunil();
+  try { await api('/movatak/admin/leads/' + leadId + '/marcar-lida', { method: 'PATCH' }); } catch (e) {}
 }
 
 function fecharPainelLead() {
-  const painel = document.getElementById('funil-painel');
-  if (painel) painel.style.right = '-420px';
+  const vazio = document.getElementById('funil-chat-vazio');
+  const conteudo = document.getElementById('funil-chat-conteudo');
+  if (vazio) vazio.style.display = '';
+  if (conteudo) conteudo.style.display = 'none';
   window._painelLeadId = null;
+  marcarItemInboxAtivo(null);
+}
+
+async function arquivarLeadAtual() {
+  if (!window._painelLeadId) return;
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(window._painelLeadId));
+  const arquivar = !(lead && lead.arquivado);
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/arquivar', { method: 'PATCH', body: JSON.stringify({ arquivado: arquivar }) });
+    fecharPainelLead();
+    carregarFunilAtendimento();
+  } catch (e) {
+    alert('Erro ao arquivar: ' + e.message);
+  }
 }
 
 function usarMsgRapidaPainel(id) {
@@ -3047,7 +3082,7 @@ async function iniciarPaginaFunilAtendimento() {
   const nome = params.get('clienteNome') || '';
   if (!id) return;
 
-  funilState = { clienteId: id, clienteNome: nome, colunas: [], setores: [], setorAtivo: null };
+  funilState = { clienteId: id, clienteNome: nome, colunas: [], setores: [], setorAtivo: null, leads: [], totalGeral: 0, filtroInbox: 'todos', buscaInbox: '' };
   const btnMsgs = document.getElementById('btn-msgs-rapidas');
   if (btnMsgs) btnMsgs.style.display = '';
   const headerTitle = document.querySelector('.header-title');
@@ -3058,7 +3093,7 @@ async function iniciarPaginaFunilAtendimento() {
   const main = document.querySelector('main');
   if (main) {
     main.innerHTML = `
-      <div class="funil-page">
+      <div class="funil-page funil-page-3col">
         <div class="funil-page-head">
           <div>
             <h2>Funil de Atendimento</h2>
@@ -3071,10 +3106,6 @@ async function iniciarPaginaFunilAtendimento() {
         <div class="funil-toolbar">
           <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
           <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
-          <div style="display:flex;align-items:center;gap:6px">
-            <button class="btn-cancel" style="padding:9px 14px" onclick="toggleBuscaLead()">🔍 Procurar lead</button>
-            <input id="funil-busca-lead" type="text" placeholder="Nome ou telefone..." style="display:none;background:var(--bg3);border:1px solid var(--accent);border-radius:8px;padding:9px 12px;color:var(--text);font-family:var(--sans);width:200px;outline:none" oninput="filtrarLeadsKanban(this.value)" onkeydown="if(event.key==='Escape'){this.value='';filtrarLeadsKanban('');toggleBuscaLead();}">
-          </div>
           <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
         </div>
         <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;display:none;align-items:center;gap:12px;flex-wrap:wrap">
@@ -3082,55 +3113,79 @@ async function iniciarPaginaFunilAtendimento() {
           <button class="btn-save" style="padding:7px 14px;font-size:12px" onclick="abrirModalLote()">Enviar mensagem em lote</button>
           <button class="btn-cancel" style="padding:7px 14px;font-size:12px" onclick="limparSelecaoLote()">Cancelar seleção</button>
         </div>
-        <div id="funil-board" class="funil-board">
-          <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
-        </div>
-        <div id="funil-vendedores-section" style="margin-top:28px;display:none">
-          <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Distribuição por Vendedor</div>
-          <div class="fu-hint" style="margin-bottom:10px">Leads atribuídos automaticamente ao final do fluxo. Arraste um lead para outro vendedor para reatribuir.</div>
-          <div id="funil-board-vendedores" class="funil-board"></div>
-        </div>
-        <div id="funil-status"></div>
-        <div class="fu-hint" style="margin-top:12px">
-          Arraste o lead para outra etapa para mover no CRM. O sistema também tenta aplicar a lista correspondente no WhatsApp via Z-API.
-        </div>
-      </div>
 
-      <!-- Painel lateral: mensagem rápida + histórico do lead -->
-      <div id="funil-painel" style="position:fixed;top:0;right:-420px;width:400px;height:100vh;background:#1c2030;border-left:1px solid #2a2f3d;z-index:300;display:flex;flex-direction:column;transition:right .25s ease;box-shadow:-6px 0 32px rgba(0,0,0,.7)">
-        <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-          <div>
-            <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
-            <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+        <div class="funil-3col-grid">
+          <!-- Coluna 1: Caixa de entrada (conversas) -->
+          <div class="funil-inbox-col">
+            <div class="funil-inbox-head">
+              <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
+            </div>
+            <div class="funil-inbox-filtros" id="funil-inbox-filtros"></div>
+            <div id="funil-inbox-lista" class="funil-inbox-lista">
+              <div class="state-row"><div class="spinner"></div>Carregando...</div>
+            </div>
           </div>
-          <button onclick="fecharPainelLead()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer;padding:4px 8px">✕</button>
+
+          <!-- Coluna 2: Kanban -->
+          <div class="funil-kanban-col">
+            <div id="funil-board" class="funil-board">
+              <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+            </div>
+            <div id="funil-vendedores-section" style="margin-top:20px;display:none">
+              <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Distribuição por Vendedor</div>
+              <div class="fu-hint" style="margin-bottom:10px">Leads atribuídos automaticamente ao final do fluxo. Arraste um lead para outro vendedor para reatribuir.</div>
+              <div id="funil-board-vendedores" class="funil-board"></div>
+            </div>
+          </div>
+
+          <!-- Coluna 3: Conversa do lead selecionado (sempre visível) -->
+          <div class="funil-chat-col" id="funil-painel">
+            <div id="funil-chat-vazio" class="funil-chat-vazio">
+              <div style="font-size:32px;margin-bottom:8px">💬</div>
+              <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
+            </div>
+            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+                <div>
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
+                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+                </div>
+                <button onclick="arquivarLeadAtual()" id="btn-arquivar-lead" title="Arquivar conversa" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:12px;padding:5px 10px;cursor:pointer">🗄 Arquivar</button>
+              </div>
+              <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+                <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid" style="margin-bottom:8px"></div>
+                <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
+                  <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Mídia incluída:</div>
+                  <div id="painel-midia-el"></div>
+                </div>
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:60px;margin-bottom:8px" placeholder="Mensagem..."></textarea>
+                <div style="display:flex;gap:8px">
+                  <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId)" style="padding:8px 12px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px">+ FU</button>
+                </div>
+                <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
+              </div>
+              <div style="flex:1;overflow-y:auto;padding:0;min-height:0">
+                <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
+                  <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                  <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+                </div>
+                <div id="painel-body-conversa" style="padding:12px 16px;overflow-y:auto">
+                  <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
+                </div>
+                <div id="painel-body-historico" style="padding:12px 16px;display:none;overflow-y:auto">
+                  <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
-        <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-          <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid" style="margin-bottom:8px"></div>
-          <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
-            <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Mídia incluída:</div>
-            <div id="painel-midia-el"></div>
-          </div>
-          <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:70px;margin-bottom:8px" placeholder="Mensagem..."></textarea>
-          <div style="display:flex;gap:8px">
-            <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
-            <button onclick="reativarFollowupManual(window._painelLeadId)" style="padding:8px 12px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px">+ FU</button>
-          </div>
-          <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
-        </div>
-        <div style="flex:1;overflow-y:auto;padding:0">
-          <!-- Tabs -->
-          <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
-            <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
-            <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
-          </div>
-          <div id="painel-body-conversa" style="padding:12px 16px;overflow-y:auto;max-height:calc(100vh - 340px)">
-            <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
-          </div>
-          <div id="painel-body-historico" style="padding:12px 16px;display:none;overflow-y:auto;max-height:calc(100vh - 340px)">
-            <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
-            <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
-          </div>
+
+        <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
+        <div id="funil-status"></div>
+        <div class="fu-hint" style="margin-top:10px">
+          Arraste o lead para outra etapa para mover no CRM. O sistema também tenta aplicar a lista correspondente no WhatsApp via Z-API.
         </div>
       </div>`;
   }
@@ -3355,8 +3410,12 @@ async function carregarFunilAtendimento() {
     funilState.colunas = data.colunas || [];
     funilState.colunasVendedores = data.colunasVendedores || [];
     funilState.setores = data.setores || [];
+    funilState.leads = data.leads || [];
+    funilState.totalGeral = data.totalGeral || 0;
     renderBarraSetores();
     renderFunilAtendimento();
+    renderInboxFunil();
+    carregarMetricasFunil();
   } catch (e) {
     board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
   }
@@ -3375,18 +3434,19 @@ function renderBarraSetores() {
   }
   const setores = funilState.setores || [];
   const ativo = funilState.setorAtivo || null;
-  const btn = (id, nome, cor) => {
+  const btn = (id, nome, cor, count) => {
     const on = (id === ativo) || (id === null && !ativo);
     const corBorda = on ? (cor || 'var(--accent)') : 'var(--border2)';
     const corTexto = on ? (cor || 'var(--accent)') : 'var(--text2)';
+    const badge = (count != null) ? ` <span style="opacity:.75">${count}</span>` : '';
     return `<button onclick="selecionarSetorFunil(${id === null ? 'null' : id})"
       style="background:transparent;border:${on ? '2px' : '1px'} solid ${corBorda};border-radius:8px;
-             color:${corTexto};font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);font-weight:${on ? '600' : '400'}">${escapeHtml(nome)}</button>`;
+             color:${corTexto};font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);font-weight:${on ? '600' : '400'}">${escapeHtml(nome)}${badge}</button>`;
   };
   barra.innerHTML =
     '<span style="font-size:12px;color:var(--text2);margin-right:2px">Setor:</span>' +
-    btn(null, 'Todos') +
-    setores.map(s => btn(s.id, s.nome, s.cor)).join('') +
+    btn(null, 'Todos', null, funilState.totalGeral) +
+    setores.map(s => btn(s.id, s.nome, s.cor, s.leads_count)).join('') +
     `<button onclick="abrirGerenciarSetores()" title="Criar, editar ou excluir setores"
       style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">⚙ Gerenciar setores</button>`;
 }
@@ -3394,6 +3454,164 @@ function renderBarraSetores() {
 function selecionarSetorFunil(setorId) {
   funilState.setorAtivo = setorId;
   carregarFunilAtendimento();
+}
+
+// ── Caixa de entrada (coluna 1) ──────────────────────────────
+function filtrosInboxDefs() {
+  return [
+    { id: 'todos', label: 'Todos' },
+    { id: 'nao_lidos', label: 'Não lidos' },
+    { id: 'arquivados', label: 'Arquivados' },
+    { id: 'nao_atribuidos', label: 'Não atribuídos' }
+  ];
+}
+
+function contagemInbox(tipo) {
+  const base = funilState.leads || [];
+  if (tipo === 'todos') return base.filter(l => !l.arquivado).length;
+  if (tipo === 'arquivados') return base.filter(l => l.arquivado).length;
+  if (tipo === 'nao_lidos') return base.filter(l => !l.arquivado && l.nao_lida).length;
+  if (tipo === 'nao_atribuidos') return base.filter(l => !l.arquivado && !l.vendedor_id).length;
+  return 0;
+}
+
+function leadsFiltradosInbox() {
+  const termo = (funilState.buscaInbox || '').toLowerCase().trim();
+  const tipo = funilState.filtroInbox || 'todos';
+  let lista = (funilState.leads || []).slice();
+  if (tipo === 'arquivados') {
+    lista = lista.filter(l => l.arquivado);
+  } else {
+    lista = lista.filter(l => !l.arquivado);
+    if (tipo === 'nao_lidos') lista = lista.filter(l => l.nao_lida);
+    if (tipo === 'nao_atribuidos') lista = lista.filter(l => !l.vendedor_id);
+  }
+  if (termo) {
+    lista = lista.filter(l =>
+      String(l.nome || '').toLowerCase().includes(termo) ||
+      String(l.telefone || '').toLowerCase().includes(termo)
+    );
+  }
+  lista.sort((a, b) => {
+    const ta = new Date(a.ultima_msg_em || a.atualizado_em || a.criado_em).getTime() || 0;
+    const tb = new Date(b.ultima_msg_em || b.atualizado_em || b.criado_em).getTime() || 0;
+    return tb - ta;
+  });
+  return lista;
+}
+
+function renderFiltrosInbox() {
+  const wrap = document.getElementById('funil-inbox-filtros');
+  if (!wrap) return;
+  const ativo = funilState.filtroInbox || 'todos';
+  wrap.innerHTML = filtrosInboxDefs().map(f => {
+    const on = f.id === ativo;
+    return `<button onclick="aplicarFiltroInbox('${f.id}')" class="inbox-filtro-btn${on ? ' active' : ''}">${f.label} <span>${contagemInbox(f.id)}</span></button>`;
+  }).join('');
+}
+
+function aplicarFiltroInbox(tipo) {
+  funilState.filtroInbox = tipo;
+  renderFiltrosInbox();
+  renderInboxFunil();
+}
+
+function filtrarInbox(termo) {
+  funilState.buscaInbox = termo;
+  renderInboxFunil();
+}
+
+const PALETA_AVATAR_INBOX = ['#5B7FFF', '#00D084', '#F5A623', '#E85D75', '#9B6BFF', '#22B8CF', '#FF7A59'];
+function corAvatarLead(nome) {
+  const s = String(nome || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 997;
+  return PALETA_AVATAR_INBOX[Math.abs(h) % PALETA_AVATAR_INBOX.length];
+}
+
+function iniciaisAvatarLead(nome) {
+  const partes = String(nome || '?').trim().split(/\s+/);
+  const a = partes[0] ? partes[0][0] : '?';
+  const b = partes.length > 1 ? partes[partes.length - 1][0] : '';
+  return (a + b).toUpperCase();
+}
+
+function horaCurtaInbox(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const hoje = new Date();
+  const mesmoDia = d.toDateString() === hoje.toDateString();
+  return mesmoDia
+    ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+function etapaDoLead(lead) {
+  return (funilState.colunas || []).find(c => Number(c.id) === Number(lead.funil_coluna_id)) || null;
+}
+
+function renderInboxFunil() {
+  renderFiltrosInbox();
+  const box = document.getElementById('funil-inbox-lista');
+  if (!box) return;
+  const lista = leadsFiltradosInbox();
+  if (!lista.length) {
+    box.innerHTML = '<div class="fu-hint" style="padding:18px;text-align:center">Nenhuma conversa aqui.</div>';
+    return;
+  }
+  box.innerHTML = lista.map(lead => {
+    const ativo = (window._painelLeadId != null && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
+    const naoLida = lead.arquivado ? false : !!lead.nao_lida;
+    const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
+    const preview = lead.ultima_msg ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56) : 'Sem mensagens ainda';
+    const col = etapaDoLead(lead);
+    const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
+    return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
+              onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')">
+      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</div>
+      <div class="inbox-info">
+        <div class="inbox-top-row">
+          <strong>${escapeHtml(lead.nome || 'Sem nome')}</strong>
+          <span class="inbox-time">${horaCurtaInbox(lead.ultima_msg_em || lead.atualizado_em)}</span>
+        </div>
+        <div class="inbox-preview">${escapeHtml(preview)}</div>
+        <div class="inbox-tags">
+          <span class="tag-whatsapp">WhatsApp</span>
+          ${col ? `<span class="tag-etapa" style="color:${col.cor || '#9aa3b2'};border-color:${col.cor || '#6b7280'}66">${escapeHtml(col.nome)}</span>` : ''}
+          ${lead.arquivado ? '<span class="tag-arquivado">Arquivado</span>' : ''}
+        </div>
+      </div>
+      ${naoLida ? '<span class="inbox-dot" title="Não lida"></span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+function marcarItemInboxAtivo(leadId) {
+  document.querySelectorAll('#funil-inbox-lista .inbox-item').forEach(el => {
+    el.classList.toggle('active', leadId != null && el.dataset.leadId === String(leadId));
+  });
+}
+
+function selecionarLeadInbox(id, nome) {
+  abrirPainelLead(id, nome);
+}
+
+// ── Métricas do rodapé ───────────────────────────────────────
+async function carregarMetricasFunil() {
+  const wrap = document.getElementById('funil-metricas-bar');
+  if (!wrap || !funilState.clienteId) return;
+  try {
+    const qs = funilState.setorAtivo ? ('?setor=' + funilState.setorAtivo) : '';
+    const m = await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/metricas' + qs);
+    wrap.innerHTML = `
+      <div class="funil-metrica-card"><div class="funil-metrica-valor">${m.totalLeads}</div><div class="funil-metrica-label">Total de leads</div></div>
+      <div class="funil-metrica-card"><div class="funil-metrica-valor" style="color:var(--accent)">${m.novasMensagens}</div><div class="funil-metrica-label">Novas mensagens</div></div>
+      <div class="funil-metrica-card"><div class="funil-metrica-valor" style="color:var(--amber)">${m.emNegociacao}</div><div class="funil-metrica-label">Em negociação</div></div>
+      <div class="funil-metrica-card"><div class="funil-metrica-valor" style="color:var(--green)">${m.conversaoMes}%</div><div class="funil-metrica-label">Conversão do mês</div></div>`;
+  } catch (e) {
+    wrap.innerHTML = '<div class="fu-hint">Erro ao carregar métricas.</div>';
+  }
 }
 
 // ── Gerenciar setores (criar / editar / excluir) ────────────
@@ -3725,22 +3943,33 @@ function renderFunilCard(lead, colunaAtualId) {
     `<option value="${s.id}" ${Number(s.id) === Number(lead.setor_id) ? 'selected' : ''}>${escapeHtml(s.nome)}</option>`
   ).join('');
   const seletorSetor = (funilState.setores && funilState.setores.length)
-    ? `<select title="Transferir para outro setor" onchange="transferirSetorLead(${lead.id}, this.value)" style="border-color:var(--accent)"><option value="">Setor...</option>${setoresOpts}</select>`
+    ? `<select title="Transferir para outro setor" onclick="event.stopPropagation()" onchange="transferirSetorLead(${lead.id}, this.value)" style="border-color:var(--accent)"><option value="">Setor...</option>${setoresOpts}</select>`
     : '';
-  return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}" ondragstart="funilDragStart(event, ${lead.id})" ondragend="funilDragEnd(event)">
+  const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 30);
+  const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
+  const preview = lead.ultima_msg
+    ? `<div class="funil-card-preview">${escapeHtml((prefixoVoce + String(lead.ultima_msg)).slice(0, 60))}</div>`
+    : '';
+  const dotNaoLida = lead.nao_lida ? '<span class="funil-card-dot" title="Não lida"></span>' : '';
+  return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
+            ondragstart="funilDragStart(event, ${lead.id})" ondragend="funilDragEnd(event)"
+            onclick="abrirPainelLead(${lead.id}, '${nomeSeguro}')">
     <div class="funil-card-top">
       <input type="checkbox" class="funil-lead-check" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
         style="margin-right:6px;cursor:pointer;flex-shrink:0"
         onclick="event.stopPropagation()" onchange="atualizarSelecaoLote()">
+      <span class="funil-card-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</span>
       <strong>${escapeHtml(nome)}</strong>${pend}${seloSetor}
+      ${dotNaoLida}
     </div>
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
+    ${preview}
     ${plano}${vendedor}
     <div class="funil-card-line">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
     <div class="funil-card-actions">
-      <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
-      <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
-      <select onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
+      <button onclick="event.stopPropagation();abrirMensagemRapidaLead(${lead.id}, '${nomeSeguro}')">Mensagem</button>
+      <button onclick="event.stopPropagation();reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
+      <select onclick="event.stopPropagation()" onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
       ${seletorSetor}
     </div>
   </div>`;
@@ -4284,13 +4513,41 @@ async function sincronizarColunaWhatsapp(colunaId) {
 #modal-funil-atendimento .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
 #funil-status{min-height:18px;font-size:12px;color:var(--text2);margin-top:10px}
 
-.funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px)}
+.funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px);display:flex;flex-direction:column}
 .funil-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px}
 .funil-page-head h2{font-size:24px;font-weight:800;margin-bottom:6px}
 .funil-page-head p{font-size:13px;color:var(--text2)}
-.funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px}
+.funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px;flex-shrink:0}
 .funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:260px;outline:none}
-.funil-page .funil-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(260px,300px);gap:12px;overflow-x:auto;padding-bottom:14px;align-items:start;min-height:65vh;cursor:grab}
+
+/* Grid de 3 colunas: inbox | kanban | chat */
+.funil-3col-grid{display:grid;grid-template-columns:280px 1fr 380px;gap:16px;flex:1;min-height:520px;overflow:hidden}
+.funil-inbox-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden}
+.funil-inbox-head{padding:12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.funil-inbox-head input{width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:9px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;box-sizing:border-box}
+.funil-inbox-filtros{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.inbox-filtro-btn{background:transparent;border:1px solid var(--border2);border-radius:20px;color:var(--text2);font-size:11px;padding:5px 10px;cursor:pointer;font-family:var(--sans)}
+.inbox-filtro-btn span{opacity:.7;margin-left:2px}
+.inbox-filtro-btn.active{border-color:var(--accent);color:var(--accent);font-weight:600}
+.funil-inbox-lista{flex:1;overflow-y:auto;padding:6px}
+.inbox-item{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:10px;cursor:pointer;position:relative;margin-bottom:2px}
+.inbox-item:hover{background:var(--bg4)}
+.inbox-item.active{background:rgba(91,127,255,.14);border:1px solid rgba(91,127,255,.35)}
+.inbox-item.unread .inbox-info strong{color:var(--text)}
+.inbox-avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0}
+.inbox-info{flex:1;min-width:0}
+.inbox-top-row{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
+.inbox-top-row strong{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inbox-time{font-size:10px;color:var(--text3);flex-shrink:0}
+.inbox-preview{font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.inbox-tags{display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap}
+.tag-whatsapp{font-size:9px;color:var(--green);border:1px solid rgba(0,208,132,.35);border-radius:8px;padding:1px 6px}
+.tag-etapa{font-size:9px;border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
+.tag-arquivado{font-size:9px;color:var(--text3);border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
+.inbox-dot{position:absolute;top:12px;right:10px;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--bg3)}
+
+.funil-kanban-col{overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.funil-page .funil-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,260px);gap:12px;overflow-x:auto;overflow-y:auto;padding-bottom:14px;align-items:start;height:100%;cursor:grab}
 .funil-page .funil-board.drag-scrolling{cursor:grabbing;user-select:none}
 .funil-page .funil-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:12px;min-height:300px}
 .funil-page .funil-col-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}
@@ -4304,9 +4561,13 @@ async function sincronizarColunaWhatsapp(colunaId) {
 .funil-page .funil-col-actions button,.funil-page .funil-card-actions button{background:transparent;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:11px;padding:6px 8px;cursor:pointer;font-family:var(--sans)}
 .funil-page .funil-col-actions button:hover,.funil-page .funil-card-actions button:hover{color:var(--text);border-color:var(--accent)}
 .funil-page .funil-cards{display:flex;flex-direction:column;gap:8px}
-.funil-page .funil-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
-.funil-page .funil-card-top{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:3px}
+.funil-page .funil-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;cursor:pointer;position:relative}
+.funil-page .funil-card:hover{border-color:var(--accent)}
+.funil-page .funil-card-top{display:flex;justify-content:flex-start;gap:6px;align-items:center;margin-bottom:3px;flex-wrap:wrap}
 .funil-page .funil-card-top strong{font-size:13px}
+.funil-card-avatar{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
+.funil-card-preview{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.funil-card-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-left:auto;flex-shrink:0}
 .funil-page .funil-badge{font-size:10px;color:var(--amber);border:1px solid rgba(245,166,35,.35);border-radius:20px;padding:2px 6px}
 .funil-page .funil-card-phone{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:6px}
 .funil-page .funil-card-line{font-size:11px;color:var(--text2);margin-top:3px}
@@ -4317,6 +4578,16 @@ async function sincronizarColunaWhatsapp(colunaId) {
 .funil-card[draggable="true"]{cursor:grab}
 .funil-card.dragging{opacity:.55;cursor:grabbing;border-color:var(--accent)}
 .funil-col.drag-over{border-color:var(--accent)!important;box-shadow:0 0 0 1px rgba(91,127,255,.35) inset}
+
+/* Coluna 3: chat fixo */
+.funil-chat-col{background:#1c2030;border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
+
+/* Métricas do rodapé */
+.funil-metricas-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px;flex-shrink:0}
+.funil-metrica-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px 16px;text-align:center}
+.funil-metrica-valor{font-size:24px;font-weight:800;color:var(--text)}
+.funil-metrica-label{font-size:11px;color:var(--text2);margin-top:4px;text-transform:uppercase;letter-spacing:.4px}
 
 #modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
 #modal-quest .quest-switch input{width:18px;height:18px}
