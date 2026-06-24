@@ -3097,15 +3097,7 @@ async function iniciarPaginaFunilAtendimento() {
     main.classList.add('funil-main-3col');
     main.innerHTML = `
       <div class="funil-page funil-page-3col">
-        <div class="funil-page-head">
-          <div>
-            <h2>Funil de Atendimento</h2>
-            <p id="funil-atendimento-subtitulo">${nome ? 'Cliente: ' + escapeHtml(nome) : 'Organize os leads por etapas e sincronize com as listas do WhatsApp.'}</p>
-          </div>
-          <div class="funil-page-actions">
-            <button class="btn-cancel" onclick="window.close()">Fechar janela</button>
-          </div>
-        </div>
+        <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
 
         <div class="funil-3col-grid">
           <!-- Coluna 1: Caixa de entrada (conversas) -->
@@ -3185,7 +3177,6 @@ async function iniciarPaginaFunilAtendimento() {
           </div>
         </div>
 
-        <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
         <div id="funil-status"></div>
         <div class="fu-hint" style="margin-top:10px">
           Arraste o lead para outra etapa para mover no CRM. O sistema também tenta aplicar a lista correspondente no WhatsApp via Z-API.
@@ -4558,9 +4549,6 @@ async function sincronizarColunaWhatsapp(colunaId) {
 main.funil-main-3col{height:calc(100vh - 80px);overflow:hidden}
 .funil-main-3col .funil-page{height:100%;min-height:0}
 .funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px);display:flex;flex-direction:column}
-.funil-page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px;flex-shrink:0}
-.funil-page-head h2{font-size:24px;font-weight:800;margin-bottom:6px}
-.funil-page-head p{font-size:13px;color:var(--text2)}
 .funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
 .funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:200px;flex:1;outline:none}
 
@@ -4629,10 +4617,10 @@ main.funil-main-3col{height:calc(100vh - 80px);overflow:hidden}
 .funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
 
 /* Métricas do rodapé */
-.funil-metricas-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px;flex-shrink:0}
-.funil-metrica-card{background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px 16px;text-align:center}
-.funil-metrica-valor{font-size:24px;font-weight:800;color:var(--text)}
-.funil-metrica-label{font-size:11px;color:var(--text2);margin-top:4px;text-transform:uppercase;letter-spacing:.4px}
+.funil-metricas-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;flex-shrink:0}
+.funil-metrica-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:8px 12px;text-align:center}
+.funil-metrica-valor{font-size:16px;font-weight:800;color:var(--text)}
+.funil-metrica-label{font-size:9px;color:var(--text2);margin-top:2px;text-transform:uppercase;letter-spacing:.3px}
 
 #modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
 #modal-quest .quest-switch input{width:18px;height:18px}
