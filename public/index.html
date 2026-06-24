@@ -1190,6 +1190,7 @@ function painelTab(tab) {
     conv.style.display = ''; hist.style.display = 'none';
     tConv.style.borderBottomColor = 'var(--accent)'; tConv.style.color = 'var(--text)';
     tHist.style.borderBottomColor = 'transparent'; tHist.style.color = '#a0aec0';
+    rolarConversaParaFim();
   } else {
     conv.style.display = 'none'; hist.style.display = '';
     tHist.style.borderBottomColor = 'var(--accent)'; tHist.style.color = 'var(--text)';
@@ -3647,11 +3648,11 @@ async function iniciarPaginaFunilAtendimento() {
                 <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
                 <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
               </div>
-              <div style="flex:1;overflow-y:auto;padding:0;min-height:0">
-                <div id="painel-body-conversa" style="padding:12px 16px;overflow-y:auto">
+              <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
                   <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
                 </div>
-                <div id="painel-body-historico" style="padding:12px 16px;display:none;overflow-y:auto">
+                <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
                   <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
                   <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
                 </div>
