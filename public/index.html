@@ -1652,9 +1652,13 @@ async function enviarMensagemPainel() {
     document.getElementById('painel-msg-texto').value = '';
     removerMidiaPainel();
     st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
-    // Recarrega histórico
-    const data = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
-    renderHistoricoPainel(data);
+    // Recarrega a conversa (já deduplicada no backend) + o histórico de eventos.
+    const [convData, histData] = await Promise.all([
+      api('/movatak/admin/leads/' + window._painelLeadId + '/conversas'),
+      api('/movatak/admin/leads/' + window._painelLeadId + '/historico')
+    ]);
+    renderConversaPainel(convData);
+    renderHistoricoPainel(histData);
   } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
 }
 
@@ -3519,6 +3523,8 @@ function adicionarMensagemAoPainel(m) {
   if (!m) return;
   const box = document.getElementById('painel-conversa');
   if (!box) return;
+  // Evita duplicar: se já existe um balão com esse id na tela, ignora.
+  if (m.id && box.querySelector('[data-conversa-id="' + m.id + '"]')) return;
   // Se ainda está com o placeholder de "nenhuma mensagem", limpa primeiro
   if (box.querySelector('div[style*="text-align:center"]')) box.innerHTML = '';
   const saida = m.direcao === 'saida';
@@ -3632,7 +3638,8 @@ async function iniciarPaginaFunilAtendimento() {
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
-                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ou arraste um arquivo aqui)"
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
                   ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                   <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
