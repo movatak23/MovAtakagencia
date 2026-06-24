@@ -1220,8 +1220,9 @@ function renderConversaPainel(msgs) {
       </div>
     </div>`;
   }).join('');
-  // Scroll to bottom
-  box.scrollTop = box.scrollHeight;
+  // Scroll to bottom — quem rola é o wrapper (overflow-y:auto), não esta div interna.
+  const wrap = document.getElementById('painel-body-conversa');
+  if (wrap) wrap.scrollTop = wrap.scrollHeight;
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
@@ -3073,7 +3074,8 @@ function adicionarMensagemAoPainel(m) {
     <div style="font-size:10px;color:${saida ? '#93c5fd' : '#888'};margin-top:3px;text-align:right">${hora}</div>
   </div>`;
   box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
+  const wrap = document.getElementById('painel-body-conversa');
+  if (wrap) wrap.scrollTop = wrap.scrollHeight;
 }
 
 async function iniciarPaginaFunilAtendimento() {
@@ -3152,7 +3154,20 @@ async function iniciarPaginaFunilAtendimento() {
                 </div>
                 <button onclick="arquivarLeadAtual()" id="btn-arquivar-lead" title="Arquivar conversa" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:12px;padding:5px 10px;cursor:pointer">🗄 Arquivar</button>
               </div>
-              <div style="padding:12px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+              <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
+                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+              </div>
+              <div style="flex:1;overflow-y:auto;padding:0;min-height:0">
+                <div id="painel-body-conversa" style="padding:12px 16px;overflow-y:auto">
+                  <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
+                </div>
+                <div id="painel-body-historico" style="padding:12px 16px;display:none;overflow-y:auto">
+                  <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
+                </div>
+              </div>
+              <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
                 <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Mídia incluída:</div>
                   <div id="painel-midia-el"></div>
@@ -3164,19 +3179,6 @@ async function iniciarPaginaFunilAtendimento() {
                   <button onclick="reativarFollowupManual(window._painelLeadId)" style="padding:8px 12px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px">+ FU</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
-              </div>
-              <div style="flex:1;overflow-y:auto;padding:0;min-height:0">
-                <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
-                  <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
-                  <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
-                </div>
-                <div id="painel-body-conversa" style="padding:12px 16px;overflow-y:auto">
-                  <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
-                </div>
-                <div id="painel-body-historico" style="padding:12px 16px;display:none;overflow-y:auto">
-                  <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
-                  <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
-                </div>
               </div>
             </div>
           </div>
@@ -4565,8 +4567,9 @@ async function sincronizarColunaWhatsapp(colunaId) {
 .inbox-info{flex:1;min-width:0}
 .inbox-top-row{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
 .inbox-top-row strong{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.inbox-time{font-size:10px;color:var(--text3);flex-shrink:0}
-.inbox-preview{font-size:12px;color:var(--text3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.inbox-time{font-size:10px;color:var(--text);flex-shrink:0}
+.inbox-preview{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.inbox-item.unread .inbox-preview{font-weight:700}
 .inbox-tags{display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap}
 .tag-whatsapp{font-size:9px;color:var(--green);border:1px solid rgba(0,208,132,.35);border-radius:8px;padding:1px 6px}
 .tag-etapa{font-size:9px;border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
