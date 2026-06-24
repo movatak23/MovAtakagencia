@@ -3412,6 +3412,7 @@ async function carregarFunilAtendimento() {
     funilState.setores = data.setores || [];
     funilState.leads = data.leads || [];
     funilState.totalGeral = data.totalGeral || 0;
+    funilState.totalNaoLidas = data.totalNaoLidas || 0;
     renderBarraSetores();
     renderFunilAtendimento();
     renderInboxFunil();
@@ -3434,19 +3435,22 @@ function renderBarraSetores() {
   }
   const setores = funilState.setores || [];
   const ativo = funilState.setorAtivo || null;
-  const btn = (id, nome, cor, count) => {
+  const badgeNaoLidas = (n) => n > 0
+    ? `<span style="color:#ff5a5a;font-weight:700;margin-left:4px">${n}</span>`
+    : `<span style="color:var(--green);margin-left:4px">${n}</span>`;
+  const btn = (id, nome, cor, count, naoLidas) => {
     const on = (id === ativo) || (id === null && !ativo);
     const corBorda = on ? (cor || 'var(--accent)') : 'var(--border2)';
     const corTexto = on ? (cor || 'var(--accent)') : 'var(--text2)';
-    const badge = (count != null) ? ` <span style="opacity:.75">${count}</span>` : '';
+    const badgeTotal = (count != null) ? ` <span style="opacity:.75">${count}</span>` : '';
     return `<button onclick="selecionarSetorFunil(${id === null ? 'null' : id})"
       style="background:transparent;border:${on ? '2px' : '1px'} solid ${corBorda};border-radius:8px;
-             color:${corTexto};font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);font-weight:${on ? '600' : '400'}">${escapeHtml(nome)}${badge}</button>`;
+             color:${corTexto};font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);font-weight:${on ? '600' : '400'}">${escapeHtml(nome)}${badgeTotal}${badgeNaoLidas(naoLidas || 0)}</button>`;
   };
   barra.innerHTML =
     '<span style="font-size:12px;color:var(--text2);margin-right:2px">Setor:</span>' +
-    btn(null, 'Todos', null, funilState.totalGeral) +
-    setores.map(s => btn(s.id, s.nome, s.cor, s.leads_count)).join('') +
+    btn(null, 'Todos', null, funilState.totalGeral, funilState.totalNaoLidas) +
+    setores.map(s => btn(s.id, s.nome, s.cor, s.leads_count, s.nao_lidas)).join('') +
     `<button onclick="abrirGerenciarSetores()" title="Criar, editar ou excluir setores"
       style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">⚙ Gerenciar setores</button>`;
 }
@@ -3756,6 +3760,13 @@ function renderFunilAtendimento() {
           </div>
         </div>
         <div style="display:flex;align-items:center;gap:4px">${sync}${btnExcluir}</div>
+      </div>
+      <div class="funil-col-setor" style="margin-bottom:8px">
+        <select title="Setor desta etapa — define em quais abas ela aparece" onchange="atribuirSetorColuna(${col.id}, this.value)"
+          style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--sans)">
+          <option value="">Sem setor (só em "Todos")</option>
+          ${(funilState.setores || []).map(s => `<option value="${s.id}" ${Number(s.id) === Number(col.setor_id) ? 'selected' : ''}>${escapeHtml(s.nome)}</option>`).join('')}
+        </select>
       </div>
       <div class="funil-col-comando" style="margin-bottom:8px">
         <input type="text" value="${escapeHtml(col.comando || '')}" placeholder="Comando p/ mover (ex: #pagamento)"
@@ -4130,6 +4141,22 @@ async function salvarComandoColuna(colunaId, valor) {
     if (status) { status.style.color = 'var(--green)'; status.textContent = 'Comando da coluna salvo.'; }
   } catch (e) {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao salvar comando: ' + e.message; }
+  }
+}
+
+// Define a qual setor esta etapa pertence. "Todos" sempre mostra todas as
+// etapas; os demais setores só mostram as etapas atribuídas a eles.
+async function atribuirSetorColuna(colunaId, setorId) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/setor', {
+      method: 'PATCH',
+      body: JSON.stringify({ setor_id: setorId ? parseInt(setorId, 10) : null })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Setor da etapa atualizado.'; }
+    carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao definir setor da etapa: ' + e.message; }
   }
 }
 
