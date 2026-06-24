@@ -4846,9 +4846,14 @@ app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
 app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
   try {
     const dataUrl = (req.body && req.body.dataUrl) || '';
-    const m = /^data:((?:image\/(?:png|jpe?g|webp))|(?:video\/(?:mp4|webm|quicktime))|(?:audio\/(?:webm|ogg|mpeg|mp4|wav|x-m4a|aac)));base64,(.+)$/i.exec(dataUrl);
-    if (!m) return res.status(400).json({ error: 'Arquivo inválido. Envie imagem (PNG, JPG, WEBP), vídeo (MP4, WEBM, MOV) ou áudio (WEBM, OGG, MP3, M4A, WAV).' });
-    const contentType = m[1].toLowerCase();
+    // O navegador pode mandar parâmetros extras no content-type (ex: "audio/webm;codecs=opus")
+    // antes do ";base64," — por isso o (?:;[^;,]+)* aceita qualquer quantidade deles no meio.
+    const m = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[^;,]+)*;base64,(.+)$/i.exec(dataUrl);
+    const TIPOS_PERMITIDOS = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime', 'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
+    const contentType = m ? m[1].toLowerCase() : '';
+    if (!m || !TIPOS_PERMITIDOS.includes(contentType)) {
+      return res.status(400).json({ error: 'Arquivo inválido. Envie imagem (PNG, JPG, WEBP), vídeo (MP4, WEBM, MOV) ou áudio (WEBM, OGG, MP3, M4A, WAV).' });
+    }
     const ehVideo = contentType.startsWith('video/');
     const ehAudio = contentType.startsWith('audio/');
     const tipo = ehVideo ? 'video' : (ehAudio ? 'audio' : 'imagem');
