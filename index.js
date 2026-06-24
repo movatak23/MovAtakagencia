@@ -201,11 +201,12 @@ async function authVendedor(req, res, next) {
 // ============================================================
 const ZAPI_BASE = 'https://api.z-api.io/instances';
 
-// Todas retornam o ID da mensagem que o Z-API devolve no envio (zaapId/messageId) —
-// é esse ID que a gente precisa guardar pra poder apagar a mensagem depois.
+// Todas retornam o ID da mensagem que o Z-API devolve no envio. Pra APAGAR depois,
+// o que o WhatsApp exige é o messageId (ID da mensagem no WhatsApp) — o zaapId é só
+// o ID interno do Z-API e NÃO serve pra apagar. Por isso messageId vem primeiro.
 function extrairIdMensagemZapi(resp) {
   const d = (resp && resp.data) || {};
-  return d.zaapId || d.messageId || d.id || null;
+  return d.messageId || d.id || d.zaapId || null;
 }
 
 async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
@@ -245,11 +246,15 @@ async function zapiEnviarAudio(instance, token, clientToken, telefone, audioUrl)
 // pra isso ainda não testada contra a API real — se o endpoint/formato não bater,
 // me avisa o erro exato que aparecer pra eu ajustar.
 async function zapiApagarMensagem(instance, token, clientToken, telefone, messageId) {
+  // Z-API espera os parâmetros na query string do DELETE, não no body.
+  // owner=true => apagar uma mensagem que NÓS enviamos (delete for everyone).
   const url = `${ZAPI_BASE}/${instance}/token/${token}/messages`;
-  await axios.delete(url, {
+  const resp = await axios.delete(url, {
     headers: { 'Client-Token': clientToken },
-    data: { phone: telefone, messageId, owner: true }
+    params: { messageId, phone: telefone, owner: 'true' }
   });
+  console.log('[zapi][apagar] resposta:', JSON.stringify(resp.data || {}));
+  return resp.data;
 }
 
 async function zapiEtiquetar(instance, token, clientToken, telefone, label) {
@@ -3518,8 +3523,8 @@ app.delete('/movatak/admin/conversas/:id', authMovatak, async (req, res) => {
         await zapiApagarMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id);
         apagadaNoZap = true;
       } catch (e) {
-        avisoZap = e.response?.data?.error || e.message;
-        console.warn('[conversas][apagar] falha ao apagar no WhatsApp:', avisoZap);
+        avisoZap = e.response?.data?.error || e.response?.data?.message || e.message;
+        console.warn('[conversas][apagar] falha ao apagar no WhatsApp. status:', e.response?.status, 'body:', JSON.stringify(e.response?.data || {}), 'msgId usado:', msg.msg_id);
       }
     } else if (msg.direcao === 'entrada') {
       avisoZap = 'Mensagem recebida do lead — não é possível apagar do lado dele, só do seu painel.';
