@@ -1537,6 +1537,103 @@ async function adicionarMsgRapida() {
   } catch (e) { st.style.color='var(--red)'; st.textContent='Erro: '+e.message; }
 }
 
+// ── Importar mensagens do Auto Atendimento (questionário) como mensagem rápida ──
+let _importarAutoCarregado = false;
+
+async function toggleImportarAutoAtendimento() {
+  const box = document.getElementById('importar-auto-box');
+  if (!box) return;
+  const vaiAbrir = box.style.display === 'none';
+  box.style.display = vaiAbrir ? 'block' : 'none';
+  if (vaiAbrir && !_importarAutoCarregado) {
+    _importarAutoCarregado = true;
+    await carregarTemplatesAutoAtendimento();
+  }
+}
+
+async function carregarTemplatesAutoAtendimento() {
+  const sel = document.getElementById('importar-auto-template');
+  if (!sel || !funilState.clienteId) return;
+  try {
+    const templates = await api('/movatak/admin/clientes/' + funilState.clienteId + '/questionario-templates');
+    if (!templates || !templates.length) {
+      sel.innerHTML = '<option value="">Nenhum template de autoatendimento cadastrado.</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Selecione um template...</option>' +
+      templates.map(t => `<option value="${t.id}">${escapeHtml(t.nome)} (${t.qtd_passos} pergunta${Number(t.qtd_passos) === 1 ? '' : 's'})</option>`).join('');
+    if (templates.length === 1) {
+      sel.value = templates[0].id;
+      await carregarMensagensAutoAtendimento(templates[0].id);
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">Erro ao carregar templates.</option>';
+  }
+}
+
+async function carregarMensagensAutoAtendimento(templateId) {
+  const lista = document.getElementById('importar-auto-lista');
+  if (!lista) return;
+  if (!templateId) { lista.innerHTML = ''; return; }
+  lista.innerHTML = '<div class="fu-hint">Carregando mensagens...</div>';
+  try {
+    const t = await api('/movatak/admin/questionario-templates/' + templateId);
+    const itens = [];
+    if (t.intro) itens.push({ rotulo: 'Introdução', texto: t.intro });
+    (t.passos || []).forEach((p, i) => {
+      if (p && p.pergunta) itens.push({ rotulo: 'Pergunta ' + (i + 1), texto: p.pergunta });
+    });
+    if (t.final) itens.push({ rotulo: 'Mensagem final', texto: t.final });
+    window._itensAutoAtendimento = itens;
+    window._nomeTemplateAutoAtendimento = t.nome || 'Auto Atendimento';
+    if (!itens.length) {
+      lista.innerHTML = '<div class="fu-hint">Esse template não tem nenhum texto pra importar.</div>';
+      return;
+    }
+    lista.innerHTML = `
+      <div onclick="usarTemplateAutoAtendimentoInteiro()"
+        style="padding:8px 10px;background:rgba(91,127,255,.12);border:1px solid var(--accent);border-radius:8px;margin-bottom:8px;cursor:pointer">
+        <strong style="font-size:12px;color:var(--accent)">📋 Usar o autoatendimento inteiro como 1 mensagem</strong>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">Junta introdução + todas as perguntas + mensagem final num texto só.</div>
+      </div>` +
+      itens.map((it, i) => `
+      <div onclick="usarMensagemAutoAtendimento(${i})"
+        style="padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;margin-bottom:6px;cursor:pointer">
+        <strong style="font-size:12px;color:var(--accent)">${escapeHtml(it.rotulo)}</strong>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(it.texto)}</div>
+      </div>`).join('');
+  } catch (e) {
+    lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+// Junta introdução + todas as perguntas + mensagem final em um texto único.
+function usarTemplateAutoAtendimentoInteiro() {
+  const itens = window._itensAutoAtendimento || [];
+  if (!itens.length) return;
+  let numeroPergunta = 0;
+  const blocos = itens.map(it => {
+    if (it.rotulo.startsWith('Pergunta')) { numeroPergunta++; return numeroPergunta + ') ' + it.texto; }
+    return it.texto;
+  });
+  document.getElementById('msg-nova-titulo').value = window._nomeTemplateAutoAtendimento || 'Auto Atendimento';
+  document.getElementById('msg-nova-texto').value = blocos.join('\n\n');
+  const st = document.getElementById('msgs-gerenciar-status');
+  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Autoatendimento inteiro importado abaixo — revise e clique em Adicionar.'; }
+  document.getElementById('msg-nova-texto').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// Copia o texto escolhido pro formulário de "nova mensagem rápida" — Ronaldo revisa/edita e clica Adicionar.
+function usarMensagemAutoAtendimento(idx) {
+  const it = (window._itensAutoAtendimento || [])[idx];
+  if (!it) return;
+  document.getElementById('msg-nova-titulo').value = (window._nomeTemplateAutoAtendimento || 'Auto Atendimento') + ' — ' + it.rotulo;
+  document.getElementById('msg-nova-texto').value = it.texto;
+  const st = document.getElementById('msgs-gerenciar-status');
+  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Texto importado abaixo — revise e clique em Adicionar.'; }
+  document.getElementById('msg-nova-texto').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 async function uploadMidiaMsgExistente(input, msgId) {
   const file = input.files[0];
   if (!file) return;
@@ -4793,6 +4890,19 @@ main.funil-main-3col{height:calc(100vh - 80px);overflow:hidden}
     <h3>Mensagens Rápidas</h3>
     <div class="fu-hint" style="margin-bottom:12px">Mensagens para disparar do kanban com um clique.</div>
     <div id="msgs-rapidas-lista"></div>
+
+    <div style="margin:14px 0 4px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn-add-small" type="button" onclick="toggleImportarAutoAtendimento()">📥 Importar do Auto Atendimento</button>
+      <div id="importar-auto-box" style="display:none;margin-top:10px;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:10px">
+        <p class="fu-hint" style="margin:0 0 8px">Escolha um template e clique numa mensagem para usá-la como mensagem rápida.</p>
+        <select id="importar-auto-template" onchange="carregarMensagensAutoAtendimento(this.value)"
+          style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);margin-bottom:8px">
+          <option value="">Carregando templates...</option>
+        </select>
+        <div id="importar-auto-lista"></div>
+      </div>
+    </div>
+
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:flex-start">
       <input type="text" id="msg-nova-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;flex:1;min-width:130px" placeholder="Título/atalho (ex: Proposta)">
       <textarea id="msg-nova-texto" class="fu-textarea" style="min-height:70px;flex:2;min-width:200px" placeholder="Texto da mensagem..."></textarea>
