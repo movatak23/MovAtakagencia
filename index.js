@@ -3469,37 +3469,46 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
           : Array.isArray(resp.data?.messages) ? resp.data.messages
           : Array.isArray(resp.data?.value) ? resp.data.value : [];
         console.log(`[conversas][zapi] ${msgs.length} msgs para lead ${req.params.id}`);
-        zapiMsgs = msgs.map(m => ({
-          id: 'zapi_' + (m.messageId || m.id || Math.random()),
-          direcao: m.fromMe ? 'saida' : 'entrada',
-          conteudo: m.text?.message || m.body || m.caption || m.text || null,
-          midia_url: m.image?.imageUrl || m.video?.videoUrl || m.audio?.audioUrl || null,
-          criado_em: m.timestamp
-            ? new Date(m.timestamp * 1000).toISOString()
-            : (m.momentsAgo ? new Date(Date.now() - m.momentsAgo * 1000).toISOString() : null),
-          fonte: 'zapi'
-        })).filter(m => m.criado_em && (m.conteudo || m.midia_url));
+        zapiMsgs = msgs.map(m => {
+          const realId = m.messageId || m.id || null;
+          return {
+            id: 'zapi_' + (realId || Math.random()),
+            msg_id: realId,
+            direcao: m.fromMe ? 'saida' : 'entrada',
+            conteudo: m.text?.message || m.body || m.caption || m.text || null,
+            midia_url: m.image?.imageUrl || m.video?.videoUrl || m.audio?.audioUrl || null,
+            criado_em: m.timestamp
+              ? new Date(m.timestamp * 1000).toISOString()
+              : (m.momentsAgo ? new Date(Date.now() - m.momentsAgo * 1000).toISOString() : null),
+            fonte: 'zapi'
+          };
+        }).filter(m => m.criado_em && (m.conteudo || m.midia_url));
       } catch (e) {
         console.log('[conversas] Z-API histórico indisponível:', e.message);
       }
     }
 
-    // Mescla: banco tem prioridade. Considera duplicada quando, na mesma direção
-    // e janela de tempo, OU o texto bate (mensagens de texto), OU ambas são mídia
-    // (mensagens de mídia não têm texto pra comparar, então casamos por ser-mídia +
-    // proximidade de horário — senão a mesma foto/áudio aparece 2x: 1 do banco, 1 do Z-API).
+    // Mescla banco + Z-API sem duplicar. Ordem de prioridade do de-dup:
+    //   1) msg_id igual → é exatamente a mesma mensagem (mais confiável).
+    //   2) Saída (fromMe): tudo que sai do painel já é gravado no banco na hora do
+    //      envio, então qualquer mensagem 'saida' do Z-API com horário próximo de uma
+    //      'saida' do banco é a mesma — descarta a do Z-API.
+    //   3) Entrada: casa por texto idêntico (texto) ou por ser-mídia (mídia), em janela de tempo.
+    const idsBanco = new Set(banco.map(b => b.msg_id).filter(Boolean));
     const todos = [...banco];
     for (const zm of zapiMsgs) {
+      if (zm.msg_id && idsBanco.has(zm.msg_id)) continue; // 1) mesmo ID, já está no banco
       const dt = new Date(zm.criado_em).getTime();
       const zmTemMidia = !!zm.midia_url;
       const duplicado = banco.some(b => {
         if (b.direcao !== zm.direcao) return false;
         const diff = Math.abs(new Date(b.criado_em).getTime() - dt);
-        if (diff >= 60000) return false;
+        if (diff >= 120000) return false;
+        if (zm.direcao === 'saida') return true;                          // 2) toda saída já está no banco
         const bTemMidia = !!b.midia_url;
-        if (bTemMidia && zmTemMidia) return true;              // ambas mídia, mesma janela → mesma msg
-        if (!bTemMidia && !zmTemMidia) return (b.conteudo || '') === (zm.conteudo || ''); // ambas texto
-        return false;                                          // uma é mídia e a outra texto → diferentes
+        if (bTemMidia && zmTemMidia) return true;                         // 3a) ambas mídia
+        if (!bTemMidia && !zmTemMidia) return (b.conteudo || '') === (zm.conteudo || ''); // 3b) ambas texto
+        return false;
       });
       if (!duplicado) todos.push(zm);
     }
