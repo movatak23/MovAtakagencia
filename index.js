@@ -217,6 +217,14 @@ async function zapiEnviarVideo(instance, token, clientToken, telefone, videoUrl,
   });
 }
 
+async function zapiEnviarAudio(instance, token, clientToken, telefone, audioUrl) {
+  // Mensagem de voz (PTT) no WhatsApp não tem legenda — só o áudio.
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-audio`;
+  await axios.post(url, { phone: telefone, audio: audioUrl }, {
+    headers: { 'Client-Token': clientToken }
+  });
+}
+
 async function zapiEtiquetar(instance, token, clientToken, telefone, label) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/label-contact`;
   await axios.post(url, { phone: telefone, labelName: label }, {
@@ -2398,11 +2406,12 @@ function extrairTextoPayloadZapi(body) {
 }
 
 function extrairMidiaPayloadZapi(body) {
-  return (body.image && (body.image.imageUrl || body.image.url)) ||
-    (body.video && (body.video.videoUrl || body.video.url)) ||
-    (body.audio && (body.audio.audioUrl || body.audio.url)) ||
-    (body.document && (body.document.documentUrl || body.document.url)) ||
-    body.fileUrl || body.mediaUrl || null;
+  if (body.image && (body.image.imageUrl || body.image.url)) return { url: body.image.imageUrl || body.image.url, tipo: 'imagem' };
+  if (body.video && (body.video.videoUrl || body.video.url)) return { url: body.video.videoUrl || body.video.url, tipo: 'video' };
+  if (body.audio && (body.audio.audioUrl || body.audio.url)) return { url: body.audio.audioUrl || body.audio.url, tipo: 'audio' };
+  if (body.document && (body.document.documentUrl || body.document.url)) return { url: body.document.documentUrl || body.document.url, tipo: 'documento' };
+  const fallback = body.fileUrl || body.mediaUrl || null;
+  return fallback ? { url: fallback, tipo: null } : { url: null, tipo: null };
 }
 
 async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFallbackRecente = false) {
@@ -2553,8 +2562,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       }
 
       const midiaFromMe = extrairMidiaPayloadZapi(body);
-      if ((texto && String(texto).trim()) || midiaFromMe) {
-        await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe).catch(() => null);
+      if ((texto && String(texto).trim()) || midiaFromMe.url) {
+        await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo).catch(() => null);
       }
 
       if (!ehComandoInterno) {
@@ -2843,7 +2852,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
       // Registra também a primeira mensagem do lead que criou o atendimento.
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
-      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', extrairMidiaPayloadZapi(body)).catch(() => null);
+      const midiaNovoLead = extrairMidiaPayloadZapi(body);
+      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo).catch(() => null);
 
       // Decide se inicia o questionário:
       // - Campanha com template de questionário vinculado → usa o questionário do template.
@@ -3377,7 +3387,7 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
     await garantirEstruturaConversas();
     // Mensagens registradas no banco
     const r = await query(
-      `SELECT id, direcao, conteudo, midia_url, criado_em
+      `SELECT id, direcao, conteudo, midia_url, midia_tipo, criado_em
          FROM movatak_conversas WHERE lead_id = $1
          ORDER BY criado_em ASC LIMIT 300`,
       [req.params.id]
@@ -3739,8 +3749,12 @@ function normalizarCep(cep) {
 }
 
 // Envia mensagem do questionário: com mídia (legenda junto) quando houver, senão texto.
-function tipoMidia(url) {
-  return /\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(String(url || '')) ? 'video' : 'image';
+function tipoMidia(url, hint) {
+  if (hint === 'audio' || hint === 'video' || hint === 'imagem' || hint === 'documento') return hint;
+  const u = String(url || '');
+  if (/\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(u)) return 'video';
+  if (/\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(u)) return 'audio';
+  return 'imagem';
 }
 async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
   // Encontra o lead_id pelo telefone para gravar na conversa
@@ -4822,19 +4836,25 @@ app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
 app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
   try {
     const dataUrl = (req.body && req.body.dataUrl) || '';
-    const m = /^data:((?:image\/(?:png|jpe?g|webp))|(?:video\/(?:mp4|webm|quicktime)));base64,(.+)$/i.exec(dataUrl);
-    if (!m) return res.status(400).json({ error: 'Arquivo inválido. Envie imagem (PNG, JPG, WEBP) ou vídeo (MP4, WEBM, MOV).' });
+    const m = /^data:((?:image\/(?:png|jpe?g|webp))|(?:video\/(?:mp4|webm|quicktime))|(?:audio\/(?:webm|ogg|mpeg|mp4|wav|x-m4a|aac)));base64,(.+)$/i.exec(dataUrl);
+    if (!m) return res.status(400).json({ error: 'Arquivo inválido. Envie imagem (PNG, JPG, WEBP), vídeo (MP4, WEBM, MOV) ou áudio (WEBM, OGG, MP3, M4A, WAV).' });
     const contentType = m[1].toLowerCase();
     const ehVideo = contentType.startsWith('video/');
-    const extMap = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov' };
-    const ext = extMap[contentType] || (ehVideo ? 'mp4' : 'jpg');
+    const ehAudio = contentType.startsWith('audio/');
+    const tipo = ehVideo ? 'video' : (ehAudio ? 'audio' : 'imagem');
+    const extMap = {
+      'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp',
+      'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+      'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac'
+    };
+    const ext = extMap[contentType] || (ehVideo ? 'mp4' : (ehAudio ? 'webm' : 'jpg'));
     const buffer = Buffer.from(m[2], 'base64');
     const limite = ehVideo ? 20 * 1024 * 1024 : 8 * 1024 * 1024;
     if (buffer.length > limite) {
-      return res.status(413).json({ error: ehVideo ? 'Vídeo muito grande (máx 20MB).' : 'Imagem muito grande (máx 8MB).' });
+      return res.status(413).json({ error: ehVideo ? 'Vídeo muito grande (máx 20MB).' : 'Arquivo muito grande (máx 8MB).' });
     }
     const url = await uploadSupabase(buffer, contentType, ext);
-    res.json({ ok: true, url });
+    res.json({ ok: true, url, tipo });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5018,15 +5038,16 @@ async function garantirEstruturaConversas() {
     midia_url TEXT,
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_tipo TEXT`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
 }
 
-async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl) {
+async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo) {
   if (!leadId || !clienteId) return;
   await garantirEstruturaConversas();
   await query(
-    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url) VALUES ($1,$2,$3,$4,$5)`,
-    [leadId, clienteId, direcao, conteudo || null, midiaUrl || null]
+    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null]
   ).catch(e => console.error('[conversa] erro ao registrar:', e.message));
 
   // Mensagem do lead (entrada) marca o lead como não lido — só é "lido" quando
@@ -5041,6 +5062,7 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl)
     direcao,
     conteudo: conteudo || '',
     midia_url: midiaUrl || null,
+    midia_tipo: midiaTipo || null,
     criado_em: new Date().toISOString()
   });
 }
@@ -5127,22 +5149,25 @@ app.post('/movatak/admin/mensagens-rapidas/:id/usar', authMovatak, async (req, r
 
 app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, res) => {
   try {
-    const { texto, midia_url } = req.body || {};
+    const { texto, midia_url, midia_tipo } = req.body || {};
     if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
     const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     const row = rl.rows[0];
+    let tipoFinal = null;
     if (midia_url) {
-      const tipo = tipoMidia(midia_url);
-      if (tipo === 'video') {
+      tipoFinal = tipoMidia(midia_url, midia_tipo);
+      if (tipoFinal === 'video') {
         await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+      } else if (tipoFinal === 'audio') {
+        await zapiEnviarAudio(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url);
       } else {
         await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
       }
     } else {
       await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
     }
-    registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null).catch(() => null);
+    registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
     if (texto) {
