@@ -68,21 +68,21 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .app.visible{display:block}
 header{
   display:flex;align-items:center;justify-content:space-between;
-  padding:20px 32px;border-bottom:1px solid var(--border);
+  padding:10px 32px;border-bottom:1px solid var(--border);
   position:sticky;top:0;background:var(--bg);z-index:10;
 }
-.header-left{display:flex;align-items:center;gap:14px}
+.header-left{display:flex;align-items:center;gap:12px}
 .header-logo{
-  width:38px;height:38px;background:var(--accent);border-radius:10px;
+  width:30px;height:30px;background:var(--accent);border-radius:8px;
   display:flex;align-items:center;justify-content:center;
-  font-size:18px;font-weight:800;color:#fff;
+  font-size:15px;font-weight:800;color:#fff;
 }
-.header-title{font-size:18px;font-weight:800}
-.header-sub{font-size:12px;color:var(--text2);margin-top:1px}
+.header-title{font-size:16px;font-weight:800}
+.header-sub{font-size:11px;color:var(--text2);margin-top:0}
 .header-right{display:flex;align-items:center;gap:16px}
 .btn-sair{
   background:transparent;border:1px solid var(--border2);border-radius:8px;
-  padding:8px 16px;color:var(--text2);font-size:13px;font-family:var(--sans);
+  padding:6px 14px;color:var(--text2);font-size:12px;font-family:var(--sans);
   cursor:pointer;transition:all .2s;
 }
 .btn-sair:hover{border-color:var(--border2);color:var(--text);background:var(--bg2)}
@@ -1222,11 +1222,18 @@ function renderConversaPainel(msgs) {
     const hora = new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
     const midiaHtml = renderMidiaMensagem(m);
     const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
-    return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px">
+    const podeApagar = m.id && m.fonte !== 'zapi';
+    const btnApagar = podeApagar
+      ? `<button onclick="apagarMensagemPainel(${m.id})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
+      : '';
+    return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
       <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px">
         ${midiaHtml}
         ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
-        <div style="font-size:10px;color:${saida ? '#93c5fd' : '#888'};margin-top:3px;text-align:right">${hora}</div>
+        <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
+          <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
+          ${btnApagar}
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -1604,6 +1611,28 @@ async function enviarAudioGravado(file, btn) {
       btn.disabled = false;
       setTimeout(() => { btn.textContent = '🎙️'; }, 1500);
     }
+  }
+}
+
+// Apaga a mensagem do painel e tenta apagar no WhatsApp do lead também
+// (só funciona pra mensagens que a gente enviou, dentro do tempo que o
+// WhatsApp permite "apagar para todos" — geralmente até alguns minutos).
+async function apagarMensagemPainel(conversaId) {
+  if (!confirm('Apagar esta mensagem? O sistema também vai tentar apagá-la no WhatsApp do lead.')) return;
+  const st = document.getElementById('painel-msg-status');
+  try {
+    const resp = await api('/movatak/admin/conversas/' + conversaId, { method: 'DELETE' });
+    const bolha = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
+    if (bolha) bolha.remove();
+    if (st) {
+      if (resp.apagadaNoZap) {
+        st.style.color = 'var(--green)'; st.textContent = '✓ Mensagem apagada (painel + WhatsApp).';
+      } else {
+        st.style.color = 'var(--amber)'; st.textContent = 'Apagada do painel. ' + (resp.avisoZap || 'Pode não ter sido apagada no WhatsApp.');
+      }
+    }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao apagar: ' + e.message; }
   }
 }
 
@@ -3471,6 +3500,14 @@ function iniciarSocketFunil(clienteId) {
       // 2) Atualiza o kanban (com debounce para aguentar rajadas)
       agendarReloadKanban();
     });
+
+    // Mensagem apagada em outra aba/sessão — remove o balão se a conversa estiver aberta aqui.
+    _socketFunil.on('mensagem:apagada', (payload) => {
+      const conversaId = payload && payload.conversaId;
+      if (!conversaId) return;
+      const bolha = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
+      if (bolha) bolha.remove();
+    });
   } catch (e) {
     // Falha de socket nunca pode derrubar a tela; o polling continua valendo.
     console.warn('[socket] não conectou:', e.message);
@@ -3488,12 +3525,20 @@ function adicionarMensagemAoPainel(m) {
   const hora = m.criado_em ? new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
   const midiaHtml = renderMidiaMensagem(m);
   const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
+  const podeApagar = m.id && m.fonte !== 'zapi';
+  const btnApagar = podeApagar
+    ? `<button onclick="apagarMensagemPainel(${m.id})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
+    : '';
   const div = document.createElement('div');
   div.style.cssText = 'display:flex;justify-content:' + (saida ? 'flex-end' : 'flex-start') + ';margin-bottom:8px';
+  if (m.id) div.dataset.conversaId = m.id;
   div.innerHTML = `<div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px">
     ${midiaHtml}
     ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
-    <div style="font-size:10px;color:${saida ? '#93c5fd' : '#888'};margin-top:3px;text-align:right">${hora}</div>
+    <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
+      <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
+      ${btnApagar}
+    </div>
   </div>`;
   box.appendChild(div);
   const wrap = document.getElementById('painel-body-conversa');
@@ -3587,7 +3632,7 @@ async function iniciarPaginaFunilAtendimento() {
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
-                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:60px;margin-bottom:8px" placeholder="Mensagem... (ou arraste um arquivo aqui)"
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ou arraste um arquivo aqui)"
                   ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                   <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
@@ -4167,8 +4212,9 @@ function renderFunilAtendimento() {
     const leads = col.leads || [];
     const cor = col.cor || '#6b7280';
     const sync = col.zapi_tag_id
-      ? '<span class="funil-sync ok">WhatsApp OK</span>'
-      : '<span class="funil-sync pendente">Sem sync</span>';
+      ? '<span class="funil-sync ok" title="Sincronizado com o WhatsApp">✓ Zap</span>'
+      : '<span class="funil-sync pendente" title="Não sincronizado com o WhatsApp">Sem zap</span>';
+    // ^ trocado de "WhatsApp OK"/"Sem sync" pra caber dentro da coluna sem cortar
     const ehSistema = SLUGS_SISTEMA.includes(col.etapa_sistema);
     const btnExcluir = ehSistema ? '' : `<button onclick="excluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
             style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--red);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;margin-left:6px">🗑</button>`;
@@ -4971,7 +5017,7 @@ async function sincronizarColunaWhatsapp(colunaId) {
 #modal-funil-atendimento .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
 #funil-status{min-height:18px;font-size:12px;color:var(--text2);margin-top:10px}
 
-main.funil-main-3col{height:calc(100vh - 80px);overflow:hidden}
+main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-main-3col .funil-page{height:100%;min-height:0}
 .funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px);display:flex;flex-direction:column}
 .funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
