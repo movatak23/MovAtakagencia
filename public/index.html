@@ -3576,8 +3576,6 @@ async function iniciarPaginaFunilAtendimento() {
     main.classList.add('funil-main-3col');
     main.innerHTML = `
       <div class="funil-page funil-page-3col">
-        <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
-
         <div class="funil-3col-grid">
           <!-- Coluna 1: Caixa de entrada (conversas) -->
           <div class="funil-inbox-col">
@@ -3590,8 +3588,9 @@ async function iniciarPaginaFunilAtendimento() {
             </div>
           </div>
 
-          <!-- Coluna 2: Kanban (toolbar + abas de setor ficam aqui dentro, não em cima de tudo) -->
+          <!-- Coluna 2: Kanban (métricas + toolbar + abas de setor ficam aqui dentro) -->
           <div class="funil-kanban-col">
+            <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
             <div class="funil-toolbar">
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
               <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
@@ -5102,9 +5101,9 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 
 /* Métricas do rodapé */
 .funil-metricas-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;flex-shrink:0}
-.funil-metrica-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:8px 12px;text-align:center}
-.funil-metrica-valor{font-size:16px;font-weight:800;color:var(--text)}
-.funil-metrica-label{font-size:9px;color:var(--text2);margin-top:2px;text-transform:uppercase;letter-spacing:.3px}
+.funil-metrica-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;min-width:0}
+.funil-metrica-valor{font-size:15px;font-weight:800;color:var(--text);line-height:1.1}
+.funil-metrica-label{font-size:8px;color:var(--text2);margin-top:1px;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 #modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
 #modal-quest .quest-switch input{width:18px;height:18px}
