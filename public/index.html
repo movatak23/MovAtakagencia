@@ -1299,9 +1299,12 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   if (grid) {
     grid.innerHTML = msgsRapidasCache.length
       ? msgsRapidasCache.map(m => {
+          const ehAutoatendimento = !!m.template_id;
           const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
-          const titulo = ehSequencia ? '🔁 ' + m.titulo : m.titulo;
-          const tip = ehSequencia ? `Envia ${m.itens.length} mensagens em sequência` : m.texto;
+          const icone = ehAutoatendimento ? '🔄 ' : (ehSequencia ? '🔁 ' : '');
+          const titulo = icone + m.titulo;
+          const tip = ehAutoatendimento ? 'Inicia o autoatendimento completo (espera respostas do lead)'
+            : (ehSequencia ? `Envia ${m.itens.length} mensagens em sequência` : m.texto);
           return `<button onclick="usarMsgRapidaPainel(${m.id}, this)" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
         }).join('')
       : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
@@ -1362,8 +1365,44 @@ function usarMsgRapidaPainel(id, btnEl) {
   if (window._enviandoMsgRapida) return;
   const m = msgsRapidasCache.find(x => String(x.id) === String(id));
   if (!m) return;
+  // Sequência vinculada a um autoatendimento: dispara o motor real do autoatendimento,
+  // que respeita perguntas que esperam resposta do lead, saltos, opções, etc.
+  if (m.template_id) {
+    dispararAutoatendimentoPainel(m, btnEl);
+    return;
+  }
   const itens = (Array.isArray(m.itens) && m.itens.length) ? m.itens : [{ texto: m.texto || '', midia_url: m.midia_url || null }];
   enviarSequenciaRapida(m, itens, btnEl);
+}
+
+// Inicia o autoatendimento real do template vinculado à mensagem rápida.
+async function dispararAutoatendimentoPainel(m, btnEl) {
+  if (!window._painelLeadId) return;
+  if (!confirm('Iniciar o autoatendimento "' + (m.titulo || '') + '" para este lead? Ele vai seguir o fluxo completo, esperando as respostas do lead nas perguntas.')) return;
+  window._enviandoMsgRapida = true;
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  const st = document.getElementById('painel-msg-status');
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = true);
+  const labelOriginal = btnEl ? btnEl.textContent : null;
+  if (btnEl) btnEl.textContent = '⏳';
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Iniciando autoatendimento...'; }
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/iniciar-autoatendimento', {
+      method: 'POST', body: JSON.stringify({ template_id: m.template_id })
+    });
+    api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Autoatendimento iniciado.'; }
+    if (btnEl) btnEl.textContent = '✓';
+    const histData = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    renderHistoricoPainel(histData);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+    if (btnEl) btnEl.textContent = labelOriginal;
+  } finally {
+    window._enviandoMsgRapida = false;
+    if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = false);
+    if (btnEl) setTimeout(() => { btnEl.textContent = labelOriginal; }, 1500);
+  }
 }
 
 // Dispara, em ordem e uma por uma, as mensagens de uma resposta rápida
@@ -1820,14 +1859,18 @@ async function renderMsgsGerenciar() {
   if (!msgsRapidasCache.length) { box.innerHTML = '<div class="fu-hint">Nenhuma mensagem cadastrada ainda.</div>'; return; }
   box.innerHTML = msgsRapidasCache.map(m => {
     if (Array.isArray(m.itens) && m.itens.length) {
+      const ehAuto = !!m.template_id;
       const itensHtml = m.itens.map((it, i) => `
         <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg4);border-radius:6px;margin-bottom:4px">
           <strong style="color:var(--accent)">${i + 1}.${it.midia_url ? ' 📎' : ''}</strong> ${escapeHtml(String(it.texto || '').slice(0, 80))}
         </div>`).join('');
+      const cabecalho = ehAuto
+        ? `🔄 Autoatendimento completo — segue o fluxo e espera as respostas do lead nas perguntas:`
+        : `🔁 Sequência de ${m.itens.length} mensagens (disparo direto, sem espera):`;
       return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
         <div style="flex:1">
           <input class="fu-textarea" style="min-height:auto;padding:7px 10px;resize:none;margin-bottom:4px;width:100%" value="${escapeHtml(m.titulo)}" onchange="patchMsgRapida(${m.id},'titulo',this.value)">
-          <div class="fu-hint" style="margin-bottom:4px">🔁 Sequência de ${m.itens.length} mensagens (disparo direto, sem edição de itens aqui):</div>
+          <div class="fu-hint" style="margin-bottom:4px${ehAuto ? ';color:var(--accent)' : ''}">${cabecalho}</div>
           ${itensHtml}
         </div>
         <button class="btn-remove" onclick="removerMsgRapida(${m.id})">×</button>
@@ -1879,6 +1922,7 @@ async function adicionarMsgRapida() {
   const body = { titulo };
   if (window._sequenciaPendente && window._sequenciaPendente.length) {
     body.itens = window._sequenciaPendente;
+    if (window._templatePendenteId) body.template_id = window._templatePendenteId;
   } else {
     const texto = document.getElementById('msg-nova-texto').value.trim();
     const midia_url = (document.getElementById('msg-nova-midia-url').value || '').trim() || null;
@@ -1948,6 +1992,7 @@ async function carregarMensagensAutoAtendimento(templateId) {
     if (t.final) itens.push({ rotulo: 'Mensagem final', texto: t.final, midia_url: t.final_imagem || null });
     window._itensAutoAtendimento = itens;
     window._nomeTemplateAutoAtendimento = t.nome || 'Auto Atendimento';
+    window._templateAutoAtendimentoId = t.id || null;
     if (!itens.length) {
       lista.innerHTML = '<div class="fu-hint">Esse template não tem nenhum texto pra importar.</div>';
       return;
@@ -2000,11 +2045,20 @@ function usarSelecionadasAutoAtendimento() {
     return;
   }
   window._sequenciaPendente = selecionados.map(it => ({ texto: it.texto, midia_url: it.midia_url || null }));
+  // Se o usuário selecionou TODAS as mensagens do template (na ordem original), a
+  // sequência pode ser disparada pelo autoatendimento real — que respeita perguntas
+  // que esperam resposta do lead. Se selecionou só algumas, vira sequência simples.
+  const selecionouTudoNaOrdem = idxsMarcados.length === todosItens.length &&
+    idxsMarcados.every((v, i) => v === i);
+  window._templatePendenteId = selecionouTudoNaOrdem ? (window._templateAutoAtendimentoId || null) : null;
   document.getElementById('msg-nova-titulo').value = window._nomeTemplateAutoAtendimento || 'Auto Atendimento';
   document.getElementById('msg-nova-modo-simples').style.display = 'none';
   document.getElementById('msg-nova-modo-sequencia').style.display = 'block';
   document.getElementById('msg-nova-seq-contagem').textContent = selecionados.length;
-  document.getElementById('msg-nova-seq-preview').innerHTML = selecionados.map(it => `
+  const avisoAuto = window._templatePendenteId
+    ? `<div style="font-size:11px;color:var(--accent);background:rgba(91,127,255,.12);border:1px solid var(--accent);border-radius:6px;padding:6px 8px;margin-bottom:6px">🔄 Como você selecionou o autoatendimento inteiro, ao usar esta resposta ela vai rodar o fluxo completo — esperando as respostas do lead nas perguntas, igual ao autoatendimento normal.</div>`
+    : '';
+  document.getElementById('msg-nova-seq-preview').innerHTML = avisoAuto + selecionados.map(it => `
     <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg3);border-radius:6px;margin-bottom:4px">
       <strong style="color:var(--accent)">${escapeHtml(it.rotulo)}${it.midia_url ? ' 📎' : ''}</strong> — ${escapeHtml(String(it.texto).slice(0, 70))}
     </div>`).join('');
@@ -2015,6 +2069,7 @@ function usarSelecionadasAutoAtendimento() {
 
 function cancelarSequenciaPendente() {
   window._sequenciaPendente = null;
+  window._templatePendenteId = null;
   document.getElementById('msg-nova-modo-simples').style.display = 'block';
   document.getElementById('msg-nova-modo-sequencia').style.display = 'none';
 }
