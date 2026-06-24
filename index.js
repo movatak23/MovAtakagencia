@@ -1750,12 +1750,13 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
   }
 });
 
-// Marca o lead como lido — chamado quando o painel de conversa é aberto,
-// ou quando alguém responde manualmente pelo painel.
+// Marca o lead como lido (padrão) ou não lido (body: { nao_lida: true }) —
+// chamado ao abrir o painel de conversa, ou manualmente via "Marcar como não lida".
 app.patch('/movatak/admin/leads/:id/marcar-lida', authMovatak, async (req, res) => {
   try {
-    await query(`UPDATE movatak_leads SET nao_lida = false WHERE id = $1`, [req.params.id]);
-    res.json({ ok: true });
+    const naoLida = !!(req.body && req.body.nao_lida);
+    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, req.params.id]);
+    res.json({ ok: true, nao_lida: naoLida });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
