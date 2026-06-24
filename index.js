@@ -5181,12 +5181,13 @@ async function garantirEstruturaMensagensRapidas() {
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS midia_url TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS vezes_usado INTEGER DEFAULT 0`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb`).catch(() => null);
+  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS template_id INTEGER`).catch(() => null);
 }
 
 app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
+    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens, template_id FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5194,7 +5195,7 @@ app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req
 app.post('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const { titulo, texto, midia_url, itens } = req.body || {};
+    const { titulo, texto, midia_url, itens, template_id } = req.body || {};
     const sequencia = Array.isArray(itens) ? itens.filter(it => it && (it.texto || it.midia_url)) : [];
     if (!titulo) return res.status(400).json({ error: 'Título obrigatório.' });
     if (!sequencia.length && !texto) return res.status(400).json({ error: 'Texto obrigatório.' });
@@ -5204,8 +5205,8 @@ app.post('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (re
       ? (texto || sequencia.map(it => it.texto || '').filter(Boolean).join(' ')).trim().slice(0, 500) || titulo.trim()
       : texto.trim();
     const r = await query(
-      'INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens) VALUES ($1,$2,$3,$4,$5::jsonb) RETURNING id, titulo, texto, midia_url, ordem, itens',
-      [req.params.id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia)]
+      'INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens, template_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING id, titulo, texto, midia_url, ordem, itens, template_id',
+      [req.params.id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia), template_id ? parseInt(template_id, 10) : null]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5244,6 +5245,36 @@ app.delete('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res)
 app.post('/movatak/admin/mensagens-rapidas/:id/usar', authMovatak, async (req, res) => {
   try {
     await query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Inicia o autoatendimento de um template a partir do painel, para um lead.
+// Reaproveita o MESMO motor do autoatendimento automático, então respeita tudo:
+// perguntas que esperam resposta do lead, saltos, opções, delays, etc.
+app.post('/movatak/admin/leads/:id/iniciar-autoatendimento', authMovatak, async (req, res) => {
+  try {
+    const templateId = req.body && req.body.template_id ? parseInt(req.body.template_id, 10) : null;
+    if (!templateId) return res.status(400).json({ error: 'template_id é obrigatório.' });
+    const rl = await query(
+      `SELECT l.*, c.* FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id WHERE l.id = $1`,
+      [req.params.id]
+    );
+    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    // Separa lead e cliente do JOIN (ambos têm colunas; reconsultamos pra ter objetos limpos)
+    const leadRow = await query('SELECT * FROM movatak_leads WHERE id = $1', [req.params.id]);
+    const lead = leadRow.rows[0];
+    const cliRow = await query('SELECT * FROM movatak_clientes WHERE id = $1', [lead.cliente_id]);
+    const cliente = cliRow.rows[0];
+    // Cancela qualquer questionário em andamento desse lead antes de reiniciar,
+    // pra não embolar dois fluxos ao mesmo tempo.
+    await query(
+      `UPDATE movatak_questionario_estado SET status='cancelado', atualizado_em=NOW()
+        WHERE cliente_id=$1 AND telefone=$2 AND status IN ('em_andamento','aguardando')`,
+      [cliente.id, lead.telefone]
+    ).catch(() => null);
+    await iniciarQuestionarioPorTemplate(cliente, lead, templateId);
+    await registrarEventoLead(lead.id, cliente.id, 'autoatendimento_manual', 'Autoatendimento iniciado manualmente pelo painel', { template_id: templateId });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
