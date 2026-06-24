@@ -1750,6 +1750,29 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
   }
 });
 
+// Marca o lead como lido — chamado quando o painel de conversa é aberto,
+// ou quando alguém responde manualmente pelo painel.
+app.patch('/movatak/admin/leads/:id/marcar-lida', authMovatak, async (req, res) => {
+  try {
+    await query(`UPDATE movatak_leads SET nao_lida = false WHERE id = $1`, [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Arquiva/desarquiva um lead na caixa de entrada (não afeta o WhatsApp real,
+// é só organização dentro do CRM — diferente de acao_arquivar_ao_final).
+app.patch('/movatak/admin/leads/:id/arquivar', authMovatak, async (req, res) => {
+  try {
+    const arquivado = req.body && typeof req.body.arquivado === 'boolean' ? req.body.arquivado : true;
+    await query(`UPDATE movatak_leads SET arquivado = $1, atualizado_em = NOW() WHERE id = $2`, [arquivado, req.params.id]);
+    res.json({ ok: true, arquivado });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Ranking de vendedores
 app.get('/movatak/admin/clientes/:id/ranking', authMovatak, async (req, res) => {
   try {
@@ -3684,6 +3707,8 @@ async function garantirEstruturaQuestionario() {
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_quest_estado ON movatak_questionario_estado(cliente_id, telefone, status)`).catch(() => null);
   await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS tentativas_invalidas INTEGER DEFAULT 0`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS nao_lida BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -5003,6 +5028,12 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl)
     [leadId, clienteId, direcao, conteudo || null, midiaUrl || null]
   ).catch(e => console.error('[conversa] erro ao registrar:', e.message));
 
+  // Mensagem do lead (entrada) marca o lead como não lido — só é "lido" quando
+  // alguém abre o painel de conversa dele ou responde manualmente pelo painel.
+  if (direcao === 'entrada') {
+    query(`UPDATE movatak_leads SET nao_lida = true WHERE id = $1`, [leadId]).catch(() => null);
+  }
+
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
   // sem precisar dar reload na tela.
   emitirMensagemLead(clienteId, leadId, {
@@ -5430,26 +5461,36 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       filtroSetorSql = ' AND l.setor_id = $2';
     }
     const leads = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-              s.nome AS setor_nome, s.cor AS setor_cor,
-              l.criado_em, l.atualizado_em, l.convertido_em,
-              v.nome AS vendedor_nome,
-              p.nome AS plano_nome, p.valor AS plano_valor,
-              COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
-              MIN(COALESCE(f.sequencia_fu,1)) FILTER (WHERE f.status='pendente')::int AS fu_sequencia_ativa
-         FROM movatak_leads l
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-         LEFT JOIN movatak_planos p ON p.id = l.plano_id
-         LEFT JOIN movatak_setores s ON s.id = l.setor_id
-         LEFT JOIN movatak_followup f ON f.lead_id = l.id
-        WHERE l.cliente_id=$1${filtroSetorSql}
-        GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
+      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
+         FROM (
+           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+                  l.nao_lida, l.arquivado,
+                  s.nome AS setor_nome, s.cor AS setor_cor,
+                  l.criado_em, l.atualizado_em, l.convertido_em,
+                  v.nome AS vendedor_nome,
+                  p.nome AS plano_nome, p.valor AS plano_valor,
+                  COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
+                  MIN(COALESCE(f.sequencia_fu,1)) FILTER (WHERE f.status='pendente')::int AS fu_sequencia_ativa
+             FROM movatak_leads l
+             LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+             LEFT JOIN movatak_planos p ON p.id = l.plano_id
+             LEFT JOIN movatak_setores s ON s.id = l.setor_id
+             LEFT JOIN movatak_followup f ON f.lead_id = l.id
+            WHERE l.cliente_id=$1${filtroSetorSql}
+            GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
+         ) lb
+         LEFT JOIN LATERAL (
+           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
+            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
+         ) ult ON true
+        ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
         LIMIT 500`,
       params
     );
 
-    for (const lead of leads.rows) {
+    // Leads ativos (não arquivados) — vão para o kanban central.
+    const leadsAtivos = leads.rows.filter(l => !l.arquivado);
+    for (const lead of leadsAtivos) {
       let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
       if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
       if (!coluna) coluna = colunas[0];
@@ -5465,18 +5506,71 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       id: `vendedor_${v.id}`,
       vendedor_id: v.id,
       nome: v.nome,
-      leads: leads.rows.filter(l => l.vendedor_id === v.id)
+      leads: leadsAtivos.filter(l => l.vendedor_id === v.id)
     }));
 
-    // Setores do cliente (para os botões de seleção no topo do funil)
+    // Setores do cliente + contagem ao vivo (independente do filtro atual,
+    // pra mostrar "Financeiro 5 / Negociação 4" nas abas mesmo trocando de aba).
     const setoresRes = await query(
       `SELECT id, nome, cor FROM movatak_setores
         WHERE cliente_id=$1 AND COALESCE(ativo,true)=true
         ORDER BY ordem_bot ASC, nome ASC`,
       [clienteId]
     );
+    const contagemSetoresRes = await query(
+      `SELECT setor_id, COUNT(*)::int AS cnt FROM movatak_leads
+        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false
+        GROUP BY setor_id`,
+      [clienteId]
+    );
+    const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.cnt]));
+    const setores = setoresRes.rows.map(s => ({ ...s, leads_count: contagemPorSetor.get(s.id) || 0 }));
+    const totalGeral = contagemSetoresRes.rows.reduce((acc, r) => acc + r.cnt, 0);
 
-    res.json({ colunas, colunasVendedores, setores: setoresRes.rows, setorAtivo: setorFiltro });
+    res.json({
+      colunas, colunasVendedores,
+      setores, setorAtivo: setorFiltro, totalGeral,
+      leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Métricas do rodapé do Funil de Atendimento (Total de leads, Novas mensagens,
+// Em negociação, Conversão do mês). Aceita o mesmo filtro ?setor= do board.
+app.get('/movatak/admin/clientes/:id/funil/metricas', authMovatak, async (req, res) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
+    const params = [clienteId];
+    let filtroSetorSql = '';
+    if (setorFiltro) { params.push(setorFiltro); filtroSetorSql = ' AND l.setor_id = $2'; }
+
+    const totaisR = await query(
+      `SELECT
+         COUNT(*)::int AS total_leads,
+         COUNT(*) FILTER (WHERE l.nao_lida = true)::int AS novas_mensagens,
+         COUNT(*) FILTER (WHERE l.criado_em >= date_trunc('month', now()))::int AS criados_mes,
+         COUNT(*) FILTER (WHERE l.convertido_em >= date_trunc('month', now()))::int AS convertidos_mes
+       FROM movatak_leads l
+       WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false${filtroSetorSql}`,
+      params
+    );
+    const negociacaoR = await query(
+      `SELECT COUNT(*)::int AS n
+         FROM movatak_leads l
+         LEFT JOIN movatak_funil_colunas c ON c.id = l.funil_coluna_id
+        WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false${filtroSetorSql}
+          AND COALESCE(c.etapa_sistema, l.etapa) = 'negociacao'`,
+      params
+    );
+    const t = totaisR.rows[0] || {};
+    const conversaoMes = t.criados_mes > 0 ? Math.round((t.convertidos_mes / t.criados_mes) * 100) : 0;
+    res.json({
+      totalLeads: t.total_leads || 0,
+      novasMensagens: t.novas_mensagens || 0,
+      emNegociacao: (negociacaoR.rows[0] || {}).n || 0,
+      conversaoMes
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
