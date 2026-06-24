@@ -5057,12 +5057,13 @@ async function garantirEstruturaMensagensRapidas() {
   )`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS midia_url TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS vezes_usado INTEGER DEFAULT 0`).catch(() => null);
+  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb`).catch(() => null);
 }
 
 app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
+    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5070,17 +5071,40 @@ app.get('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req
 app.post('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const { titulo, texto, midia_url } = req.body || {};
-    if (!titulo || !texto) return res.status(400).json({ error: 'Título e texto obrigatórios.' });
-    const r = await query('INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url) VALUES ($1,$2,$3,$4) RETURNING id, titulo, texto, midia_url, ordem', [req.params.id, titulo.trim(), texto.trim(), midia_url || null]);
+    const { titulo, texto, midia_url, itens } = req.body || {};
+    const sequencia = Array.isArray(itens) ? itens.filter(it => it && (it.texto || it.midia_url)) : [];
+    if (!titulo) return res.status(400).json({ error: 'Título obrigatório.' });
+    if (!sequencia.length && !texto) return res.status(400).json({ error: 'Texto obrigatório.' });
+    // Quando é uma sequência, "texto" guarda um resumo (usado em listagem/busca);
+    // o conteúdo real que será disparado mensagem por mensagem fica em "itens".
+    const textoFinal = sequencia.length
+      ? (texto || sequencia.map(it => it.texto || '').filter(Boolean).join(' ')).trim().slice(0, 500) || titulo.trim()
+      : texto.trim();
+    const r = await query(
+      'INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens) VALUES ($1,$2,$3,$4,$5::jsonb) RETURNING id, titulo, texto, midia_url, ordem, itens',
+      [req.params.id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia)]
+    );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res) => {
   try {
-    const { titulo, texto, midia_url } = req.body || {};
-    await query('UPDATE movatak_mensagens_rapidas SET titulo=COALESCE($1,titulo), texto=COALESCE($2,texto), midia_url=CASE WHEN $3::text IS NULL THEN midia_url ELSE $3 END WHERE id=$4', [titulo||null, texto||null, midia_url !== undefined ? (midia_url || null) : null, req.params.id]);
+    const { titulo, texto, midia_url, itens } = req.body || {};
+    await query(
+      `UPDATE movatak_mensagens_rapidas SET
+         titulo = COALESCE($1, titulo),
+         texto = COALESCE($2, texto),
+         midia_url = CASE WHEN $3::text IS NULL THEN midia_url ELSE $3 END,
+         itens = CASE WHEN $4::jsonb IS NULL THEN itens ELSE $4::jsonb END
+       WHERE id=$5`,
+      [
+        titulo || null, texto || null,
+        midia_url !== undefined ? (midia_url || null) : null,
+        Array.isArray(itens) ? JSON.stringify(itens) : null,
+        req.params.id
+      ]
+    );
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -5088,6 +5112,15 @@ app.patch('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res) 
 app.delete('/movatak/admin/mensagens-rapidas/:id', authMovatak, async (req, res) => {
   try {
     await query('DELETE FROM movatak_mensagens_rapidas WHERE id=$1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Incrementa o ranking de uso por ID — usado pelas sequências, já que o texto
+// salvo é só um resumo e não bate com o texto de nenhuma mensagem realmente enviada.
+app.post('/movatak/admin/mensagens-rapidas/:id/usar', authMovatak, async (req, res) => {
+  try {
+    await query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE id=$1', [req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
