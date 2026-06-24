@@ -1197,6 +1197,20 @@ function painelTab(tab) {
   }
 }
 
+// Detecta o tipo de mídia de uma mensagem (usa midia_tipo vindo do banco quando
+// existir; senão tenta pela extensão — cobre mensagens antigas sem o campo).
+function renderMidiaMensagem(m) {
+  if (!m.midia_url) return '';
+  const tipo = m.midia_tipo || (
+    /\.(mp4|mov|m4v|3gp)(\?|$)/i.test(m.midia_url) ? 'video' :
+    /\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(m.midia_url) ? 'audio' :
+    /\.webm(\?|$)/i.test(m.midia_url) ? 'video' : 'imagem'
+  );
+  if (tipo === 'video') return `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
+  if (tipo === 'audio') return `<audio src="${m.midia_url}" controls style="display:block;margin-bottom:4px;height:36px;max-width:230px"></audio>`;
+  return `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`;
+}
+
 function renderConversaPainel(msgs) {
   const box = document.getElementById('painel-conversa');
   if (!msgs || !msgs.length) {
@@ -1206,11 +1220,7 @@ function renderConversaPainel(msgs) {
   box.innerHTML = msgs.map(m => {
     const saida = m.direcao === 'saida';
     const hora = new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-    const midiaHtml = m.midia_url
-      ? (/\.(mp4|webm|mov)/i.test(m.midia_url)
-          ? `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`
-          : `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`)
-      : '';
+    const midiaHtml = renderMidiaMensagem(m);
     const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
     return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px">
       <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px">
@@ -1233,7 +1243,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   document.getElementById('painel-msg-status').textContent = '';
   const midiaEl = document.getElementById('painel-midia-el');
   const midiaPreview = document.getElementById('painel-midia-preview');
-  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; }
+  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
   if (midiaPreview) midiaPreview.style.display = 'none';
   document.getElementById('painel-historico').innerHTML = '<div class="fu-hint">Carregando...</div>';
 
@@ -1268,7 +1278,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
           const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
           const titulo = ehSequencia ? '🔁 ' + m.titulo : m.titulo;
           const tip = ehSequencia ? `Envia ${m.itens.length} mensagens em sequência` : m.texto;
-          return `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
+          return `<button onclick="usarMsgRapidaPainel(${m.id}, this)" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
         }).join('')
       : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
   }
@@ -1323,21 +1333,33 @@ async function marcarLeadAtualComoNaoLida() {
   }
 }
 
-function usarMsgRapidaPainel(id) {
+function usarMsgRapidaPainel(id, btnEl) {
+  // Trava síncrona: se esse botão (ou qualquer outro) já está enviando, ignora o clique.
+  if (window._enviandoMsgRapida) return;
   const m = msgsRapidasCache.find(x => String(x.id) === String(id));
   if (!m) return;
   const itens = (Array.isArray(m.itens) && m.itens.length) ? m.itens : [{ texto: m.texto || '', midia_url: m.midia_url || null }];
-  enviarSequenciaRapida(m, itens);
+  enviarSequenciaRapida(m, itens, btnEl);
 }
 
 // Dispara, em ordem e uma por uma, as mensagens de uma resposta rápida
 // (simples = 1 item, ou sequência = vários) direto pro lead, sem perguntar
-// e sem passar pelo campo de texto.
-async function enviarSequenciaRapida(m, itens) {
+// e sem passar pelo campo de texto. Trava o grid inteiro durante o envio
+// pra um clique duplo (ou reclique por achar que não enviou) não duplicar.
+async function enviarSequenciaRapida(m, itens, btnEl) {
   if (!window._painelLeadId) return;
   if (!itens || !itens.length) return;
+  if (window._enviandoMsgRapida) return;
+  window._enviandoMsgRapida = true;
+
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  const labelOriginal = btnEl ? btnEl.textContent : null;
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = true);
+  if (btnEl) btnEl.textContent = '⏳ Enviando...';
+
   const leadId = window._painelLeadId;
   const st = document.getElementById('painel-msg-status');
+  let erro = null;
   for (let i = 0; i < itens.length; i++) {
     const it = itens[i];
     if (st) { st.style.color = 'var(--text2)'; st.textContent = itens.length > 1 ? ('Enviando ' + (i + 1) + '/' + itens.length + '...') : 'Enviando...'; }
@@ -1346,34 +1368,144 @@ async function enviarSequenciaRapida(m, itens) {
         method: 'POST', body: JSON.stringify({ texto: it.texto || '', midia_url: it.midia_url || null })
       });
     } catch (e) {
-      if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao enviar: ' + e.message; }
-      return;
+      erro = e;
+      break;
     }
     if (i < itens.length - 1) await new Promise(r => setTimeout(r, 1800));
   }
-  api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
-  if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Enviado.'; }
+
+  if (erro) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao enviar: ' + erro.message; }
+    if (btnEl) btnEl.textContent = labelOriginal;
+  } else {
+    api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Enviado.'; }
+    if (btnEl) btnEl.textContent = '✓ Enviado';
+    try {
+      const data = await api('/movatak/admin/leads/' + leadId + '/historico');
+      renderHistoricoPainel(data);
+    } catch (e) {}
+    // Mantém o "✓ Enviado" visível por um instante antes de voltar ao normal,
+    // pra ficar claro que já foi e não precisa clicar de novo.
+    setTimeout(() => { if (btnEl) btnEl.textContent = labelOriginal; }, 1500);
+  }
+
+  window._enviandoMsgRapida = false;
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = false);
+}
+
+// ── Anexar arquivo (clique ou arrastar) e gravar áudio no compositor do chat ──
+async function uploadArquivoPainel(file) {
+  if (!file) return;
+  const midiaEl = document.getElementById('painel-midia-el');
+  const preview = document.getElementById('painel-midia-preview');
+  const ehVideo = file.type.startsWith('video/');
+  const limiteMb = ehVideo ? 20 : 8;
+  if (file.size > limiteMb * 1024 * 1024) {
+    alert('Arquivo muito grande (máx ' + limiteMb + 'MB).');
+    return;
+  }
+  if (preview) preview.style.display = '';
+  if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--text2)">Enviando arquivo...</span>';
   try {
-    const data = await api('/movatak/admin/leads/' + leadId + '/historico');
-    renderHistoricoPainel(data);
-  } catch (e) {}
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+    renderMidiaAnexadaPainel(resp.url, resp.tipo);
+  } catch (e) {
+    if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--red)">Erro ao enviar arquivo: ' + e.message + '</span>';
+  }
+}
+
+function renderMidiaAnexadaPainel(url, tipo) {
+  const midiaEl = document.getElementById('painel-midia-el');
+  const preview = document.getElementById('painel-midia-preview');
+  if (!midiaEl) return;
+  let prevHtml = '';
+  if (tipo === 'video') prevHtml = `<video src="${url}" style="max-width:160px;max-height:90px;border-radius:6px" controls></video>`;
+  else if (tipo === 'audio') prevHtml = `<audio src="${url}" controls style="height:32px"></audio>`;
+  else prevHtml = `<img src="${url}" style="max-width:160px;max-height:90px;border-radius:6px;object-fit:cover">`;
+  midiaEl.innerHTML = prevHtml + ' <button type="button" onclick="removerMidiaPainel()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-left:6px;vertical-align:middle">✕ remover</button>';
+  midiaEl.dataset.url = url;
+  midiaEl.dataset.tipo = tipo;
+  if (preview) preview.style.display = '';
+}
+
+function removerMidiaPainel() {
+  const midiaEl = document.getElementById('painel-midia-el');
+  const preview = document.getElementById('painel-midia-preview');
+  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
+  if (preview) preview.style.display = 'none';
+}
+
+function painelArquivoDragOver(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--accent)';
+}
+function painelArquivoDragLeave(ev) {
+  ev.currentTarget.style.borderColor = '';
+}
+function painelArquivoDrop(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = '';
+  const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) uploadArquivoPainel(file);
+}
+
+// Grava áudio do microfone (clique pra começar, clique de novo pra parar e anexar).
+let _gravadorAudio = null;
+let _gravadorAudioChunks = [];
+
+async function alternarGravacaoAudio(btn) {
+  if (_gravadorAudio && _gravadorAudio.state === 'recording') {
+    _gravadorAudio.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _gravadorAudioChunks = [];
+    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : 'audio/webm';
+    _gravadorAudio = new MediaRecorder(stream, { mimeType: mime });
+    _gravadorAudio.ondataavailable = e => { if (e.data && e.data.size > 0) _gravadorAudioChunks.push(e.data); };
+    _gravadorAudio.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      btn.textContent = '🎙️';
+      btn.style.color = '';
+      btn.style.borderColor = 'var(--border2)';
+      const blob = new Blob(_gravadorAudioChunks, { type: mime });
+      if (blob.size > 0) {
+        const file = new File([blob], 'audio.webm', { type: mime });
+        await uploadArquivoPainel(file);
+      }
+    };
+    _gravadorAudio.start();
+    btn.textContent = '⏹';
+    btn.style.color = 'var(--red)';
+    btn.style.borderColor = 'var(--red)';
+  } catch (e) {
+    alert('Não consegui acessar o microfone: ' + e.message);
+  }
 }
 
 async function enviarMensagemPainel() {
   const texto = (document.getElementById('painel-msg-texto').value || '').trim();
   const midiaEl = document.getElementById('painel-midia-el');
   const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
+  const midia_tipo = midiaEl && midiaEl.dataset.tipo ? midiaEl.dataset.tipo : null;
   const st = document.getElementById('painel-msg-status');
   if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem.'; return; }
   if (!window._painelLeadId) return;
   st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
   try {
     await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
-      method: 'POST', body: JSON.stringify({ texto, midia_url })
+      method: 'POST', body: JSON.stringify({ texto, midia_url, midia_tipo })
     });
     document.getElementById('painel-msg-texto').value = '';
-    if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; }
-    document.getElementById('painel-midia-preview').style.display = 'none';
+    removerMidiaPainel();
     st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
     // Recarrega histórico
     const data = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
@@ -1648,39 +1780,64 @@ async function carregarMensagensAutoAtendimento(templateId) {
       lista.innerHTML = '<div class="fu-hint">Esse template não tem nenhum texto pra importar.</div>';
       return;
     }
+    // Todas marcadas por padrão — é o uso mais comum (importar tudo de uma vez).
     lista.innerHTML = `
-      <div onclick="usarTemplateAutoAtendimentoSequencia()"
-        style="padding:8px 10px;background:rgba(91,127,255,.12);border:1px solid var(--accent);border-radius:8px;margin-bottom:8px;cursor:pointer">
-        <strong style="font-size:12px;color:var(--accent)">🔁 Usar o autoatendimento inteiro como sequência</strong>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">Dispara introdução + perguntas + mensagem final, uma por uma e na ordem, com 1 clique.</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <button type="button" onclick="alternarTodasAutoAtendimento()" class="btn-cancel" style="padding:5px 10px;font-size:11px">Marcar/Desmarcar todas</button>
+        <span id="auto-atend-contagem" style="font-size:11px;color:var(--text2)"></span>
       </div>` +
       itens.map((it, i) => `
-      <div onclick="usarMensagemAutoAtendimento(${i})"
-        style="padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;margin-bottom:6px;cursor:pointer">
-        <strong style="font-size:12px;color:var(--accent)">${escapeHtml(it.rotulo)}</strong>
-        <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(it.texto)}</div>
-      </div>`).join('');
+      <label class="chk-item-auto-row" style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;margin-bottom:6px;cursor:pointer">
+        <input type="checkbox" class="chk-item-auto" data-idx="${i}" checked onchange="atualizarSelecaoAutoAtendimento()" style="margin-top:2px;cursor:pointer;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <strong style="font-size:12px;color:var(--accent)">${escapeHtml(it.rotulo)}${it.midia_url ? ' 📎' : ''}</strong>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(it.texto)}</div>
+        </div>
+      </label>`).join('') +
+      `<button type="button" class="btn-add-small" style="width:100%;margin-top:6px" onclick="usarSelecionadasAutoAtendimento()">Usar selecionadas como mensagem rápida</button>`;
+    atualizarSelecaoAutoAtendimento();
   } catch (e) {
     lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + e.message + '</div>';
   }
 }
 
-// Prepara uma sequência (intro + perguntas + final) pra ser salva como mensagem
-// rápida especial: ao usar, dispara cada item em ordem, um por um.
-function usarTemplateAutoAtendimentoSequencia() {
-  const itens = window._itensAutoAtendimento || [];
-  if (!itens.length) return;
-  window._sequenciaPendente = itens.map(it => ({ texto: it.texto, midia_url: it.midia_url || null }));
+function atualizarSelecaoAutoAtendimento() {
+  const checks = document.querySelectorAll('#importar-auto-lista .chk-item-auto');
+  const marcadas = Array.from(checks).filter(c => c.checked).length;
+  const contagem = document.getElementById('auto-atend-contagem');
+  if (contagem) contagem.textContent = marcadas + ' de ' + checks.length + ' selecionadas';
+}
+
+function alternarTodasAutoAtendimento() {
+  const checks = document.querySelectorAll('#importar-auto-lista .chk-item-auto');
+  const algumaDesmarcada = Array.from(checks).some(c => !c.checked);
+  checks.forEach(c => { c.checked = algumaDesmarcada; });
+  atualizarSelecaoAutoAtendimento();
+}
+
+// Pega só os itens marcados (na ordem original) e prepara a sequência —
+// só falta o título; o conteúdo já vem todo das frases selecionadas.
+function usarSelecionadasAutoAtendimento() {
+  const checks = Array.from(document.querySelectorAll('#importar-auto-lista .chk-item-auto'));
+  const idxsMarcados = checks.filter(c => c.checked).map(c => Number(c.dataset.idx));
+  const todosItens = window._itensAutoAtendimento || [];
+  const selecionados = idxsMarcados.map(i => todosItens[i]).filter(Boolean);
+  if (!selecionados.length) {
+    const st = document.getElementById('msgs-gerenciar-status');
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Marque pelo menos uma mensagem.'; }
+    return;
+  }
+  window._sequenciaPendente = selecionados.map(it => ({ texto: it.texto, midia_url: it.midia_url || null }));
   document.getElementById('msg-nova-titulo').value = window._nomeTemplateAutoAtendimento || 'Auto Atendimento';
   document.getElementById('msg-nova-modo-simples').style.display = 'none';
   document.getElementById('msg-nova-modo-sequencia').style.display = 'block';
-  document.getElementById('msg-nova-seq-contagem').textContent = itens.length;
-  document.getElementById('msg-nova-seq-preview').innerHTML = itens.map(it => `
+  document.getElementById('msg-nova-seq-contagem').textContent = selecionados.length;
+  document.getElementById('msg-nova-seq-preview').innerHTML = selecionados.map(it => `
     <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg3);border-radius:6px;margin-bottom:4px">
       <strong style="color:var(--accent)">${escapeHtml(it.rotulo)}${it.midia_url ? ' 📎' : ''}</strong> — ${escapeHtml(String(it.texto).slice(0, 70))}
     </div>`).join('');
   const st = document.getElementById('msgs-gerenciar-status');
-  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Sequência pronta — revise o título e clique em Adicionar.'; }
+  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Só falta o título — clique em Adicionar.'; }
   document.getElementById('msg-nova-modo-sequencia').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
@@ -1688,27 +1845,6 @@ function cancelarSequenciaPendente() {
   window._sequenciaPendente = null;
   document.getElementById('msg-nova-modo-simples').style.display = 'block';
   document.getElementById('msg-nova-modo-sequencia').style.display = 'none';
-}
-
-// Copia o texto escolhido pro formulário de "nova mensagem rápida" — Ronaldo revisa/edita e clica Adicionar.
-function usarMensagemAutoAtendimento(idx) {
-  const it = (window._itensAutoAtendimento || [])[idx];
-  if (!it) return;
-  cancelarSequenciaPendente();
-  document.getElementById('msg-nova-titulo').value = (window._nomeTemplateAutoAtendimento || 'Auto Atendimento') + ' — ' + it.rotulo;
-  document.getElementById('msg-nova-texto').value = it.texto;
-  const midiaEl = document.getElementById('msg-nova-midia-url');
-  const preview = document.getElementById('msg-nova-midia-preview');
-  if (it.midia_url) {
-    midiaEl.value = it.midia_url;
-    if (preview) { preview.textContent = '📎 Imagem/vídeo desta etapa incluído.'; preview.style.color = 'var(--text2)'; }
-  } else {
-    midiaEl.value = '';
-    if (preview) preview.textContent = '';
-  }
-  const st = document.getElementById('msgs-gerenciar-status');
-  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Texto importado abaixo — revise e clique em Adicionar.'; }
-  document.getElementById('msg-nova-texto').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 async function uploadMidiaMsgExistente(input, msgId) {
@@ -3234,11 +3370,7 @@ function adicionarMensagemAoPainel(m) {
   if (box.querySelector('div[style*="text-align:center"]')) box.innerHTML = '';
   const saida = m.direcao === 'saida';
   const hora = m.criado_em ? new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
-  const midiaHtml = m.midia_url
-    ? (/\.(mp4|webm|mov)/i.test(m.midia_url)
-        ? `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`
-        : `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`)
-    : '';
+  const midiaHtml = renderMidiaMensagem(m);
   const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
   const div = document.createElement('div');
   div.style.cssText = 'display:flex;justify-content:' + (saida ? 'flex-end' : 'flex-start') + ';margin-bottom:8px';
@@ -3336,10 +3468,20 @@ async function iniciarPaginaFunilAtendimento() {
               </div>
               <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
                 <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
-                  <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Mídia incluída:</div>
+                  <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
-                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:60px;margin-bottom:8px" placeholder="Mensagem..."></textarea>
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:60px;margin-bottom:8px" placeholder="Mensagem... (ou arraste um arquivo aqui)"
+                  ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
+                    📎
+                    <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                  </label>
+                  <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
+                    style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
+                  <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
+                </div>
                 <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid" style="margin-bottom:8px"></div>
                 <div style="display:flex;gap:8px">
                   <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
