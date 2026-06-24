@@ -3478,33 +3478,22 @@ app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, 
 app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaConversas();
-    // Fonte única da verdade: o banco. Toda mensagem (recebida via webhook e enviada
-    // pelo painel) é gravada aqui, então não precisamos mais mesclar com o histórico
-    // do Z-API — esse merge causava mensagens sumindo/duplicando por divergência de
-    // horário e de-dup frágil. A caixa de entrada já usa só o banco e mostra correto.
+    // Fonte única da verdade: o banco. Pegamos as 500 mensagens MAIS RECENTES
+    // (ORDER BY ... DESC) e depois reordenamos em ordem cronológica para exibir.
+    // ⚠️ Antes era ORDER BY criado_em ASC LIMIT 500 — isso pegava as 500 mais ANTIGAS,
+    // e em leads com +500 mensagens as recém-enviadas caíam fora do limite e sumiam da tela.
     const r = await query(
-      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em, 'banco' AS fonte
-         FROM movatak_conversas WHERE lead_id = $1
-         ORDER BY criado_em ASC LIMIT 500`,
+      `SELECT * FROM (
+         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em, 'banco' AS fonte
+           FROM movatak_conversas WHERE lead_id = $1
+           ORDER BY criado_em DESC LIMIT 500
+       ) sub ORDER BY criado_em ASC`,
       [req.params.id]
     );
-    console.log(`[conversas] lead ${req.params.id}: ${r.rows.length} mensagens no banco (${r.rows.filter(m=>m.direcao==='saida').length} saída, ${r.rows.filter(m=>m.direcao==='entrada').length} entrada)`);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// DIAGNÓSTICO TEMPORÁRIO: mostra o que está no banco para um lead, cru.
-// Acesse /movatak/admin/leads/SEU_LEAD_ID/diag-conversas com o header de auth.
-app.get('/movatak/admin/leads/:id/diag-conversas', authMovatak, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT id, lead_id, direcao, LEFT(COALESCE(conteudo,''),60) AS conteudo, msg_id, criado_em
-         FROM movatak_conversas WHERE lead_id = $1 ORDER BY criado_em DESC LIMIT 30`,
-      [req.params.id]
-    );
-    res.json({ lead_id: req.params.id, total: r.rows.length, mensagens: r.rows });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 
 // Apaga uma mensagem enviada pelo painel — tenta apagar no WhatsApp do lead
 // (delete for everyone, só funciona pra mensagens que a gente mandou e dentro
@@ -5140,10 +5129,7 @@ async function garantirEstruturaConversas() {
 }
 
 async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId) {
-  if (!leadId || !clienteId) {
-    console.log('[registrarConversa] IGNORADO: leadId ou clienteId ausente', { leadId, clienteId });
-    return null;
-  }
+  if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
   // Evita duplicar a mesma mensagem do WhatsApp: se já existe uma conversa com esse
   // msg_id pra esse lead, não insere de novo.
@@ -5152,22 +5138,15 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
       'SELECT id FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
       [leadId, msgId]
     ).catch(() => ({ rows: [] }));
-    if (existe.rows.length) {
-      console.log(`[registrarConversa] PULADO (já existe msg_id=${msgId}) lead=${leadId} dir=${direcao}`);
-      return null;
-    }
+    if (existe.rows.length) return null; // já registrada — não duplica nem reemite socket
   }
   const ins = await query(
     `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
     [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null]
-  ).catch(e => { console.error('[registrarConversa] ERRO no INSERT:', e.message, { leadId, direcao }); return null; });
-  if (!ins || !ins.rows.length) {
-    console.log('[registrarConversa] INSERT não retornou linha', { leadId, direcao });
-    return null;
-  }
+  ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
+  if (!ins || !ins.rows.length) return null;
   const novoId = ins.rows[0].id;
-  console.log(`[registrarConversa] GRAVADO id=${novoId} lead=${leadId} dir=${direcao} msg_id=${msgId || 'null'} texto="${String(conteudo||'').slice(0,30)}"`);
 
   // Mensagem do lead (entrada) marca o lead como não lido — só é "lido" quando
   // alguém abre o painel de conversa dele ou responde manualmente pelo painel.
