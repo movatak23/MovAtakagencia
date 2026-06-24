@@ -1211,6 +1211,23 @@ function renderMidiaMensagem(m) {
   return `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`;
 }
 
+// Rola a conversa até a última mensagem. Mídia (imagem/áudio) só define a altura
+// real depois de carregar, então rolamos várias vezes: agora, no próximo frame,
+// e de novo a cada mídia que terminar de carregar.
+function rolarConversaParaFim() {
+  const wrap = document.getElementById('painel-body-conversa');
+  if (!wrap) return;
+  const irParaFim = () => { wrap.scrollTop = wrap.scrollHeight; };
+  irParaFim();
+  requestAnimationFrame(irParaFim);
+  setTimeout(irParaFim, 60);
+  setTimeout(irParaFim, 250);
+  wrap.querySelectorAll('img, video, audio').forEach(el => {
+    el.addEventListener('load', irParaFim, { once: true });
+    el.addEventListener('loadedmetadata', irParaFim, { once: true });
+  });
+}
+
 function renderConversaPainel(msgs) {
   const box = document.getElementById('painel-conversa');
   if (!msgs || !msgs.length) {
@@ -1237,9 +1254,8 @@ function renderConversaPainel(msgs) {
       </div>
     </div>`;
   }).join('');
-  // Scroll to bottom — quem rola é o wrapper (overflow-y:auto), não esta div interna.
-  const wrap = document.getElementById('painel-body-conversa');
-  if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  // Scroll robusto até a última mensagem (espera mídia carregar).
+  rolarConversaParaFim();
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
@@ -3553,8 +3569,7 @@ function adicionarMensagemAoPainel(m) {
     </div>
   </div>`;
   box.appendChild(div);
-  const wrap = document.getElementById('painel-body-conversa');
-  if (wrap) wrap.scrollTop = wrap.scrollHeight;
+  rolarConversaParaFim();
 }
 
 async function iniciarPaginaFunilAtendimento() {
