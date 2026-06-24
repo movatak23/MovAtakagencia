@@ -3484,13 +3484,22 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
       }
     }
 
-    // Mescla: banco tem prioridade para deduplicação (mesmo texto + horário próximo)
+    // Mescla: banco tem prioridade. Considera duplicada quando, na mesma direção
+    // e janela de tempo, OU o texto bate (mensagens de texto), OU ambas são mídia
+    // (mensagens de mídia não têm texto pra comparar, então casamos por ser-mídia +
+    // proximidade de horário — senão a mesma foto/áudio aparece 2x: 1 do banco, 1 do Z-API).
     const todos = [...banco];
     for (const zm of zapiMsgs) {
       const dt = new Date(zm.criado_em).getTime();
+      const zmTemMidia = !!zm.midia_url;
       const duplicado = banco.some(b => {
+        if (b.direcao !== zm.direcao) return false;
         const diff = Math.abs(new Date(b.criado_em).getTime() - dt);
-        return diff < 30000 && b.direcao === zm.direcao && b.conteudo === zm.conteudo;
+        if (diff >= 60000) return false;
+        const bTemMidia = !!b.midia_url;
+        if (bTemMidia && zmTemMidia) return true;              // ambas mídia, mesma janela → mesma msg
+        if (!bTemMidia && !zmTemMidia) return (b.conteudo || '') === (zm.conteudo || ''); // ambas texto
+        return false;                                          // uma é mídia e a outra texto → diferentes
       });
       if (!duplicado) todos.push(zm);
     }
