@@ -1646,18 +1646,24 @@ async function enviarMensagemPainel() {
   if (!window._painelLeadId) return;
   st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
   try {
-    await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
+    const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
       method: 'POST', body: JSON.stringify({ texto, midia_url, midia_tipo })
+    });
+    // Adiciona a mensagem na tela na hora, com o ID real. Se o socket trouxer a
+    // mesma mensagem depois, adicionarMensagemAoPainel ignora (checa o id).
+    adicionarMensagemAoPainel({
+      id: resp.conversaId || null,
+      direcao: 'saida',
+      conteudo: texto || '',
+      midia_url: midia_url || null,
+      midia_tipo: midia_tipo || null,
+      criado_em: resp.criado_em || new Date().toISOString()
     });
     document.getElementById('painel-msg-texto').value = '';
     removerMidiaPainel();
     st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
-    // Recarrega a conversa (já deduplicada no backend) + o histórico de eventos.
-    const [convData, histData] = await Promise.all([
-      api('/movatak/admin/leads/' + window._painelLeadId + '/conversas'),
-      api('/movatak/admin/leads/' + window._painelLeadId + '/historico')
-    ]);
-    renderConversaPainel(convData);
+    // Só atualiza o histórico de eventos/fila — a conversa já está correta na tela.
+    const histData = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
     renderHistoricoPainel(histData);
   } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
 }
