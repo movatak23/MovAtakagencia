@@ -2698,8 +2698,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // ===== MENSAGEM RECEBIDA DO LEAD =====
-    if (!String(texto || '').trim()) {
-      logDebug('[zapi][lead] ignorado: evento sem texto util');
+    const temTexto = !!String(texto || '').trim();
+    const midiaRecebida = extrairMidiaPayloadZapi(body);
+
+    if (!temTexto && !midiaRecebida.url) {
+      logDebug('[zapi][lead] ignorado: evento sem texto util e sem mídia');
       return;
     }
 
@@ -2716,9 +2719,16 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     );
     const lead = rl.rows[0] || null;
 
-    // Gravar mensagem recebida na conversa (agora que o lead está disponível)
-    if (lead && texto) {
-      registrarConversa(lead.id, cliente.id, 'entrada', texto, null).catch(() => null);
+    // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
+    // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
+    if (lead && (texto || midiaRecebida.url)) {
+      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo).catch(() => null);
+    }
+
+    // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.
+    // Não há comando pra interpretar, então a automação abaixo não se aplica.
+    if (!temTexto) {
+      return;
     }
 
     // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
