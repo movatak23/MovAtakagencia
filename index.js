@@ -1770,6 +1770,23 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
       );
     }
 
+    // Move o lead para a PRIMEIRA coluna do kanban desse setor (menor ordem).
+    // Regra do Ronaldo: a 1ª coluna de cada setor é a "lista de leads" daquele setor.
+    let colunaDestino = null;
+    const primeiraColuna = await query(
+      `SELECT id, nome FROM movatak_funil_colunas
+        WHERE cliente_id = $1 AND ativo = true AND setor_id = $2
+        ORDER BY ordem ASC, id ASC LIMIT 1`,
+      [leadAtual.cliente_id, setorDestinoId]
+    );
+    if (primeiraColuna.rows.length) {
+      colunaDestino = primeiraColuna.rows[0];
+      await query(
+        `UPDATE movatak_leads SET funil_coluna_id = $1, atualizado_em = NOW() WHERE id = $2`,
+        [colunaDestino.id, req.params.id]
+      );
+    }
+
     await registrarEventoLead(
       req.params.id,
       leadAtual.cliente_id,
@@ -1783,7 +1800,11 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
       }
     );
 
-    res.json({ ok: true });
+    res.json({
+      ok: true,
+      setor_nome: setorDestino.rows[0].nome,
+      coluna_destino: colunaDestino ? colunaDestino.nome : null
+    });
   } catch(e) {
     console.error('[admin/leads:transferir-setor]', e.message);
     res.status(500).json({ error: e.message });
