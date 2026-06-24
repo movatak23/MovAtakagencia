@@ -1469,14 +1469,15 @@ async function alternarGravacaoAudio(btn) {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     _gravadorAudioChunks = [];
-    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : 'audio/webm';
+    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) ? 'audio/ogg;codecs=opus'
+      : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : 'audio/webm';
     _gravadorAudio = new MediaRecorder(stream, { mimeType: mime });
     _gravadorAudio.ondataavailable = e => { if (e.data && e.data.size > 0) _gravadorAudioChunks.push(e.data); };
     _gravadorAudio.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
       const blob = new Blob(_gravadorAudioChunks, { type: mime });
       if (blob.size > 0) {
-        const file = new File([blob], 'audio.webm', { type: mime });
+        const file = new File([blob], mime.startsWith('audio/ogg') ? 'audio.ogg' : 'audio.webm', { type: mime });
         await enviarAudioGravado(file, btn);
       } else {
         btn.textContent = '🎙️';
