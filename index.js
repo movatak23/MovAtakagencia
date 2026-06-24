@@ -2595,7 +2595,35 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
       const midiaFromMe = extrairMidiaPayloadZapi(body);
       if ((texto && String(texto).trim()) || midiaFromMe.url) {
-        await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo).catch(() => null);
+        // Evita duplicar: se a mensagem foi enviada pelo PRÓPRIO painel, ela já foi
+        // gravada no banco (com o mesmo messageId do Z-API) no momento do envio. O
+        // webhook fromMe chega logo depois confirmando o mesmo envio — se já existe
+        // uma conversa com esse messageId, não registra de novo.
+        const msgIdFromMe = body.messageId || body.id || null;
+        let jaRegistrada = false;
+        if (msgIdFromMe) {
+          const dup = await query(
+            'SELECT 1 FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
+            [leadFromMe.id, msgIdFromMe]
+          ).catch(() => ({ rows: [] }));
+          jaRegistrada = dup.rows.length > 0;
+        } else {
+          // Sem messageId no payload: deduplica por conteúdo + janela de tempo curta,
+          // pra não regravar uma mensagem que o painel acabou de salvar segundos antes.
+          const dup = await query(
+            `SELECT 1 FROM movatak_conversas
+              WHERE lead_id=$1 AND direcao='saida'
+                AND COALESCE(conteudo,'')=COALESCE($2,'')
+                AND criado_em > NOW() - INTERVAL '30 seconds' LIMIT 1`,
+            [leadFromMe.id, texto || '']
+          ).catch(() => ({ rows: [] }));
+          jaRegistrada = dup.rows.length > 0;
+        }
+        if (!jaRegistrada) {
+          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe).catch(() => null);
+        } else {
+          logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
+        }
       }
 
       if (!ehComandoInterno) {
@@ -5145,16 +5173,25 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_tipo TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_id TEXT`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
+  // Garante que a mesma mensagem do WhatsApp (mesmo lead + mesmo messageId) nunca
+  // seja gravada duas vezes — fecha a corrida entre o envio pelo painel e o webhook fromMe.
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_conversas_lead_msgid ON movatak_conversas(lead_id, msg_id) WHERE msg_id IS NOT NULL`).catch(() => null);
 }
 
 async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId) {
   if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
+  // ON CONFLICT: se a mesma mensagem (lead + messageId) já existe, não duplica.
   const ins = await query(
-    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     ON CONFLICT (lead_id, msg_id) WHERE msg_id IS NOT NULL DO NOTHING
+     RETURNING id`,
     [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null]
   ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
-  const novoId = ins && ins.rows[0] ? ins.rows[0].id : null;
+  // Se ON CONFLICT pulou (já existia), não retorna linha — então não emite socket de novo.
+  if (!ins || !ins.rows.length) return null;
+  const novoId = ins.rows[0].id;
 
   // Mensagem do lead (entrada) marca o lead como não lido — só é "lido" quando
   // alguém abre o painel de conversa dele ou responde manualmente pelo painel.
