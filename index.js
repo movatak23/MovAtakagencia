@@ -5202,15 +5202,22 @@ async function garantirEstruturaConversas() {
 async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId) {
   if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
-  // ON CONFLICT: se a mesma mensagem (lead + messageId) já existe, não duplica.
+  // Evita duplicar a mesma mensagem do WhatsApp: se já existe uma conversa com esse
+  // msg_id pra esse lead, não insere de novo. Faço a checagem explícita (em vez de
+  // ON CONFLICT, cuja sintaxe com índice parcial é frágil) pra garantir que o INSERT
+  // do painel SEMPRE grave quando não há duplicata real.
+  if (msgId) {
+    const existe = await query(
+      'SELECT id FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
+      [leadId, msgId]
+    ).catch(() => ({ rows: [] }));
+    if (existe.rows.length) return null; // já registrada — não duplica nem reemite socket
+  }
   const ins = await query(
     `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
-     ON CONFLICT (lead_id, msg_id) WHERE msg_id IS NOT NULL DO NOTHING
-     RETURNING id`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
     [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null]
   ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
-  // Se ON CONFLICT pulou (já existia), não retorna linha — então não emite socket de novo.
   if (!ins || !ins.rows.length) return null;
   const novoId = ins.rows[0].id;
 
