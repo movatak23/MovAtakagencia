@@ -5259,6 +5259,7 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS zapi_sync_erro TEXT,
     ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
     ADD COLUMN IF NOT EXISTS comando TEXT,
+    ADD COLUMN IF NOT EXISTS setor_id INTEGER,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
 
@@ -5443,12 +5444,21 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     const clienteId = parseInt(req.params.id, 10);
     const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
     await garantirFunilPadraoCliente(clienteId);
+
+    // "Todos" mostra todas as colunas. Um setor específico mostra só as colunas
+    // atribuídas a ele (configurado pelo seletor de setor no cabeçalho da coluna).
+    const colunasParams = [clienteId];
+    let filtroColunaSetorSql = '';
+    if (setorFiltro) {
+      colunasParams.push(setorFiltro);
+      filtroColunaSetorSql = ' AND setor_id = $2';
+    }
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id
          FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true
+        WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
         ORDER BY ordem ASC, id ASC`,
-      [clienteId]
+      colunasParams
     );
     const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
     const colById = new Map(colunas.map(c => [Number(c.id), c]));
@@ -5518,18 +5528,25 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       [clienteId]
     );
     const contagemSetoresRes = await query(
-      `SELECT setor_id, COUNT(*)::int AS cnt FROM movatak_leads
+      `SELECT setor_id, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE nao_lida = true)::int AS nao_lidas
+         FROM movatak_leads
         WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false
         GROUP BY setor_id`,
       [clienteId]
     );
     const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.cnt]));
-    const setores = setoresRes.rows.map(s => ({ ...s, leads_count: contagemPorSetor.get(s.id) || 0 }));
+    const naoLidasPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.nao_lidas]));
+    const setores = setoresRes.rows.map(s => ({
+      ...s,
+      leads_count: contagemPorSetor.get(s.id) || 0,
+      nao_lidas: naoLidasPorSetor.get(s.id) || 0
+    }));
     const totalGeral = contagemSetoresRes.rows.reduce((acc, r) => acc + r.cnt, 0);
+    const totalNaoLidas = contagemSetoresRes.rows.reduce((acc, r) => acc + r.nao_lidas, 0);
 
     res.json({
       colunas, colunasVendedores,
-      setores, setorAtivo: setorFiltro, totalGeral,
+      setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
       leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5622,6 +5639,18 @@ app.patch('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
         WHERE id = $4
         RETURNING *`,
       [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id, cor !== undefined ? (cor || null) : null, comando !== undefined ? String(comando).trim() : null]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/funil/colunas/:id/setor', authMovatak, async (req, res) => {
+  try {
+    const setorId = req.body && req.body.setor_id ? parseInt(req.body.setor_id, 10) : null;
+    const r = await query(
+      `UPDATE movatak_funil_colunas SET setor_id = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
+      [setorId, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
