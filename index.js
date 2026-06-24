@@ -2803,7 +2803,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
     if (lead && (texto || midiaRecebida.url)) {
-      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo).catch(() => null);
+      const msgIdEntrada = body.messageId || body.id || null;
+      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada).catch(() => null);
     }
 
     // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.
@@ -2944,7 +2945,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Registra também a primeira mensagem do lead que criou o atendimento.
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
-      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo).catch(() => null);
+      const msgIdNovoLead = body.messageId || body.id || null;
+      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead).catch(() => null);
 
       // Decide se inicia o questionário:
       // - Campanha com template de questionário vinculado → usa o questionário do template.
@@ -3476,93 +3478,17 @@ app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, 
 app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaConversas();
-    // Mensagens registradas no banco
+    // Fonte única da verdade: o banco. Toda mensagem (recebida via webhook e enviada
+    // pelo painel) é gravada aqui, então não precisamos mais mesclar com o histórico
+    // do Z-API — esse merge causava mensagens sumindo/duplicando por divergência de
+    // horário e de-dup frágil. A caixa de entrada já usa só o banco e mostra correto.
     const r = await query(
-      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em
+      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em, 'banco' AS fonte
          FROM movatak_conversas WHERE lead_id = $1
-         ORDER BY criado_em ASC LIMIT 300`,
+         ORDER BY criado_em ASC LIMIT 500`,
       [req.params.id]
     );
-    const banco = r.rows.map(m => ({ ...m, fonte: 'banco' }));
-
-    // Tenta buscar histórico do Z-API (sessão ativa)
-    const rl = await query(
-      `SELECT l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
-         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1`,
-      [req.params.id]
-    );
-    let zapiMsgs = [];
-    if (rl.rows.length) {
-      const row = rl.rows[0];
-      const phone = String(row.telefone || '').replace(/\D/g, '');
-      try {
-        // Z-API: tenta buscar histórico do chat (disponível apenas na sessão ativa)
-        const endpoints = [
-          `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/chat-messages/${phone}`,
-          `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/messages?phone=${phone}&page=0&pageSize=100`,
-          `${ZAPI_BASE}/${row.zapi_instance}/token/${row.zapi_token}/last-messages?phone=${phone}&qtd=100`
-        ];
-        let resp = null;
-        for (const url of endpoints) {
-          try {
-            resp = await axios.get(url, {
-              headers: { 'Client-Token': row.zapi_client_token || '' },
-              timeout: 5000
-            });
-            if (resp.data && (Array.isArray(resp.data) || Array.isArray(resp.data?.messages) || Array.isArray(resp.data?.value))) break;
-          } catch (e2) { /* tenta próximo */ }
-        }
-        if (!resp) throw new Error('Nenhum endpoint respondeu');
-        const msgs = Array.isArray(resp.data) ? resp.data
-          : Array.isArray(resp.data?.messages) ? resp.data.messages
-          : Array.isArray(resp.data?.value) ? resp.data.value : [];
-        console.log(`[conversas][zapi] ${msgs.length} msgs para lead ${req.params.id}`);
-        zapiMsgs = msgs.map(m => {
-          const realId = m.messageId || m.id || null;
-          return {
-            id: 'zapi_' + (realId || Math.random()),
-            msg_id: realId,
-            direcao: m.fromMe ? 'saida' : 'entrada',
-            conteudo: m.text?.message || m.body || m.caption || m.text || null,
-            midia_url: m.image?.imageUrl || m.video?.videoUrl || m.audio?.audioUrl || null,
-            criado_em: m.timestamp
-              ? new Date(m.timestamp * 1000).toISOString()
-              : (m.momentsAgo ? new Date(Date.now() - m.momentsAgo * 1000).toISOString() : null),
-            fonte: 'zapi'
-          };
-        }).filter(m => m.criado_em && (m.conteudo || m.midia_url));
-      } catch (e) {
-        console.log('[conversas] Z-API histórico indisponível:', e.message);
-      }
-    }
-
-    // Mescla banco + Z-API sem duplicar. Ordem de prioridade do de-dup:
-    //   1) msg_id igual → é exatamente a mesma mensagem (mais confiável).
-    //   2) Saída (fromMe): tudo que sai do painel já é gravado no banco na hora do
-    //      envio, então qualquer mensagem 'saida' do Z-API com horário próximo de uma
-    //      'saida' do banco é a mesma — descarta a do Z-API.
-    //   3) Entrada: casa por texto idêntico (texto) ou por ser-mídia (mídia), em janela de tempo.
-    const idsBanco = new Set(banco.map(b => b.msg_id).filter(Boolean));
-    const todos = [...banco];
-    for (const zm of zapiMsgs) {
-      if (zm.msg_id && idsBanco.has(zm.msg_id)) continue; // 1) mesmo ID, já está no banco
-      const dt = new Date(zm.criado_em).getTime();
-      const zmTemMidia = !!zm.midia_url;
-      const duplicado = banco.some(b => {
-        if (b.direcao !== zm.direcao) return false;
-        const diff = Math.abs(new Date(b.criado_em).getTime() - dt);
-        if (diff >= 120000) return false;
-        if (zm.direcao === 'saida') return true;                          // 2) toda saída já está no banco
-        const bTemMidia = !!b.midia_url;
-        if (bTemMidia && zmTemMidia) return true;                         // 3a) ambas mídia
-        if (!bTemMidia && !zmTemMidia) return (b.conteudo || '') === (zm.conteudo || ''); // 3b) ambas texto
-        return false;
-      });
-      if (!duplicado) todos.push(zm);
-    }
-    todos.sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
-    res.json(todos);
+    res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
