@@ -1326,50 +1326,33 @@ async function marcarLeadAtualComoNaoLida() {
 function usarMsgRapidaPainel(id) {
   const m = msgsRapidasCache.find(x => String(x.id) === String(id));
   if (!m) return;
-  if (Array.isArray(m.itens) && m.itens.length) {
-    enviarSequenciaRapida(m);
-    return;
-  }
-  document.getElementById('painel-msg-texto').value = m.texto || '';
-  const midiaEl = document.getElementById('painel-midia-el');
-  const midiaPreview = document.getElementById('painel-midia-preview');
-  if (m.midia_url) {
-    const isVideo = /\.(mp4|webm|mov)/i.test(m.midia_url);
-    midiaEl.innerHTML = isVideo
-      ? `<video src="${m.midia_url}" style="max-width:160px;max-height:90px;border-radius:6px" controls></video>`
-      : `<img src="${m.midia_url}" style="max-width:160px;max-height:90px;border-radius:6px;object-fit:cover">`;
-    midiaEl.dataset.url = m.midia_url;
-    midiaPreview.style.display = '';
-  } else {
-    midiaEl.innerHTML = ''; midiaEl.dataset.url = '';
-    midiaPreview.style.display = 'none';
-  }
+  const itens = (Array.isArray(m.itens) && m.itens.length) ? m.itens : [{ texto: m.texto || '', midia_url: m.midia_url || null }];
+  enviarSequenciaRapida(m, itens);
 }
 
-// Dispara, em ordem e uma por uma, todas as mensagens de uma sequência
-// (ex: autoatendimento inteiro) pro lead que está com a conversa aberta.
-async function enviarSequenciaRapida(m) {
+// Dispara, em ordem e uma por uma, as mensagens de uma resposta rápida
+// (simples = 1 item, ou sequência = vários) direto pro lead, sem perguntar
+// e sem passar pelo campo de texto.
+async function enviarSequenciaRapida(m, itens) {
   if (!window._painelLeadId) return;
-  const itens = m.itens || [];
-  if (!itens.length) return;
-  if (!confirm('Enviar esta sequência de ' + itens.length + ' mensagens agora para o lead?')) return;
+  if (!itens || !itens.length) return;
   const leadId = window._painelLeadId;
   const st = document.getElementById('painel-msg-status');
   for (let i = 0; i < itens.length; i++) {
     const it = itens[i];
-    if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Enviando ' + (i + 1) + '/' + itens.length + '...'; }
+    if (st) { st.style.color = 'var(--text2)'; st.textContent = itens.length > 1 ? ('Enviando ' + (i + 1) + '/' + itens.length + '...') : 'Enviando...'; }
     try {
       await api('/movatak/admin/leads/' + leadId + '/mensagem-rapida', {
         method: 'POST', body: JSON.stringify({ texto: it.texto || '', midia_url: it.midia_url || null })
       });
     } catch (e) {
-      if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro no item ' + (i + 1) + ' da sequência: ' + e.message; }
+      if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao enviar: ' + e.message; }
       return;
     }
     if (i < itens.length - 1) await new Promise(r => setTimeout(r, 1800));
   }
   api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
-  if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Sequência enviada (' + itens.length + ' mensagens).'; }
+  if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Enviado.'; }
   try {
     const data = await api('/movatak/admin/leads/' + leadId + '/historico');
     renderHistoricoPainel(data);
