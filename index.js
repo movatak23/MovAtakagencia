@@ -58,6 +58,11 @@ function emitirMensagemLead(clienteId, leadId, mensagem) {
   io.to(`cliente-${clienteId}`).emit('mensagem:nova', { leadId, mensagem });
 }
 
+function emitirMensagemApagada(clienteId, leadId, conversaId) {
+  if (!clienteId) return;
+  io.to(`cliente-${clienteId}`).emit('mensagem:apagada', { leadId, conversaId });
+}
+
 // Logs completos somente quando necessário. Em produção, deixe MOVATAK_DEBUG=false
 // para não poluir o Railway com payloads grandes da Z-API/Rastreiobot.
 const MOVATAK_DEBUG = String(process.env.MOVATAK_DEBUG || '').toLowerCase() === 'true';
@@ -196,32 +201,54 @@ async function authVendedor(req, res, next) {
 // ============================================================
 const ZAPI_BASE = 'https://api.z-api.io/instances';
 
+// Todas retornam o ID da mensagem que o Z-API devolve no envio (zaapId/messageId) —
+// é esse ID que a gente precisa guardar pra poder apagar a mensagem depois.
+function extrairIdMensagemZapi(resp) {
+  const d = (resp && resp.data) || {};
+  return d.zaapId || d.messageId || d.id || null;
+}
+
 async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
-  await axios.post(url, { phone: telefone, message: mensagem }, {
+  const resp = await axios.post(url, { phone: telefone, message: mensagem }, {
     headers: { 'Client-Token': clientToken }
   });
+  return extrairIdMensagemZapi(resp);
 }
 
 async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-image`;
-  await axios.post(url, { phone: telefone, image: imageUrl, caption: caption || '' }, {
+  const resp = await axios.post(url, { phone: telefone, image: imageUrl, caption: caption || '' }, {
     headers: { 'Client-Token': clientToken }
   });
+  return extrairIdMensagemZapi(resp);
 }
 
 async function zapiEnviarVideo(instance, token, clientToken, telefone, videoUrl, caption) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-video`;
-  await axios.post(url, { phone: telefone, video: videoUrl, caption: caption || '' }, {
+  const resp = await axios.post(url, { phone: telefone, video: videoUrl, caption: caption || '' }, {
     headers: { 'Client-Token': clientToken }
   });
+  return extrairIdMensagemZapi(resp);
 }
 
 async function zapiEnviarAudio(instance, token, clientToken, telefone, audioUrl) {
   // Mensagem de voz (PTT) no WhatsApp não tem legenda — só o áudio.
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-audio`;
-  await axios.post(url, { phone: telefone, audio: audioUrl }, {
+  const resp = await axios.post(url, { phone: telefone, audio: audioUrl }, {
     headers: { 'Client-Token': clientToken }
+  });
+  return extrairIdMensagemZapi(resp);
+}
+
+// Apaga a mensagem no WhatsApp do lead (delete for everyone). Convenção do Z-API
+// pra isso ainda não testada contra a API real — se o endpoint/formato não bater,
+// me avisa o erro exato que aparecer pra eu ajustar.
+async function zapiApagarMensagem(instance, token, clientToken, telefone, messageId) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/messages`;
+  await axios.delete(url, {
+    headers: { 'Client-Token': clientToken },
+    data: { phone: telefone, messageId, owner: true }
   });
 }
 
@@ -3397,7 +3424,7 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
     await garantirEstruturaConversas();
     // Mensagens registradas no banco
     const r = await query(
-      `SELECT id, direcao, conteudo, midia_url, midia_tipo, criado_em
+      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em
          FROM movatak_conversas WHERE lead_id = $1
          ORDER BY criado_em ASC LIMIT 300`,
       [req.params.id]
@@ -3464,6 +3491,45 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
     }
     todos.sort((a, b) => new Date(a.criado_em) - new Date(b.criado_em));
     res.json(todos);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Apaga uma mensagem enviada pelo painel — tenta apagar no WhatsApp do lead
+// (delete for everyone, só funciona pra mensagens que a gente mandou e dentro
+// da janela de tempo que o WhatsApp permite) e remove do nosso histórico de
+// qualquer forma, pra não ficar uma mensagem "travada" caso o lado do WhatsApp falhe.
+app.delete('/movatak/admin/conversas/:id', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT cv.*, l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
+         FROM movatak_conversas cv
+         JOIN movatak_leads l ON l.id = cv.lead_id
+         JOIN movatak_clientes c ON c.id = cv.cliente_id
+        WHERE cv.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    const msg = r.rows[0];
+
+    let apagadaNoZap = false;
+    let avisoZap = null;
+    if (msg.direcao === 'saida' && msg.msg_id) {
+      try {
+        await zapiApagarMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id);
+        apagadaNoZap = true;
+      } catch (e) {
+        avisoZap = e.response?.data?.error || e.message;
+        console.warn('[conversas][apagar] falha ao apagar no WhatsApp:', avisoZap);
+      }
+    } else if (msg.direcao === 'entrada') {
+      avisoZap = 'Mensagem recebida do lead — não é possível apagar do lado dele, só do seu painel.';
+    } else {
+      avisoZap = 'Esta mensagem foi enviada antes desse recurso existir, sem referência pra apagar no WhatsApp.';
+    }
+
+    await query('DELETE FROM movatak_conversas WHERE id = $1', [req.params.id]);
+    emitirMensagemApagada(msg.cliente_id, msg.lead_id, Number(req.params.id));
+    res.json({ ok: true, apagadaNoZap, avisoZap });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -5054,16 +5120,18 @@ async function garantirEstruturaConversas() {
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_tipo TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_id TEXT`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
 }
 
-async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo) {
-  if (!leadId || !clienteId) return;
+async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId) {
+  if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
-  await query(
-    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo) VALUES ($1,$2,$3,$4,$5,$6)`,
-    [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null]
-  ).catch(e => console.error('[conversa] erro ao registrar:', e.message));
+  const ins = await query(
+    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+    [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null]
+  ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
+  const novoId = ins && ins.rows[0] ? ins.rows[0].id : null;
 
   // Mensagem do lead (entrada) marca o lead como não lido — só é "lido" quando
   // alguém abre o painel de conversa dele ou responde manualmente pelo painel.
@@ -5074,12 +5142,15 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
   // sem precisar dar reload na tela.
   emitirMensagemLead(clienteId, leadId, {
+    id: novoId,
     direcao,
     conteudo: conteudo || '',
     midia_url: midiaUrl || null,
     midia_tipo: midiaTipo || null,
+    msg_id: msgId || null,
     criado_em: new Date().toISOString()
   });
+  return novoId;
 }
 
 async function garantirEstruturaMensagensRapidas() {
@@ -5170,19 +5241,20 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, re
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     const row = rl.rows[0];
     let tipoFinal = null;
+    let msgId = null;
     if (midia_url) {
       tipoFinal = tipoMidia(midia_url, midia_tipo);
       if (tipoFinal === 'video') {
-        await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+        msgId = await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
       } else if (tipoFinal === 'audio') {
-        await zapiEnviarAudio(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url);
+        msgId = await zapiEnviarAudio(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url);
       } else {
-        await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+        msgId = await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
       }
     } else {
-      await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
+      msgId = await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
     }
-    registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal).catch(() => null);
+    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
     if (texto) {
