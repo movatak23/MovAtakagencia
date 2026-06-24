@@ -5283,7 +5283,7 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, re
     if (texto) {
       query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE cliente_id=$1 AND texto=$2', [row.cliente_id, texto]).catch(() => null);
     }
-    res.json({ ok: true });
+    res.json({ ok: true, conversaId, criado_em: new Date().toISOString() });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
