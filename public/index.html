@@ -1264,7 +1264,12 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   const grid = document.getElementById('painel-msgs-rapidas-grid');
   if (grid) {
     grid.innerHTML = msgsRapidasCache.length
-      ? msgsRapidasCache.map(m => `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
+      ? msgsRapidasCache.map(m => {
+          const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+          const titulo = ehSequencia ? '🔁 ' + m.titulo : m.titulo;
+          const tip = ehSequencia ? `Envia ${m.itens.length} mensagens em sequência` : m.texto;
+          return `<button onclick="usarMsgRapidaPainel(${m.id})" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
+        }).join('')
       : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
   }
 
@@ -1321,6 +1326,10 @@ async function marcarLeadAtualComoNaoLida() {
 function usarMsgRapidaPainel(id) {
   const m = msgsRapidasCache.find(x => String(x.id) === String(id));
   if (!m) return;
+  if (Array.isArray(m.itens) && m.itens.length) {
+    enviarSequenciaRapida(m);
+    return;
+  }
   document.getElementById('painel-msg-texto').value = m.texto || '';
   const midiaEl = document.getElementById('painel-midia-el');
   const midiaPreview = document.getElementById('painel-midia-preview');
@@ -1335,6 +1344,36 @@ function usarMsgRapidaPainel(id) {
     midiaEl.innerHTML = ''; midiaEl.dataset.url = '';
     midiaPreview.style.display = 'none';
   }
+}
+
+// Dispara, em ordem e uma por uma, todas as mensagens de uma sequência
+// (ex: autoatendimento inteiro) pro lead que está com a conversa aberta.
+async function enviarSequenciaRapida(m) {
+  if (!window._painelLeadId) return;
+  const itens = m.itens || [];
+  if (!itens.length) return;
+  if (!confirm('Enviar esta sequência de ' + itens.length + ' mensagens agora para o lead?')) return;
+  const leadId = window._painelLeadId;
+  const st = document.getElementById('painel-msg-status');
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i];
+    if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Enviando ' + (i + 1) + '/' + itens.length + '...'; }
+    try {
+      await api('/movatak/admin/leads/' + leadId + '/mensagem-rapida', {
+        method: 'POST', body: JSON.stringify({ texto: it.texto || '', midia_url: it.midia_url || null })
+      });
+    } catch (e) {
+      if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro no item ' + (i + 1) + ' da sequência: ' + e.message; }
+      return;
+    }
+    if (i < itens.length - 1) await new Promise(r => setTimeout(r, 1800));
+  }
+  api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
+  if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Sequência enviada (' + itens.length + ' mensagens).'; }
+  try {
+    const data = await api('/movatak/admin/leads/' + leadId + '/historico');
+    renderHistoricoPainel(data);
+  } catch (e) {}
 }
 
 async function enviarMensagemPainel() {
@@ -1478,6 +1517,7 @@ async function reativarFollowupManual(leadId) {
 
 async function abrirGerenciarMsgsRapidas() {
   document.getElementById('msgs-gerenciar-status').textContent = '';
+  cancelarSequenciaPendente();
   document.getElementById('modal-gerenciar-msgs').classList.add('open');
   await renderMsgsGerenciar();
 }
@@ -1492,6 +1532,20 @@ async function renderMsgsGerenciar() {
   await carregarMsgsRapidas();
   if (!msgsRapidasCache.length) { box.innerHTML = '<div class="fu-hint">Nenhuma mensagem cadastrada ainda.</div>'; return; }
   box.innerHTML = msgsRapidasCache.map(m => {
+    if (Array.isArray(m.itens) && m.itens.length) {
+      const itensHtml = m.itens.map((it, i) => `
+        <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg4);border-radius:6px;margin-bottom:4px">
+          <strong style="color:var(--accent)">${i + 1}.${it.midia_url ? ' 📎' : ''}</strong> ${escapeHtml(String(it.texto || '').slice(0, 80))}
+        </div>`).join('');
+      return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
+        <div style="flex:1">
+          <input class="fu-textarea" style="min-height:auto;padding:7px 10px;resize:none;margin-bottom:4px;width:100%" value="${escapeHtml(m.titulo)}" onchange="patchMsgRapida(${m.id},'titulo',this.value)">
+          <div class="fu-hint" style="margin-bottom:4px">🔁 Sequência de ${m.itens.length} mensagens (disparo direto, sem edição de itens aqui):</div>
+          ${itensHtml}
+        </div>
+        <button class="btn-remove" onclick="removerMsgRapida(${m.id})">×</button>
+      </div>`;
+    }
     const midiaHtml = m.midia_url
       ? (/\.(mp4|webm|mov)/i.test(m.midia_url)
           ? `<video src="${m.midia_url}" style="max-width:120px;max-height:70px;border-radius:4px;display:block;margin-top:4px" controls></video>`
@@ -1532,16 +1586,27 @@ async function uploadMidiaNovaMsg(input) {
 
 async function adicionarMsgRapida() {
   const titulo = document.getElementById('msg-nova-titulo').value.trim();
-  const texto = document.getElementById('msg-nova-texto').value.trim();
-  const midia_url = (document.getElementById('msg-nova-midia-url').value || '').trim() || null;
   const st = document.getElementById('msgs-gerenciar-status');
-  if (!titulo || !texto) { st.style.color='var(--red)'; st.textContent='Preencha título e texto.'; return; }
+  if (!titulo) { st.style.color='var(--red)'; st.textContent='Preencha o título.'; return; }
+
+  const body = { titulo };
+  if (window._sequenciaPendente && window._sequenciaPendente.length) {
+    body.itens = window._sequenciaPendente;
+  } else {
+    const texto = document.getElementById('msg-nova-texto').value.trim();
+    const midia_url = (document.getElementById('msg-nova-midia-url').value || '').trim() || null;
+    if (!texto) { st.style.color='var(--red)'; st.textContent='Preencha o texto.'; return; }
+    body.texto = texto;
+    body.midia_url = midia_url;
+  }
+
   try {
-    await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas', { method: 'POST', body: JSON.stringify({ titulo, texto, midia_url }) });
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas', { method: 'POST', body: JSON.stringify(body) });
     document.getElementById('msg-nova-titulo').value = '';
     document.getElementById('msg-nova-texto').value = '';
     document.getElementById('msg-nova-midia-url').value = '';
     document.getElementById('msg-nova-midia-preview').textContent = '';
+    cancelarSequenciaPendente();
     st.style.color = 'var(--green)'; st.textContent = 'Mensagem adicionada.';
     await renderMsgsGerenciar();
   } catch (e) { st.style.color='var(--red)'; st.textContent='Erro: '+e.message; }
@@ -1589,11 +1654,11 @@ async function carregarMensagensAutoAtendimento(templateId) {
   try {
     const t = await api('/movatak/admin/questionario-templates/' + templateId);
     const itens = [];
-    if (t.intro) itens.push({ rotulo: 'Introdução', texto: t.intro });
+    if (t.intro) itens.push({ rotulo: 'Introdução', texto: t.intro, midia_url: t.intro_imagem || null });
     (t.passos || []).forEach((p, i) => {
-      if (p && p.pergunta) itens.push({ rotulo: 'Pergunta ' + (i + 1), texto: p.pergunta });
+      if (p && p.pergunta) itens.push({ rotulo: 'Pergunta ' + (i + 1), texto: p.pergunta, midia_url: p.imagem || null });
     });
-    if (t.final) itens.push({ rotulo: 'Mensagem final', texto: t.final });
+    if (t.final) itens.push({ rotulo: 'Mensagem final', texto: t.final, midia_url: t.final_imagem || null });
     window._itensAutoAtendimento = itens;
     window._nomeTemplateAutoAtendimento = t.nome || 'Auto Atendimento';
     if (!itens.length) {
@@ -1601,10 +1666,10 @@ async function carregarMensagensAutoAtendimento(templateId) {
       return;
     }
     lista.innerHTML = `
-      <div onclick="usarTemplateAutoAtendimentoInteiro()"
+      <div onclick="usarTemplateAutoAtendimentoSequencia()"
         style="padding:8px 10px;background:rgba(91,127,255,.12);border:1px solid var(--accent);border-radius:8px;margin-bottom:8px;cursor:pointer">
-        <strong style="font-size:12px;color:var(--accent)">📋 Usar o autoatendimento inteiro como 1 mensagem</strong>
-        <div style="font-size:11px;color:var(--text2);margin-top:2px">Junta introdução + todas as perguntas + mensagem final num texto só.</div>
+        <strong style="font-size:12px;color:var(--accent)">🔁 Usar o autoatendimento inteiro como sequência</strong>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">Dispara introdução + perguntas + mensagem final, uma por uma e na ordem, com 1 clique.</div>
       </div>` +
       itens.map((it, i) => `
       <div onclick="usarMensagemAutoAtendimento(${i})"
@@ -1617,28 +1682,47 @@ async function carregarMensagensAutoAtendimento(templateId) {
   }
 }
 
-// Junta introdução + todas as perguntas + mensagem final em um texto único.
-function usarTemplateAutoAtendimentoInteiro() {
+// Prepara uma sequência (intro + perguntas + final) pra ser salva como mensagem
+// rápida especial: ao usar, dispara cada item em ordem, um por um.
+function usarTemplateAutoAtendimentoSequencia() {
   const itens = window._itensAutoAtendimento || [];
   if (!itens.length) return;
-  let numeroPergunta = 0;
-  const blocos = itens.map(it => {
-    if (it.rotulo.startsWith('Pergunta')) { numeroPergunta++; return numeroPergunta + ') ' + it.texto; }
-    return it.texto;
-  });
+  window._sequenciaPendente = itens.map(it => ({ texto: it.texto, midia_url: it.midia_url || null }));
   document.getElementById('msg-nova-titulo').value = window._nomeTemplateAutoAtendimento || 'Auto Atendimento';
-  document.getElementById('msg-nova-texto').value = blocos.join('\n\n');
+  document.getElementById('msg-nova-modo-simples').style.display = 'none';
+  document.getElementById('msg-nova-modo-sequencia').style.display = 'block';
+  document.getElementById('msg-nova-seq-contagem').textContent = itens.length;
+  document.getElementById('msg-nova-seq-preview').innerHTML = itens.map(it => `
+    <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg3);border-radius:6px;margin-bottom:4px">
+      <strong style="color:var(--accent)">${escapeHtml(it.rotulo)}${it.midia_url ? ' 📎' : ''}</strong> — ${escapeHtml(String(it.texto).slice(0, 70))}
+    </div>`).join('');
   const st = document.getElementById('msgs-gerenciar-status');
-  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Autoatendimento inteiro importado abaixo — revise e clique em Adicionar.'; }
-  document.getElementById('msg-nova-texto').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Sequência pronta — revise o título e clique em Adicionar.'; }
+  document.getElementById('msg-nova-modo-sequencia').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelarSequenciaPendente() {
+  window._sequenciaPendente = null;
+  document.getElementById('msg-nova-modo-simples').style.display = 'block';
+  document.getElementById('msg-nova-modo-sequencia').style.display = 'none';
 }
 
 // Copia o texto escolhido pro formulário de "nova mensagem rápida" — Ronaldo revisa/edita e clica Adicionar.
 function usarMensagemAutoAtendimento(idx) {
   const it = (window._itensAutoAtendimento || [])[idx];
   if (!it) return;
+  cancelarSequenciaPendente();
   document.getElementById('msg-nova-titulo').value = (window._nomeTemplateAutoAtendimento || 'Auto Atendimento') + ' — ' + it.rotulo;
   document.getElementById('msg-nova-texto').value = it.texto;
+  const midiaEl = document.getElementById('msg-nova-midia-url');
+  const preview = document.getElementById('msg-nova-midia-preview');
+  if (it.midia_url) {
+    midiaEl.value = it.midia_url;
+    if (preview) { preview.textContent = '📎 Imagem/vídeo desta etapa incluído.'; preview.style.color = 'var(--text2)'; }
+  } else {
+    midiaEl.value = '';
+    if (preview) preview.textContent = '';
+  }
   const st = document.getElementById('msgs-gerenciar-status');
   if (st) { st.style.color = 'var(--green)'; st.textContent = 'Texto importado abaixo — revise e clique em Adicionar.'; }
   document.getElementById('msg-nova-texto').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -4913,17 +4997,26 @@ main.funil-main-3col{height:calc(100vh - 80px);overflow:hidden}
       </div>
     </div>
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:flex-start">
-      <input type="text" id="msg-nova-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;flex:1;min-width:130px" placeholder="Título/atalho (ex: Proposta)">
-      <textarea id="msg-nova-texto" class="fu-textarea" style="min-height:70px;flex:2;min-width:200px" placeholder="Texto da mensagem..."></textarea>
-    </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
-      <label class="btn-add-small" style="cursor:pointer;padding:7px 12px;font-size:12px">
-        📎 Imagem/Vídeo
-        <input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaNovaMsg(this)">
-      </label>
-      <span id="msg-nova-midia-preview" style="font-size:12px;color:var(--text2)"></span>
-      <input type="hidden" id="msg-nova-midia-url">
+    <div style="margin-top:12px">
+      <input type="text" id="msg-nova-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;width:100%;margin-bottom:8px" placeholder="Título/atalho (ex: Proposta)">
+
+      <div id="msg-nova-modo-simples">
+        <textarea id="msg-nova-texto" class="fu-textarea" style="min-height:70px;width:100%" placeholder="Texto da mensagem..."></textarea>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <label class="btn-add-small" style="cursor:pointer;padding:7px 12px;font-size:12px">
+            📎 Imagem/Vídeo
+            <input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaNovaMsg(this)">
+          </label>
+          <span id="msg-nova-midia-preview" style="font-size:12px;color:var(--text2)"></span>
+          <input type="hidden" id="msg-nova-midia-url">
+        </div>
+      </div>
+
+      <div id="msg-nova-modo-sequencia" style="display:none;background:var(--bg4);border:1px solid var(--accent);border-radius:10px;padding:10px">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px">🔁 Sequência de <strong id="msg-nova-seq-contagem">0</strong> mensagens — serão disparadas em ordem, uma por uma, com 1 clique.</div>
+        <div id="msg-nova-seq-preview"></div>
+        <button class="btn-cancel" style="margin-top:6px;padding:6px 12px;font-size:12px" onclick="cancelarSequenciaPendente()">✕ Cancelar sequência</button>
+      </div>
     </div>
     <button class="btn-add-small" style="margin-top:10px" onclick="adicionarMsgRapida()">Adicionar</button>
     <div id="msgs-gerenciar-status" class="fu-hint" style="margin-top:8px"></div>
