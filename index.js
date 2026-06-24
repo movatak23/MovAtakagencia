@@ -3784,6 +3784,7 @@ async function garantirEstruturaQuestionario() {
   )`).catch(() => null);
 
   await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS lembretes INTEGER DEFAULT 0`).catch(() => null);
+  await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS template_id INTEGER`).catch(() => null);
 
   await query(`CREATE TABLE IF NOT EXISTS movatak_cobertura_cep (
     id SERIAL PRIMARY KEY,
@@ -4070,6 +4071,37 @@ async function iniciarQuestionarioPorTemplate(cliente, lead, templateId) {
 
 // Retorna um objeto "cliente efetivo": uma cópia do cliente com os campos de
 // questionário sobrescritos pelo template de autoatendimento vinculado à campanha
+// Resolve os passos do questionário a partir de um template_id específico.
+// Usado quando o estado do questionário sabe qual template originou o fluxo —
+// garante que a resposta do lead seja interpretada com os passos certos, mesmo
+// que a campanha do lead aponte para outro template (ou nenhum).
+async function resolverQuestionarioPorTemplateId(cliente, templateId) {
+  try {
+    if (!templateId) return null;
+    const r = await query(
+      `SELECT * FROM movatak_questionario_templates WHERE id = $1 AND ativo = true`,
+      [templateId]
+    );
+    if (!r.rows.length) return null;
+    const qt = r.rows[0];
+    return {
+      ...cliente,
+      questionario_intro: qt.intro,
+      questionario_final: qt.final,
+      questionario_intro_imagem: qt.intro_imagem,
+      questionario_final_imagem: qt.final_imagem,
+      questionario_passos: qt.passos || [],
+      questionario_recomendacao: qt.recomendacao || [],
+      questionario_comando_parar: qt.comando_parar,
+      questionario_comando_ativar: qt.comando_ativar,
+      __quest_template_id: qt.id
+    };
+  } catch (e) {
+    console.error('[questionario][resolver-por-id]', e.message);
+    return null;
+  }
+}
+
 // do lead. Se a campanha não tem template, usa o questionário do próprio cliente.
 async function resolverQuestionarioDoLead(cliente, lead) {
   try {
@@ -4216,12 +4248,13 @@ async function iniciarQuestionario(cliente, lead) {
     await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
     await moverLeadParaFunilSlug(cliente.id, lead.id, 'auto_atendimento').catch(e => console.error('[funil][auto_atendimento]', e.message));
 
-    // cria estado
+    // cria estado — grava qual template originou (se houver), pra que ao processar
+    // a resposta do lead a gente use ESTE template, e não re-resolva pela campanha.
     const ins = await query(
-      `INSERT INTO movatak_questionario_estado (cliente_id, lead_id, telefone, passo_idx, respostas, status)
-       VALUES ($1, $2, $3, 0, '{}'::jsonb, 'em_andamento')
+      `INSERT INTO movatak_questionario_estado (cliente_id, lead_id, telefone, passo_idx, respostas, status, template_id)
+       VALUES ($1, $2, $3, 0, '{}'::jsonb, 'em_andamento', $4)
        RETURNING id`,
-      [cliente.id, lead.id, lead.telefone]
+      [cliente.id, lead.id, lead.telefone, cliente.__quest_template_id || null]
     );
     const estadoId = ins.rows[0].id;
 
@@ -4245,7 +4278,11 @@ async function iniciarQuestionario(cliente, lead) {
 
 async function processarRespostaQuestionario(cliente, lead, estado, texto) {
   try {
-    cliente = await resolverQuestionarioDoLead(cliente, lead);
+    // Prioridade: o template que o estado registrou (campanha OU início manual pelo
+    // painel). Só cai no resolver-por-campanha se o estado não tiver template gravado
+    // (estados antigos, criados antes dessa coluna existir).
+    const porTemplate = estado.template_id ? await resolverQuestionarioPorTemplateId(cliente, estado.template_id) : null;
+    cliente = porTemplate || await resolverQuestionarioDoLead(cliente, lead);
     const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
     const idx = estado.passo_idx || 0;
     const passo = passos[idx];
