@@ -3623,7 +3623,10 @@ async function iniciarPaginaFunilAtendimento() {
                   <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
                 </div>
-                <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:12px;padding:5px 10px;cursor:pointer">📩 Marcar como não lida</button>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
+                  <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
+                </div>
               </div>
               <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
                 <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
@@ -4476,16 +4479,82 @@ function renderFunilCard(lead, colunaAtualId) {
 }
 
 // Transfere o lead para outro setor usando o endpoint já existente
+// ── Notificação no topo da tela (toast) ─────────────────────────────────────
+function mostrarToast(mensagem, tipo) {
+  let host = document.getElementById('toast-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'toast-host';
+    host.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none';
+    document.body.appendChild(host);
+  }
+  const cor = tipo === 'erro' ? 'var(--red)' : 'var(--green)';
+  const el = document.createElement('div');
+  el.style.cssText = `background:var(--bg2);border:1px solid ${cor};border-left:4px solid ${cor};border-radius:10px;padding:12px 18px;color:var(--text);font-size:14px;font-family:var(--sans);box-shadow:0 8px 28px rgba(0,0,0,.5);max-width:90vw;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s`;
+  el.textContent = mensagem;
+  host.appendChild(el);
+  requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+  setTimeout(() => {
+    el.style.opacity = '0'; el.style.transform = 'translateY(-8px)';
+    setTimeout(() => el.remove(), 250);
+  }, 3500);
+}
+
+// ── Transferir atendimento para outro setor ─────────────────────────────────
+function abrirTransferirSetor() {
+  if (!window._painelLeadId) return;
+  const setores = funilState.setores || [];
+  if (!setores.length) {
+    mostrarToast('Nenhum setor cadastrado. Crie setores primeiro.', 'erro');
+    return;
+  }
+  const opcoes = setores.map(s =>
+    `<button onclick="transferirSetorLead(window._painelLeadId, ${s.id})" style="display:block;width:100%;text-align:left;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:11px 14px;margin-bottom:8px;color:var(--text);font-size:14px;cursor:pointer;font-family:var(--sans)">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.cor || 'var(--accent)'};margin-right:8px"></span>${escapeHtml(s.nome)}
+    </button>`
+  ).join('');
+  let modal = document.getElementById('modal-transferir-setor');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-transferir-setor';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal" style="max-width:380px;padding:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <strong style="font-size:16px">Transferir atendimento</strong>
+        <button onclick="fecharTransferirSetor()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <p class="fu-hint" style="margin-bottom:14px">O lead vai para a primeira coluna do kanban do setor escolhido.</p>
+      ${opcoes}
+    </div>`;
+  modal.classList.add('open');
+}
+
+function fecharTransferirSetor() {
+  const modal = document.getElementById('modal-transferir-setor');
+  if (modal) modal.classList.remove('open');
+}
+
 async function transferirSetorLead(leadId, setorId) {
   if (!setorId) return;
   try {
-    await api('/movatak/admin/leads/' + leadId + '/setor', {
+    const resp = await api('/movatak/admin/leads/' + leadId + '/setor', {
       method: 'PATCH',
       body: JSON.stringify({ setor_id: parseInt(setorId) })
     });
+    fecharTransferirSetor();
+    const setorNome = resp.setor_nome || 'outro setor';
+    const colInfo = resp.coluna_destino ? (' (coluna "' + resp.coluna_destino + '")') : '';
+    mostrarToast('✓ Atendimento transferido para o setor "' + setorNome + '"' + colInfo, 'sucesso');
+    // Se a conversa transferida está aberta no chat, fecha (saiu do setor atual em foco)
+    if (window._painelLeadId && String(window._painelLeadId) === String(leadId) && funilState.setorAtivo) {
+      fecharPainelLead();
+    }
     carregarFunilAtendimento();
   } catch (e) {
-    alert('Erro ao transferir setor: ' + e.message);
+    mostrarToast('Erro ao transferir: ' + e.message, 'erro');
   }
 }
 
