@@ -1465,6 +1465,7 @@ async function alternarGravacaoAudio(btn) {
     _gravadorAudio.stop();
     return;
   }
+  if (window._enviandoMsgRapida) return; // já tem um envio em andamento (mensagem rápida ou outro áudio)
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     _gravadorAudioChunks = [];
@@ -1473,13 +1474,14 @@ async function alternarGravacaoAudio(btn) {
     _gravadorAudio.ondataavailable = e => { if (e.data && e.data.size > 0) _gravadorAudioChunks.push(e.data); };
     _gravadorAudio.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
-      btn.textContent = '🎙️';
-      btn.style.color = '';
-      btn.style.borderColor = 'var(--border2)';
       const blob = new Blob(_gravadorAudioChunks, { type: mime });
       if (blob.size > 0) {
         const file = new File([blob], 'audio.webm', { type: mime });
-        await uploadArquivoPainel(file);
+        await enviarAudioGravado(file, btn);
+      } else {
+        btn.textContent = '🎙️';
+        btn.style.color = '';
+        btn.style.borderColor = 'var(--border2)';
       }
     };
     _gravadorAudio.start();
@@ -1488,6 +1490,44 @@ async function alternarGravacaoAudio(btn) {
     btn.style.borderColor = 'var(--red)';
   } catch (e) {
     alert('Não consegui acessar o microfone: ' + e.message);
+  }
+}
+
+// Sobe o áudio gravado e dispara na hora pro lead — igual às mensagens rápidas,
+// sem precisar anexar e clicar em Enviar depois.
+async function enviarAudioGravado(file, btn) {
+  if (!window._painelLeadId) return;
+  window._enviandoMsgRapida = true;
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  const st = document.getElementById('painel-msg-status');
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = true);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; btn.style.color = ''; btn.style.borderColor = 'var(--border2)'; }
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Enviando áudio...'; }
+  try {
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler áudio gravado'));
+      r.readAsDataURL(file);
+    });
+    const up = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
+      method: 'POST', body: JSON.stringify({ texto: '', midia_url: up.url, midia_tipo: up.tipo || 'audio' })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Áudio enviado.'; }
+    if (btn) btn.textContent = '✓';
+    const data = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    renderHistoricoPainel(data);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao enviar áudio: ' + e.message; }
+    if (btn) btn.textContent = '🎙️';
+  } finally {
+    window._enviandoMsgRapida = false;
+    if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = false);
+    if (btn) {
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = '🎙️'; }, 1500);
+    }
   }
 }
 
