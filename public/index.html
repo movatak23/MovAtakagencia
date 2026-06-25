@@ -496,7 +496,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.5.2-funil-mensagem-kanban-vendedores-inline';
+const PAINEL_VERSION = 'v2.5.3-layout-modular-quickmenu-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -4172,11 +4172,35 @@ function garantirColunaFunilVisivel(coluna) {
   salvarLayoutFunil();
 }
 
+function posicionarQuickMenuPainel() {
+  const wrap = document.getElementById('quick-menu-painel');
+  const dropdown = document.getElementById('painel-msgs-rapidas-grid');
+  const trigger = wrap ? wrap.querySelector('.quick-menu-trigger') : null;
+  if (!wrap || !dropdown || !trigger || !wrap.classList.contains('open')) return;
+
+  const margem = 12;
+  const rect = trigger.getBoundingClientRect();
+  const largura = Math.min(360, window.innerWidth - (margem * 2));
+  const alturaMaxima = Math.max(220, Math.min(420, rect.top - (margem * 2)));
+  let left = rect.right - largura;
+  left = Math.max(margem, Math.min(left, window.innerWidth - largura - margem));
+
+  dropdown.style.width = largura + 'px';
+  dropdown.style.maxHeight = alturaMaxima + 'px';
+  dropdown.style.left = left + 'px';
+  dropdown.style.top = Math.max(margem, rect.top - alturaMaxima - 8) + 'px';
+  dropdown.style.right = 'auto';
+  dropdown.style.bottom = 'auto';
+}
+
 function toggleQuickMenuPainel(ev) {
   if (ev) ev.stopPropagation();
   const wrap = document.getElementById('quick-menu-painel');
   if (!wrap) return;
   wrap.classList.toggle('open');
+  if (wrap.classList.contains('open')) {
+    setTimeout(posicionarQuickMenuPainel, 0);
+  }
 }
 
 function fecharQuickMenuPainel() {
@@ -4188,6 +4212,8 @@ document.addEventListener('click', (ev) => {
   const wrap = document.getElementById('quick-menu-painel');
   if (wrap && !wrap.contains(ev.target)) wrap.classList.remove('open');
 });
+window.addEventListener('resize', posicionarQuickMenuPainel);
+window.addEventListener('scroll', posicionarQuickMenuPainel, true);
 
 
 async function iniciarPaginaFunilAtendimento() {
@@ -6010,9 +6036,9 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .quick-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;border:1px solid var(--accent);border-radius:8px;background:transparent;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--sans);cursor:pointer;white-space:nowrap}
 .quick-menu-trigger:hover{background:rgba(91,127,255,.10)}
 .quick-menu-trigger-count{font-size:10px;color:var(--text2);font-family:var(--mono)}
-.quick-menu-dropdown{position:absolute;right:0;bottom:42px;width:min(340px,calc(100vw - 40px));max-height:360px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;display:none;z-index:80;box-shadow:0 18px 42px rgba(0,0,0,.45);margin-bottom:0}
+.quick-menu-dropdown{position:fixed;left:auto;right:auto;top:auto;bottom:auto;width:360px;max-width:calc(100vw - 24px);max-height:420px;overflow-y:auto;overflow-x:hidden;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;display:none;z-index:9999;box-shadow:0 18px 42px rgba(0,0,0,.55);margin-bottom:0}
 .quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
-.quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4)}
+.quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4);padding-left:12px;padding-right:12px}
 .quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
 </style>
 
