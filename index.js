@@ -3839,20 +3839,21 @@ async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
   // Encontra o lead_id pelo telefone para gravar na conversa
   const lr = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 ORDER BY criado_em DESC LIMIT 1', [cliente.id, telefone]).catch(() => ({ rows: [] }));
   const leadId = lr.rows[0] ? lr.rows[0].id : null;
-  let resultado;
+  let msgId = null;
   if (midia && String(midia).trim()) {
     const url = String(midia).trim();
     if (tipoMidia(url) === 'video') {
-      resultado = await zapiEnviarVideo(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
+      msgId = await zapiEnviarVideo(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
     } else {
-      resultado = await zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
+      msgId = await zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
     }
-    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', midia).catch(() => null);
+    // Passa o msg_id: sem ele, o webhook fromMe regravaria a mesma mensagem (duplicava na caixa).
+    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', midia, null, msgId).catch(() => null);
   } else {
-    resultado = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
-    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', null).catch(() => null);
+    msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
+    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', null, null, msgId).catch(() => null);
   }
-  return resultado;
+  return msgId;
 }
 
 // Upload de imagem para o Supabase Storage. Retorna a URL pública.
