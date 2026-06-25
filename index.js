@@ -885,17 +885,6 @@ app.post('/movatak/webhook/etiqueta', async (req, res) => {
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
-
-        if (etiqueta === 'cliente' || vendedorDetectado) {
-          const boasVindasCustom = cliente.boas_vindas_msg ||
-            `Seja bem-vindo(a)${lead.nome ? ', ' + lead.nome : ''}! Estamos muito felizes em ter você conosco. Em breve entraremos em contato com os próximos passos. Qualquer dúvida, é só chamar aqui!`;
-          const msg = boasVindasCustom.replace('{nome}', lead.nome ? ', ' + lead.nome : '');
-          await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg);
-          await query(
-            `INSERT INTO movatak_mensagens (lead_id, cliente_id, tipo) VALUES ($1, $2, 'boas_vindas')`,
-            [lead.id, cliente.id]
-          );
-        }
       }
     }
 
@@ -4241,10 +4230,6 @@ async function iniciarQuestionario(cliente, lead) {
       return;
     }
     const nome = lead.nome ? (' ' + String(lead.nome).split(' ')[0]) : '';
-
-    // 1) boas-vindas
-    const boas = (cliente.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Obrigado pelo contato.').replace(/{nome}/g, nome);
-    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, boas);
 
     // pausa o follow-up automático enquanto o questionário roda
     await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
