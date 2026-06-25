@@ -283,8 +283,12 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     <h1>Movatak</h1>
     <p>Painel de gestão — acesso restrito</p>
     <div class="field">
+      <label>EMAIL (vendedores) — deixe vazio se for gestor</label>
+      <input type="email" id="login-email" placeholder="email do vendedor (opcional)" autocomplete="off">
+    </div>
+    <div class="field">
       <label>SENHA DE ACESSO</label>
-      <input type="password" id="login-input" placeholder="sua senha movatak" autocomplete="off">
+      <input type="password" id="login-input" placeholder="sua senha" autocomplete="off">
       <div class="login-err" id="login-err"></div>
     </div>
     <button class="btn-primary" onclick="fazerLogin()">Entrar</button>
@@ -525,9 +529,30 @@ function setPermissoesPortal(p = {}) {
 
 
 // ── Login ──────────────────────────────────────────────────
-function fazerLogin() {
+let _vendedorToken = '';
+let _vendedorInfo = null;
+
+async function fazerLogin() {
+  const email = (document.getElementById('login-email').value || '').trim();
   const val = document.getElementById('login-input').value.trim();
-  if (!val) { document.getElementById('login-err').textContent = 'Informe a senha.'; return; }
+  const errEl = document.getElementById('login-err');
+  if (!val) { errEl.textContent = 'Informe a senha.'; return; }
+
+  // Email preenchido → tenta login de VENDEDOR. Vazio → login de GESTOR (só senha).
+  if (email) {
+    try {
+      const r = await api('/movatak/vendedor/login', { method: 'POST', body: JSON.stringify({ email, senha: val }) }, true);
+      _vendedorToken = r.token;
+      _vendedorInfo = r.vendedor;
+      sessionStorage.setItem('mvtk_vend_token', r.token);
+      sessionStorage.setItem('mvtk_vend_info', JSON.stringify(r.vendedor));
+      iniciarAppVendedor();
+    } catch (e) {
+      errEl.textContent = 'Email ou senha inválidos.';
+    }
+    return;
+  }
+
   secret = val;
   sessionStorage.setItem(SENHA_KEY, val);
   localStorage.setItem(SENHA_LOCAL_KEY, val);
@@ -537,13 +562,202 @@ function fazerLogin() {
 document.getElementById('login-input').addEventListener('keydown', e => {
   if (e.key === 'Enter') fazerLogin();
 });
+document.getElementById('login-email').addEventListener('keydown', e => {
+  if (e.key === 'Enter') fazerLogin();
+});
 
 function sair() {
   sessionStorage.removeItem(SENHA_KEY);
   localStorage.removeItem(SENHA_LOCAL_KEY);
+  sessionStorage.removeItem('mvtk_vend_token');
+  sessionStorage.removeItem('mvtk_vend_info');
   secret = '';
+  _vendedorToken = '';
+  _vendedorInfo = null;
   document.getElementById('login-screen').classList.remove('hidden');
   document.getElementById('app').classList.remove('visible');
+}
+
+// ============================================================
+// APP DO VENDEDOR — kanban restrito aos setores dele
+// ============================================================
+let _vendFunil = { colunas: [], leads: [], setores: [], leadAberto: null };
+
+function iniciarAppVendedor() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.add('visible');
+  document.getElementById('login-err').textContent = '';
+  const app = document.getElementById('app');
+  const nomeVend = _vendedorInfo && _vendedorInfo.nome ? _vendedorInfo.nome : 'Vendedor';
+  const cliente = _vendedorInfo && _vendedorInfo.cliente_nome ? _vendedorInfo.cliente_nome : '';
+  app.innerHTML = `
+    <header style="display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="header-logo">M</div>
+        <div>
+          <div style="font-weight:800;font-size:15px">${escapeHtml(nomeVend)}</div>
+          <div style="font-size:11px;color:var(--text2)">${escapeHtml(cliente)} · Atendimento</div>
+        </div>
+      </div>
+      <button class="btn-sair" onclick="sair()">Sair</button>
+    </header>
+    <main class="funil-main-3col" style="height:calc(100vh - 50px);overflow:hidden">
+      <div class="funil-page funil-page-3col">
+        <div class="funil-3col-grid">
+          <div class="funil-inbox-col">
+            <div class="funil-inbox-head"><input id="vend-busca" type="text" placeholder="🔍 Buscar..." oninput="renderVendInbox()"></div>
+            <div id="vend-inbox-lista" class="funil-inbox-lista"><div class="state-row"><div class="spinner"></div>Carregando...</div></div>
+          </div>
+          <div class="funil-kanban-col">
+            <div id="vend-setores-barra" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
+            <div id="vend-board" class="funil-board"><div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div></div>
+          </div>
+          <div class="funil-chat-col" id="vend-chat">
+            <div class="funil-chat-vazio" id="vend-chat-vazio"><div style="font-size:32px;margin-bottom:8px">💬</div><div>Selecione uma conversa.</div></div>
+            <div id="vend-chat-conteudo" style="display:none;flex-direction:column;height:100%"></div>
+          </div>
+        </div>
+      </div>
+    </main>`;
+  carregarFunilVendedor();
+}
+
+async function carregarFunilVendedor() {
+  try {
+    const data = await api('/movatak/vendedor/funil');
+    _vendFunil.colunas = data.colunas || [];
+    _vendFunil.leads = data.leads || [];
+    _vendFunil.setores = data.setores || [];
+    if (data.semSetor) {
+      document.getElementById('vend-board').innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--amber)">Você ainda não está vinculado a nenhum setor. Peça ao gestor para liberar seu acesso.</div>';
+      document.getElementById('vend-inbox-lista').innerHTML = '';
+      return;
+    }
+    renderVendSetoresBarra();
+    renderVendBoard();
+    renderVendInbox();
+  } catch (e) {
+    document.getElementById('vend-board').innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderVendSetoresBarra() {
+  const bar = document.getElementById('vend-setores-barra');
+  if (!bar) return;
+  if (_vendFunil.setores.length <= 1) { bar.innerHTML = ''; return; }
+  bar.innerHTML = _vendFunil.setores.map(s =>
+    `<span style="font-size:11px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 10px">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.cor||'var(--accent)'};margin-right:5px"></span>${escapeHtml(s.nome)}
+    </span>`).join('');
+}
+
+function renderVendBoard() {
+  const board = document.getElementById('vend-board');
+  if (!board) return;
+  if (!_vendFunil.colunas.length) {
+    board.innerHTML = '<div class="state-row" style="grid-column:1/-1">Nenhuma etapa nos seus setores.</div>';
+    return;
+  }
+  board.innerHTML = _vendFunil.colunas.map(col => {
+    const leads = col.leads || [];
+    const cor = col.cor || '#6b7280';
+    const cards = leads.map(l => `
+      <div class="funil-card" onclick="abrirConversaVendedor(${l.id})" style="cursor:pointer">
+        <div style="font-weight:600;font-size:13px">${escapeHtml(l.nome || l.telefone)}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtml((l.ultima_msg||'').slice(0,40))}</div>
+      </div>`).join('') || '<div style="font-size:11px;color:var(--text3);padding:8px">Sem leads</div>';
+    return `<div class="funil-coluna">
+      <div class="funil-coluna-head" style="border-top:3px solid ${cor}">
+        <span>${escapeHtml(col.nome)}</span><span class="funil-coluna-count">${leads.length}</span>
+      </div>
+      <div class="funil-coluna-body">${cards}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderVendInbox() {
+  const box = document.getElementById('vend-inbox-lista');
+  if (!box) return;
+  const busca = (document.getElementById('vend-busca')||{}).value || '';
+  let leads = _vendFunil.leads.slice();
+  if (busca.trim()) {
+    const q = busca.toLowerCase();
+    leads = leads.filter(l => (l.nome||'').toLowerCase().includes(q) || (l.telefone||'').includes(q));
+  }
+  leads.sort((a,b) => new Date(b.atualizado_em||0) - new Date(a.atualizado_em||0));
+  if (!leads.length) { box.innerHTML = '<div class="fu-hint" style="padding:18px;text-align:center">Nenhuma conversa.</div>'; return; }
+  box.innerHTML = leads.map(l => {
+    const ativo = _vendFunil.leadAberto === l.id ? ' active' : '';
+    return `<div class="funil-inbox-item${ativo}" onclick="abrirConversaVendedor(${l.id})">
+      <div style="display:flex;justify-content:space-between"><strong style="font-size:13px">${escapeHtml(l.nome||l.telefone)}</strong>
+      ${l.nao_lida ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>' : ''}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtml((l.ultima_msg||'').slice(0,38))}</div>
+    </div>`;
+  }).join('');
+}
+
+async function abrirConversaVendedor(leadId) {
+  _vendFunil.leadAberto = leadId;
+  renderVendInbox();
+  const lead = _vendFunil.leads.find(l => l.id === leadId);
+  document.getElementById('vend-chat-vazio').style.display = 'none';
+  const cont = document.getElementById('vend-chat-conteudo');
+  cont.style.display = 'flex';
+  cont.innerHTML = `
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+      <div style="font-weight:700">${escapeHtml(lead ? (lead.nome||lead.telefone) : 'Lead')}</div>
+      <div style="font-size:11px;color:var(--text2)">${escapeHtml(lead ? lead.telefone : '')}</div>
+    </div>
+    <div id="vend-conversa" style="flex:1;overflow-y:auto;padding:12px 16px;min-height:0"><div class="fu-hint">Carregando...</div></div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border)">
+      <textarea id="vend-msg" class="fu-textarea" style="min-height:70px" placeholder="Mensagem... (ENTER envia)"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMsgVendedor();}"></textarea>
+      <button class="btn-save" style="margin-top:8px;width:100%" onclick="enviarMsgVendedor()">Enviar</button>
+      <div id="vend-msg-status" class="fu-hint" style="margin-top:6px"></div>
+    </div>`;
+  try {
+    const msgs = await api('/movatak/vendedor/leads/' + leadId + '/conversas');
+    renderConversaVendedor(msgs);
+  } catch (e) {
+    document.getElementById('vend-conversa').innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderConversaVendedor(msgs) {
+  const box = document.getElementById('vend-conversa');
+  if (!box) return;
+  if (!msgs || !msgs.length) { box.innerHTML = '<div class="fu-hint" style="text-align:center;margin-top:20px">Nenhuma mensagem ainda.</div>'; return; }
+  box.innerHTML = msgs.map(m => {
+    const saida = m.direcao === 'saida';
+    const hora = new Date(m.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const midia = m.midia_url ? renderMidiaMensagem(m) : '';
+    const txt = m.conteudo ? escapeHtml(m.conteudo) : '';
+    return `<div style="display:flex;justify-content:${saida?'flex-end':'flex-start'};margin-bottom:8px">
+      <div style="max-width:85%;background:${saida?'#2563eb':'#2a2f3d'};border-radius:12px;padding:8px 12px">
+        ${midia}${txt?`<div style="font-size:13px;color:#f0f0f0;white-space:pre-wrap">${txt}</div>`:''}
+        <div style="font-size:10px;color:${saida?'#93c5fd':'#888'};margin-top:3px;text-align:right">${hora}</div>
+      </div></div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function enviarMsgVendedor() {
+  const ta = document.getElementById('vend-msg');
+  const texto = (ta.value||'').trim();
+  if (!texto || !_vendFunil.leadAberto) return;
+  const st = document.getElementById('vend-msg-status');
+  st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
+  try {
+    await api('/movatak/vendedor/leads/' + _vendFunil.leadAberto + '/mensagem', {
+      method: 'POST', body: JSON.stringify({ texto })
+    });
+    ta.value = '';
+    st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
+    const msgs = await api('/movatak/vendedor/leads/' + _vendFunil.leadAberto + '/conversas');
+    renderConversaVendedor(msgs);
+  } catch (e) {
+    st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message;
+  }
 }
 
 function iniciar() {
@@ -602,28 +816,42 @@ function recuperarSecretFunilJanela() {
 }
 
 let funilState = { clienteId: null, clienteNome: '', colunas: [], setores: [], setorAtivo: null };
-const savedSecret = recuperarSecretFunilJanela();
-if (savedSecret) {
-  secret = savedSecret;
-  iniciar();
+// Restaura sessão de vendedor, se houver (tem prioridade sobre a de gestor).
+let _vendTokenSalvo = '';
+try { _vendTokenSalvo = sessionStorage.getItem('mvtk_vend_token') || ''; } catch(e) {}
+if (_vendTokenSalvo) {
+  _vendedorToken = _vendTokenSalvo;
+  try { _vendedorInfo = JSON.parse(sessionStorage.getItem('mvtk_vend_info') || 'null'); } catch(e) {}
+  iniciarAppVendedor();
+} else {
+  const savedSecret = recuperarSecretFunilJanela();
+  if (savedSecret) {
+    secret = savedSecret;
+    iniciar();
+  }
 }
 
 // ── API ────────────────────────────────────────────────────
-async function api(path, opts = {}) {
+async function api(path, opts = {}, raw = false) {
+  // Headers de auth: se estamos logados como vendedor, manda o token do vendedor;
+  // senão, a secret do gestor. (raw=true evita o auto-logout em 401, usado no login.)
+  const authHeaders = _vendedorToken
+    ? { 'x-vendedor-token': _vendedorToken }
+    : { 'x-movatak-secret': secret };
   const res = await fetch(API_BASE + path, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
-      'x-movatak-secret': secret,
+      ...authHeaders,
       ...(opts.headers || {})
     }
   });
-  if (res.status === 401) {
+  if (res.status === 401 && !raw) {
     if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
       const st = document.getElementById('funil-status');
       if (st) st.innerHTML = '<span style="color:var(--red)">Sessão expirada. Feche esta janela, faça login no painel e abra o funil novamente.</span>';
     }
-    sair();
+    if (!_vendedorToken) sair();
     throw new Error('Sessão expirada.');
   }
   if (!res.ok) {
@@ -2476,13 +2704,27 @@ if (_modalFu) {
 // ── Vendedores ─────────────────────────────────────────────
 async function carregarVendedores(id) {
   try {
-    const vendedores = await api('/movatak/admin/clientes/' + id + '/vendedores');
+    const [vendedores, setores] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/vendedores'),
+      api('/movatak/admin/clientes/' + id + '/setores').catch(() => [])
+    ]);
+    window._setoresCliente = Array.isArray(setores) ? setores : [];
     const lista = document.getElementById('fu-vendedores-list');
     if (!vendedores.length) {
       lista.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhum vendedor cadastrado.</div>';
       return;
     }
-    lista.innerHTML = vendedores.map(v => `
+    const setoresDisp = window._setoresCliente;
+    lista.innerHTML = vendedores.map(v => {
+      const setoresVend = Array.isArray(v.setor_ids) ? v.setor_ids : [];
+      const checkboxesSetores = setoresDisp.length
+        ? setoresDisp.map(s => `
+            <label style="font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 8px">
+              <input type="checkbox" data-vend-setor="${v.id}" value="${s.id}" ${setoresVend.includes(Number(s.id)) ? 'checked' : ''} onchange="salvarSetoresVendedor(${v.id})">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.cor || 'var(--accent)'}"></span>${escapeHtml(s.nome)}
+            </label>`).join('')
+        : '<span style="font-size:11px;color:var(--text3)">Nenhum setor criado ainda. Crie setores no kanban primeiro.</span>';
+      return `
       <div class="vendedor-item" style="flex-wrap:wrap;gap:8px">
         <span class="vendedor-nome" style="flex:1">${v.nome}</span>
         <button class="btn-remove" onclick="removerVendedor(${v.id})" title="Remover">×</button>
@@ -2493,12 +2735,16 @@ async function carregarVendedores(id) {
           <input type="email" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-email-${v.id}" value="${v.email_acesso || ''}" placeholder="Email de acesso do vendedor">
           <input type="password" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-senha-${v.id}" placeholder="Nova senha (opcional)">
         </div>
+        <div style="width:100%">
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Setores que este vendedor acessa:</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${checkboxesSetores}</div>
+        </div>
         <div style="display:flex;align-items:center;gap:8px;width:100%;font-size:11px;color:var(--text3);font-family:var(--mono)">
           <button class="btn-add-small" style="padding:6px 10px;font-size:11px" onclick="salvarAcessoVendedor(${v.id})">Salvar acesso</button>
           <span>Token: ${v.acesso_token || 'gerado após salvar'} · senha: ${v.tem_senha ? 'configurada' : 'não configurada'}</span>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   } catch(e) {
     document.getElementById('fu-vendedores-list').innerHTML = `<div style="font-size:13px;color:var(--red)">Erro ao carregar vendedores: ${e.message}</div>`;
     document.getElementById('fu-err').textContent = 'Erro ao carregar vendedores. Verifique se a migração v2.0.1 foi executada no PostgreSQL.';
@@ -2584,6 +2830,21 @@ async function salvarAcessoVendedor(vendedorId) {
     carregarVendedores(fuId);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao salvar acesso do vendedor: ' + e.message;
+  }
+}
+
+// Salva os setores marcados de um vendedor (lê os checkboxes data-vend-setor).
+async function salvarSetoresVendedor(vendedorId) {
+  const marcados = Array.from(document.querySelectorAll('input[data-vend-setor="' + vendedorId + '"]:checked'))
+    .map(el => parseInt(el.value, 10)).filter(Boolean);
+  try {
+    await api('/movatak/admin/vendedores/' + vendedorId + '/setores', {
+      method: 'PATCH',
+      body: JSON.stringify({ setor_ids: marcados })
+    });
+    document.getElementById('fu-err').textContent = 'Setores do vendedor atualizados.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar setores: ' + e.message;
   }
 }
 
