@@ -1610,32 +1610,124 @@ function rolarConversaParaFim() {
   });
 }
 
-function renderConversaPainel(msgs) {
-  const box = document.getElementById('painel-conversa');
-  if (!msgs || !msgs.length) {
-    box.innerHTML = '<div style="font-size:12px;color:#666;text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
+
+let painelConversasCache = [];
+let painelReplyTo = null;
+
+function resumoMensagemPainel(m, limite = 96) {
+  if (!m) return 'Mensagem';
+  const tipo = m.midia_tipo || m.reply_to_midia_tipo || '';
+  const texto = String((m.conteudo ?? m.reply_to_conteudo ?? '') || '').trim();
+  const prefixoMidia = tipo
+    ? (tipo === 'imagem' ? '🖼️ Imagem' : tipo === 'audio' ? '🎧 Áudio' : tipo === 'video' ? '🎬 Vídeo' : '📎 Anexo')
+    : '';
+  const base = texto || prefixoMidia || 'Mensagem';
+  const combinado = prefixoMidia && texto ? (prefixoMidia + ' · ' + texto) : base;
+  return combinado.length > limite ? combinado.slice(0, limite - 1) + '…' : combinado;
+}
+
+function renderPreviewRespostaMensagem(m) {
+  if (!m || !(m.reply_to_conversa_id || m.reply_to_msg_id || m.reply_to_conteudo || m.reply_to_midia_url)) return '';
+  const label = m.reply_to_direcao === 'saida' ? 'Respondendo você' : (m.reply_to_direcao === 'entrada' ? 'Respondendo cliente' : 'Respondendo mensagem');
+  const resumo = resumoMensagemPainel({ conteudo: m.reply_to_conteudo, midia_tipo: m.reply_to_midia_tipo, midia_url: m.reply_to_midia_url }, 86);
+  const targetId = m.reply_to_conversa_id ? Number(m.reply_to_conversa_id) : 0;
+  const click = targetId ? `onclick="focarMensagemRespondida(event, ${targetId})"` : '';
+  return `<div ${click} title="${escapeHtml(resumo)}" style="border-left:3px solid ${m.reply_to_direcao === 'saida' ? '#93c5fd' : 'var(--green)'};background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:7px;cursor:${targetId ? 'pointer' : 'default'};max-width:100%">
+    <div style="font-size:10px;color:${m.reply_to_direcao === 'saida' ? '#bfdbfe' : 'var(--green)'};font-weight:700;margin-bottom:2px">${label}</div>
+    <div style="font-size:11px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumo)}</div>
+  </div>`;
+}
+
+function renderBolhaMensagemPainel(m) {
+  const saida = m.direcao === 'saida';
+  const hora = m.criado_em ? new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+  const midiaHtml = renderMidiaMensagem(m);
+  const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
+  const podeApagar = m.id && m.fonte !== 'zapi';
+  const btnResponder = m.id
+    ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↩</button>`
+    : '';
+  const btnApagar = podeApagar
+    ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
+    : '';
+  return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
+    <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
+      ${renderPreviewRespostaMensagem(m)}
+      ${midiaHtml}
+      ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
+      <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
+        <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
+        ${btnResponder}${btnApagar}
+      </div>
+    </div>
+  </div>`;
+}
+
+function focarMensagemRespondida(event, conversaId) {
+  if (event) event.stopPropagation();
+  const alvo = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
+  if (!alvo) return;
+  alvo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const bubble = alvo.firstElementChild;
+  if (!bubble) return;
+  const original = bubble.style.boxShadow;
+  bubble.style.boxShadow = '0 0 0 2px var(--amber)';
+  setTimeout(() => { bubble.style.boxShadow = original || ''; }, 1300);
+}
+
+function selecionarRespostaPainel(conversaId) {
+  const msg = (painelConversasCache || []).find(m => Number(m.id) === Number(conversaId));
+  if (!msg) return;
+  painelReplyTo = {
+    id: msg.id,
+    msg_id: msg.msg_id || null,
+    direcao: msg.direcao || null,
+    conteudo: msg.conteudo || '',
+    midia_url: msg.midia_url || null,
+    midia_tipo: msg.midia_tipo || null
+  };
+  renderPainelReplyPreview();
+  const ta = document.getElementById('painel-msg-texto');
+  if (ta) ta.focus();
+}
+
+function renderPainelReplyPreview() {
+  const box = document.getElementById('painel-reply-preview');
+  if (!box) return;
+  if (!painelReplyTo) {
+    box.style.display = 'none';
+    box.innerHTML = '';
     return;
   }
-  box.innerHTML = msgs.map(m => {
-    const saida = m.direcao === 'saida';
-    const hora = new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-    const midiaHtml = renderMidiaMensagem(m);
-    const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
-    const podeApagar = m.id && m.fonte !== 'zapi';
-    const btnApagar = podeApagar
-      ? `<button onclick="apagarMensagemPainel(${m.id})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
-      : '';
-    return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
-      <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px">
-        ${midiaHtml}
-        ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
-        <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
-          <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
-          ${btnApagar}
-        </div>
-      </div>
-    </div>`;
-  }).join('');
+  const label = painelReplyTo.direcao === 'saida' ? 'Respondendo sua mensagem enviada' : 'Respondendo mensagem do cliente';
+  const resumo = resumoMensagemPainel(painelReplyTo, 120);
+  box.style.display = '';
+  box.innerHTML = `<div style="border-left:3px solid var(--accent);background:rgba(91,127,255,.12);border:1px solid var(--border2);border-radius:10px;padding:8px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+    <div style="min-width:0">
+      <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:3px">↩ ${escapeHtml(label)}</div>
+      <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumo)}</div>
+    </div>
+    <button type="button" onclick="cancelarRespostaPainel()" title="Cancelar resposta" style="background:transparent;border:none;color:var(--text2);font-size:16px;cursor:pointer;line-height:1">×</button>
+  </div>`;
+}
+
+function cancelarRespostaPainel(focar = true) {
+  painelReplyTo = null;
+  renderPainelReplyPreview();
+  if (focar) {
+    const ta = document.getElementById('painel-msg-texto');
+    if (ta) ta.focus();
+  }
+}
+
+function renderConversaPainel(msgs) {
+  const box = document.getElementById('painel-conversa');
+  painelConversasCache = Array.isArray(msgs) ? msgs : [];
+  if (!painelConversasCache.length) {
+    if (box) box.innerHTML = '<div style="font-size:12px;color:#666;text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
+    return;
+  }
+  if (box) box.innerHTML = painelConversasCache.map(renderBolhaMensagemPainel).join('');
   // Scroll robusto até a última mensagem (espera mídia carregar).
   rolarConversaParaFim();
 }
@@ -1647,6 +1739,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   document.getElementById('painel-lead-fone').textContent = '';
   document.getElementById('painel-msg-texto').value = '';
   document.getElementById('painel-msg-status').textContent = '';
+  cancelarRespostaPainel(false);
   const midiaEl = document.getElementById('painel-midia-el');
   const midiaPreview = document.getElementById('painel-midia-preview');
   if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
@@ -2123,8 +2216,13 @@ async function enviarMensagemPainel() {
   if (!window._painelLeadId) return;
   st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
   try {
+    const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
     const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
-      method: 'POST', body: JSON.stringify({ texto, midia_url, midia_tipo })
+      method: 'POST', body: JSON.stringify({
+        texto, midia_url, midia_tipo,
+        reply_to_conversa_id: replyTo ? replyTo.id : null,
+        reply_to_msg_id: replyTo ? replyTo.msg_id : null
+      })
     });
     // Adiciona a mensagem na tela na hora, com o ID real. Se o socket trouxer a
     // mesma mensagem depois, adicionarMensagemAoPainel ignora (checa o id).
@@ -2134,8 +2232,15 @@ async function enviarMensagemPainel() {
       conteudo: texto || '',
       midia_url: midia_url || null,
       midia_tipo: midia_tipo || null,
+      reply_to_conversa_id: replyTo ? replyTo.id : null,
+      reply_to_msg_id: replyTo ? replyTo.msg_id : null,
+      reply_to_direcao: replyTo ? replyTo.direcao : null,
+      reply_to_conteudo: replyTo ? replyTo.conteudo : null,
+      reply_to_midia_url: replyTo ? replyTo.midia_url : null,
+      reply_to_midia_tipo: replyTo ? replyTo.midia_tipo : null,
       criado_em: resp.criado_em || new Date().toISOString()
     });
+    cancelarRespostaPainel(false);
     document.getElementById('painel-msg-texto').value = '';
     removerMidiaPainel();
     st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
@@ -4053,28 +4158,16 @@ function adicionarMensagemAoPainel(m) {
   if (!box) return;
   // Evita duplicar: se já existe um balão com esse id na tela, ignora.
   if (m.id && box.querySelector('[data-conversa-id="' + m.id + '"]')) return;
+  // Mantém o cache usado pelo botão de responder.
+  if (m.id && !(painelConversasCache || []).some(x => Number(x.id) === Number(m.id))) {
+    painelConversasCache.push(m);
+  }
   // Se ainda está com o placeholder de "nenhuma mensagem", limpa primeiro
   if (box.querySelector('div[style*="text-align:center"]')) box.innerHTML = '';
-  const saida = m.direcao === 'saida';
-  const hora = m.criado_em ? new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
-  const midiaHtml = renderMidiaMensagem(m);
-  const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
-  const podeApagar = m.id && m.fonte !== 'zapi';
-  const btnApagar = podeApagar
-    ? `<button onclick="apagarMensagemPainel(${m.id})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
-    : '';
-  const div = document.createElement('div');
-  div.style.cssText = 'display:flex;justify-content:' + (saida ? 'flex-end' : 'flex-start') + ';margin-bottom:8px';
-  if (m.id) div.dataset.conversaId = m.id;
-  div.innerHTML = `<div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px">
-    ${midiaHtml}
-    ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
-    <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
-      <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
-      ${btnApagar}
-    </div>
-  </div>`;
-  box.appendChild(div);
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderBolhaMensagemPainel(m);
+  const el = tmp.firstElementChild;
+  if (el) box.appendChild(el);
   rolarConversaParaFim();
 }
 
@@ -4309,6 +4402,7 @@ async function iniciarPaginaFunilAtendimento() {
                 </div>
               </div>
               <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
+                <div id="painel-reply-preview" style="display:none;margin-bottom:8px"></div>
                 <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
@@ -6040,6 +6134,8 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
 .quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4);padding-left:12px;padding-right:12px}
 .quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
+#painel-reply-preview{animation:fadeUp .15s ease both}
+#painel-conversa [data-conversa-id] button:hover{opacity:.85}
 </style>
 
 <!-- Modal: enviar mensagem rápida a um lead -->
