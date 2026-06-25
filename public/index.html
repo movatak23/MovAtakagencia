@@ -2217,7 +2217,6 @@ async function abrirFU(id) {
       document.getElementById('fu2-msg2').value = '';
       document.getElementById('fu2-msg3').value = '';
     }
-    document.getElementById('fu-boas-vindas').value = msgs.boas_vindas_msg || '';
     document.getElementById('fu-verba').value = msgs.verba_diaria || '';
     document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
     document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
@@ -2251,7 +2250,6 @@ async function salvarFU() {
   document.getElementById('btn-fu-save').textContent = 'Salvando...';
   document.getElementById('fu-err').textContent = '';
   try {
-    const boas_vindas_msg = document.getElementById('fu-boas-vindas').value.trim();
     const verba_diaria = document.getElementById('fu-verba').value.trim();
     const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
     const trigger_msg = document.getElementById('fu-trigger').value.trim();
@@ -2264,7 +2262,7 @@ async function salvarFU() {
           fu1: { msg1: fu1_msg1, msg2: fu1_msg2 },
           fu2: { msg1: fu2_msg1, msg2: fu2_msg2, msg3: fu2_msg3 }
         },
-        boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg
+        verba_diaria, whatsapp_dono, trigger_msg
       })
     });
     
@@ -2701,7 +2699,6 @@ async function previewTemplateFollowup() {
     setVal('fu2-msg2', fu2.msg2);
     setVal('fu2-msg3', fu2.msg3);
     setVal('fu-trigger', t.trigger_msg);
-    setVal('fu-boas-vindas', t.boas_vindas_msg);
     const cmd = t.comandos || {};
     const joinCmd = (a) => Array.isArray(a) ? a.join(', ') : (a || '');
     setVal('fu-cmd-convertido', joinCmd(cmd.convertido));
@@ -2717,7 +2714,7 @@ async function aplicarTemplateFollowup() {
   const sel = document.getElementById('fu-template-select');
   const template = sel ? sel.value : '';
   if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template primeiro.'; return; }
-  if (!confirm('Aplicar este template vai preencher as mensagens do follow-up, boas-vindas, comandos e, se o modelo tiver, a frase-gatilho. Continuar?')) return;
+  if (!confirm('Aplicar este template vai preencher as mensagens do follow-up, comandos e, se o modelo tiver, a frase-gatilho. Continuar?')) return;
   try {
     await api('/movatak/admin/clientes/' + fuId + '/aplicar-template', {
       method: 'POST',
@@ -2780,7 +2777,6 @@ async function salvarTemplateFollowupAtual() {
       body: JSON.stringify({
         nome,
         trigger_msg: document.getElementById('fu-trigger')?.value.trim() || '',
-        boas_vindas_msg: document.getElementById('fu-boas-vindas')?.value.trim() || '',
         followup_v2,
         comandos: {
           convertido: comandosFromInput('fu-cmd-convertido'),
@@ -4990,7 +4986,7 @@ async function sincronizarColunaWhatsapp(colunaId) {
     <!-- BLOCO 1: TEMPLATE DE CAMPANHA/FOLLOW-UP -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
       <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Template de campanha/follow-up</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Escolha primeiro um modelo pronto. Ao aplicar, ele preenche automaticamente FU1, FU2, boas-vindas e comandos. Depois você ajusta cada campo abaixo.</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Escolha primeiro um modelo pronto. Ao aplicar, ele preenche automaticamente FU1, FU2 e comandos. Depois você ajusta cada campo abaixo.</div>
       <label class="fu-label">Template pronto</label>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1" onchange="previewTemplateFollowup()"></select>
@@ -5034,13 +5030,6 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
       <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
-    </div>
-
-    <!-- BLOCO 4: BOAS-VINDAS AO CLIENTE -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">4. Mensagem de boas-vindas ao virar cliente</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Enviada automaticamente quando o lead responde ou você marca como cliente.</div>
-      <textarea class="fu-textarea" id="fu-boas-vindas" rows="3"></textarea>
     </div>
 
     <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
