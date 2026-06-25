@@ -1385,6 +1385,25 @@ async function marcarLeadAtualComoNaoLida() {
   }
 }
 
+// Exclui o lead DEFINITIVAMENTE (lead + conversa + histórico + tudo). Irreversível,
+// por isso pede confirmação dupla.
+async function excluirLeadAtual() {
+  if (!window._painelLeadId) return;
+  const leadId = window._painelLeadId;
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+  const nome = lead && lead.nome ? lead.nome : 'este lead';
+  if (!confirm('Excluir ' + nome + ' definitivamente? Isso apaga o lead, a conversa e todo o histórico. NÃO dá pra desfazer.')) return;
+  if (!confirm('Tem certeza? Esta ação é irreversível.')) return;
+  try {
+    await api('/movatak/admin/leads/' + leadId, { method: 'DELETE' });
+    fecharPainelLead();
+    mostrarToast('Lead excluído definitivamente.', 'sucesso');
+    carregarFunilAtendimento();
+  } catch (e) {
+    mostrarToast('Erro ao excluir lead: ' + e.message, 'erro');
+  }
+}
+
 function usarMsgRapidaPainel(id, btnEl) {
   // Trava síncrona: se esse botão (ou qualquer outro) já está enviando, ignora o clique.
   if (window._enviandoMsgRapida) return;
@@ -3735,6 +3754,7 @@ async function iniciarPaginaFunilAtendimento() {
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
+                  <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
                 </div>
               </div>
               <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
