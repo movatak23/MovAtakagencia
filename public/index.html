@@ -4539,6 +4539,7 @@ async function iniciarPaginaFunilAtendimento() {
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
                 </div>
               </div>
               <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
@@ -4605,7 +4606,6 @@ async function iniciarPaginaFunilAtendimento() {
                     <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
-                  <button onclick="reativarFollowupManual(window._painelLeadId)" style="padding:8px 12px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px">+ FU</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
