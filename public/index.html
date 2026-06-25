@@ -2237,6 +2237,7 @@ async function abrirFU(id) {
   document.getElementById('fu-err').textContent = '';
   document.getElementById('btn-fu-save').textContent = 'Carregando...';
   document.getElementById('modal-fu').classList.add('open');
+  carregarAusencia();
   try {
     const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
     // Carregar novo formato (2 blocos) se existir
@@ -4394,6 +4395,12 @@ function renderFunilAtendimento() {
           style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--mono)"
           onchange="salvarComandoColuna(${col.id}, this.value)">
       </div>
+      <div class="funil-col-ausencia" style="margin-bottom:8px">
+        <label title="Quando ligado, leads que falam fora do horário definido (no menu Editar) recebem o aviso de ausência" style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
+          <input type="checkbox" ${col.ausencia_ativa ? 'checked' : ''} onchange="toggleAusenciaColuna(${col.id}, this.checked)" style="cursor:pointer">
+          🌙 Aviso de ausência fora do horário
+        </label>
+      </div>
       <div class="funil-col-actions">
         <label style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none">
           <input type="checkbox" data-select-col="${col.id}" onchange="selecionarTodosColuna(${col.id}, this.checked)" style="cursor:pointer"> Selecionar todos
@@ -4848,6 +4855,107 @@ async function atribuirSetorColuna(colunaId, setorId) {
   }
 }
 
+// ───── Configuração de ausência (menu Editar) ─────
+const DIAS_SEMANA = [['Dom',0],['Seg',1],['Ter',2],['Qua',3],['Qui',4],['Sex',5],['Sáb',6]];
+let _ausHorarios = [];
+let _ausDatas = [];
+
+function renderAusHorarios() {
+  const box = document.getElementById('aus-horarios-lista');
+  if (!box) return;
+  box.innerHTML = _ausHorarios.map((h, i) => `
+    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        ${DIAS_SEMANA.map(([nome, num]) => `
+          <label style="font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 8px">
+            <input type="checkbox" ${(h.dias||[]).includes(num) ? 'checked' : ''} onchange="ausHorarioDia(${i}, ${num}, this.checked)" style="cursor:pointer">${nome}
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--text2)">das</span>
+        <input type="time" value="${h.inicio||''}" onchange="ausHorarioCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">às</span>
+        <input type="time" value="${h.fim||''}" onchange="ausHorarioCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <button class="btn-remove" type="button" onclick="removerHorarioAusencia(${i})" style="margin-left:auto">×</button>
+      </div>
+    </div>`).join('') || '<div class="fu-hint">Nenhuma faixa adicionada.</div>';
+}
+
+function renderAusDatas() {
+  const box = document.getElementById('aus-datas-lista');
+  if (!box) return;
+  box.innerHTML = _ausDatas.map((d, i) => `
+    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="date" value="${d.data||''}" onchange="ausDataCampo(${i},'data',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">das</span>
+        <input type="time" value="${d.inicio||'00:00'}" onchange="ausDataCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">às</span>
+        <input type="time" value="${d.fim||'23:59'}" onchange="ausDataCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <button class="btn-remove" type="button" onclick="removerDataAusencia(${i})" style="margin-left:auto">×</button>
+      </div>
+      <textarea class="fu-textarea" rows="2" placeholder="Mensagem específica desta data (ex: Estamos em recesso de Natal...)" onchange="ausDataCampo(${i},'msg',this.value)" style="min-height:auto">${escapeHtml(d.msg||'')}</textarea>
+    </div>`).join('') || '<div class="fu-hint">Nenhuma data adicionada.</div>';
+}
+
+function addHorarioAusencia() { _ausHorarios.push({ dias: [], inicio: '18:00', fim: '08:00' }); renderAusHorarios(); }
+function removerHorarioAusencia(i) { _ausHorarios.splice(i, 1); renderAusHorarios(); }
+function ausHorarioCampo(i, campo, val) { if (_ausHorarios[i]) _ausHorarios[i][campo] = val; }
+function ausHorarioDia(i, num, marcado) {
+  if (!_ausHorarios[i]) return;
+  const dias = new Set(_ausHorarios[i].dias || []);
+  if (marcado) dias.add(num); else dias.delete(num);
+  _ausHorarios[i].dias = Array.from(dias).sort();
+}
+function addDataAusencia() { _ausDatas.push({ data: '', inicio: '00:00', fim: '23:59', msg: '' }); renderAusDatas(); }
+function removerDataAusencia(i) { _ausDatas.splice(i, 1); renderAusDatas(); }
+function ausDataCampo(i, campo, val) { if (_ausDatas[i]) _ausDatas[i][campo] = val; }
+
+async function carregarAusencia() {
+  if (!fuId) return;
+  try {
+    const data = await api('/movatak/admin/clientes/' + fuId + '/ausencia');
+    const el = document.getElementById('aus-msg-padrao');
+    if (el) el.value = data.ausencia_msg_padrao || '';
+    _ausHorarios = Array.isArray(data.ausencia_horarios) ? data.ausencia_horarios : [];
+    _ausDatas = Array.isArray(data.ausencia_datas) ? data.ausencia_datas : [];
+    renderAusHorarios();
+    renderAusDatas();
+  } catch (e) { /* silencioso — bloco aparece vazio */ }
+}
+
+async function salvarAusencia() {
+  const st = document.getElementById('aus-status');
+  const msgPadrao = (document.getElementById('aus-msg-padrao').value || '').trim();
+  // Validação leve: faixa precisa de dias e horários; data precisa da data preenchida.
+  const horarios = _ausHorarios.filter(h => (h.dias||[]).length && h.inicio && h.fim);
+  const datas = _ausDatas.filter(d => d.data);
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/ausencia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ausencia_msg_padrao: msgPadrao, ausencia_horarios: horarios, ausencia_datas: datas })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração de ausência salva.'; }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }
+  }
+}
+
+async function toggleAusenciaColuna(colunaId, ativa) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/ausencia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ausencia_ativa: !!ativa })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.ausencia_ativa = !!ativa;
+    if (status) { status.style.color = 'var(--green)'; status.textContent = ativa ? 'Aviso de ausência ativado nesta etapa.' : 'Aviso de ausência desativado nesta etapa.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao alterar ausência: ' + e.message; }
+  }
+}
+
 async function excluirColuna(colunaId, nome) {
   const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
   const qtdLeads = col && col.leads ? col.leads.length : 0;
@@ -5069,6 +5177,30 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
       <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
+    </div>
+
+    <!-- BLOCO AUSÊNCIA -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">🌙 Mensagem de ausência fora do horário</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Quando um lead fala e o momento cai num horário de ausência, ele recebe um aviso automático — uma vez por período. Ative o aviso em cada coluna do kanban pelo seletor 🌙 dentro dela.</div>
+
+      <label class="fu-label" style="margin-top:0">Mensagem padrão de ausência</label>
+      <textarea class="fu-textarea" id="aus-msg-padrao" rows="3" placeholder="Ex: Olá! No momento estamos fora do horário de atendimento. Retornaremos assim que possível. Obrigado pela mensagem!"></textarea>
+
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">Horários recorrentes de ausência</div>
+      <div class="fu-hint" style="margin-bottom:8px">Marque os dias e a faixa de horário em que você NÃO atende. Pode adicionar várias faixas (ex: almoço + noite).</div>
+      <div id="aus-horarios-lista"></div>
+      <button class="btn-add-small" type="button" onclick="addHorarioAusencia()" style="margin-top:8px">+ Adicionar faixa de horário</button>
+
+      <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">Datas específicas (feriados/recessos)</div>
+      <div class="fu-hint" style="margin-bottom:8px">Mensagem própria para datas específicas. Tem prioridade sobre o horário recorrente naquele dia.</div>
+      <div id="aus-datas-lista"></div>
+      <button class="btn-add-small" type="button" onclick="addDataAusencia()" style="margin-top:8px">+ Adicionar data específica</button>
+
+      <div style="margin-top:16px">
+        <button class="btn-save" type="button" onclick="salvarAusencia()">Salvar configuração de ausência</button>
+        <span id="aus-status" class="fu-hint" style="margin-left:10px"></span>
+      </div>
     </div>
 
     <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
