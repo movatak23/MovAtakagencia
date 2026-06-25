@@ -1543,6 +1543,24 @@ function painelArquivoDrop(ev) {
   if (file) uploadArquivoPainel(file);
 }
 
+// Colar (Ctrl+V) na caixa de mensagem: texto cola normalmente (comportamento nativo).
+// Se houver uma imagem na área de transferência, ela é capturada e anexada.
+function painelColarArea(ev) {
+  const itens = (ev.clipboardData && ev.clipboardData.items) ? ev.clipboardData.items : [];
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i];
+    if (it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) {
+      const file = it.getAsFile();
+      if (file) {
+        ev.preventDefault(); // impede a textarea de tentar colar a imagem como texto
+        uploadArquivoPainel(file);
+        return;
+      }
+    }
+  }
+  // Sem imagem: deixa o texto colar normalmente (não chama preventDefault).
+}
+
 // Grava áudio do microfone (clique pra começar, clique de novo pra parar e anexar).
 let _gravadorAudio = null;
 let _gravadorAudioChunks = [];
@@ -3739,6 +3757,7 @@ async function iniciarPaginaFunilAtendimento() {
                 </div>
                 <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
+                  onpaste="painelColarArea(event)"
                   ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
                 <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
                   <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
