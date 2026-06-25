@@ -2530,6 +2530,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
 
+    console.log(`[DIAG-Q] WEBHOOK RECEBIDO: fromMe=${!!body.fromMe} type=${body.type || '?'} phone=${phoneRaw} texto="${texto}"`);
+
     logDebug('[zapi][entrada]', JSON.stringify({
       fromMe: !!body.fromMe,
       isGroup: !!body.isGroup,
@@ -2799,6 +2801,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       [cliente.id, ..._varMsg]
     );
     const lead = rl.rows[0] || null;
+    console.log(`[DIAG-Q] ENTRADA lead recebida: telefone=${telefone} texto="${texto}" lead_encontrado=${!!lead} ${lead ? 'lead_id='+lead.id+' automacao_pausada='+lead.automacao_pausada : ''}`);
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
