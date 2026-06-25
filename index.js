@@ -4855,6 +4855,25 @@ app.patch('/movatak/admin/leads/:id/vendedor', authMovatak, async (req, res) => 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Exclui o lead DEFINITIVAMENTE, junto com todos os dados relacionados a ele.
+// Diferente de "descartar" (que só muda a etapa) — aqui o lead some do sistema.
+app.delete('/movatak/admin/leads/:id', authMovatak, async (req, res) => {
+  try {
+    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const leadId = req.params.id;
+    // Apaga tudo que referencia o lead antes de apagar o lead em si, pra não deixar órfãos.
+    await query('DELETE FROM movatak_conversas WHERE lead_id = $1', [leadId]).catch(() => null);
+    await query('DELETE FROM movatak_followup WHERE lead_id = $1', [leadId]).catch(() => null);
+    await query('DELETE FROM movatak_lead_eventos WHERE lead_id = $1', [leadId]).catch(() => null);
+    await query('DELETE FROM movatak_mensagens WHERE lead_id = $1', [leadId]).catch(() => null);
+    await query('DELETE FROM movatak_menu_estado WHERE lead_id = $1', [leadId]).catch(() => null);
+    await query('DELETE FROM movatak_questionario_estado WHERE lead_id = $1', [leadId]).catch(() => null);
+    await query('DELETE FROM movatak_leads WHERE id = $1', [leadId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ============================================================
 // Health check + Versão
 // ============================================================
