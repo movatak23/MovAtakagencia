@@ -677,11 +677,13 @@ async function carregarTudo() {
 }
 
 function atualizarStatus(txt) {
-  document.getElementById('header-status').textContent = txt;
+  const el = document.getElementById('header-status');
+  if (el) el.textContent = txt;
 }
 
 // ── Métricas globais ───────────────────────────────────────
 function renderMetricas(clientes, periodo) {
+  if (!document.getElementById('metrics-grid')) return; // tela do funil/kanban não tem este elemento
   const isHoje = periodo === 0;
   const totalLeads   = isHoje
     ? clientes.reduce((s, c) => s + parseInt(c.leads_hoje || 0), 0)
@@ -786,6 +788,7 @@ async function selecionarCliente(id, nome) {
 
 // Cards do topo com dados de um cliente específico
 function renderMetricasCliente(r) {
+  if (!document.getElementById('metrics-grid')) return; // ausente na tela do funil/kanban
   const total = parseInt(r.total_leads || 0);
   const conv  = parseInt(r.convertidos || 0);
   const taxa  = total > 0 ? ((conv / total) * 100).toFixed(1) : '0.0';
@@ -820,6 +823,7 @@ function renderMetricasCliente(r) {
 }
 
 function renderFunilCliente(r) {
+  if (!document.getElementById('funil-wrap')) return; // ausente na tela do funil/kanban
   const total = parseInt(r.total_leads || 0);
   const fu    = parseInt(r.em_followup || 0);
   const conv  = parseInt(r.convertidos || 0);
@@ -842,6 +846,7 @@ function renderFunilCliente(r) {
 
 // ── Funil consolidado ──────────────────────────────────────
 function renderFunil(clientes, periodo) {
+  if (!document.getElementById('funil-wrap')) return; // ausente na tela do funil/kanban
   const isHoje = periodo === 0;
   const total     = isHoje
     ? clientes.reduce((s, c) => s + parseInt(c.leads_hoje || 0), 0)
@@ -873,11 +878,13 @@ function renderFunil(clientes, periodo) {
 
 // ── Tabela de clientes ─────────────────────────────────────
 function renderClientes(clientes) {
+  const tbody = document.getElementById('clientes-tbody');
+  if (!tbody) return; // não existe na tela do funil/kanban — evita erro de innerHTML em null
   if (!clientes.length) {
-    document.getElementById('clientes-tbody').innerHTML = '<tr><td colspan="6" class="state-row">Nenhum cliente cadastrado.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" class="state-row">Nenhum cliente cadastrado.</td></tr>';
     return;
   }
-  document.getElementById('clientes-tbody').innerHTML = clientes.map(c => {
+  tbody.innerHTML = clientes.map(c => {
     const total  = parseInt(c.total_leads || 0);
     const conv   = parseInt(c.convertidos || 0);
     const fu     = parseInt(c.em_followup || 0);
