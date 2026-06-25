@@ -192,8 +192,41 @@ async function authVendedor(req, res, next) {
     );
     if (!r.rows.length) return res.status(401).json({ error: 'Token do vendedor invalido.' });
     req.vendedor = r.rows[0];
+    // Carrega os setores que este vendedor pode acessar. Tudo que o vendedor vê/edita
+    // é filtrado por esta lista no backend — é aqui que mora o controle de acesso real.
+    const setoresR = await query(
+      `SELECT s.id, s.nome, s.cor FROM movatak_setor_vendedores sv
+         JOIN movatak_setores s ON s.id = sv.setor_id AND COALESCE(s.ativo, true) = true
+        WHERE sv.vendedor_id = $1
+        ORDER BY s.ordem_bot NULLS LAST, s.nome`,
+      [req.vendedor.id]
+    ).catch(() => ({ rows: [] }));
+    req.vendedor.setores = setoresR.rows;
+    req.vendedor.setorIds = setoresR.rows.map(s => Number(s.id));
     next();
   } catch (e) { res.status(500).json({ error: e.message }); }
+}
+
+// Garante que um setor pertence ao escopo do vendedor logado. Use em todo endpoint
+// que recebe setor_id do vendedor, pra recusar acesso a setores de outros.
+function vendedorPodeSetor(req, setorId) {
+  if (!req.vendedor || !Array.isArray(req.vendedor.setorIds)) return false;
+  return req.vendedor.setorIds.includes(Number(setorId));
+}
+
+// Valida que um lead pertence a um setor que o vendedor acessa. Retorna o lead
+// (com cliente_id/setor_id) se ok, ou null se fora do escopo. SEMPRE usar antes
+// de deixar o vendedor ler/operar um lead específico.
+async function vendedorPodeLead(req, leadId) {
+  if (!req.vendedor) return null;
+  const r = await query(
+    `SELECT id, cliente_id, setor_id, telefone, nome FROM movatak_leads WHERE id = $1 AND cliente_id = $2`,
+    [leadId, req.vendedor.cliente_id]
+  ).catch(() => ({ rows: [] }));
+  if (!r.rows.length) return null;
+  const lead = r.rows[0];
+  if (!vendedorPodeSetor(req, lead.setor_id)) return null;
+  return lead;
 }
 
 // ============================================================
@@ -1575,7 +1608,19 @@ app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) 
         ORDER BY nome`,
       [req.params.id]
     );
-    res.json(r.rows);
+    // Setores de cada vendedor (pra marcar os checkboxes no cadastro).
+    const sv = await query(
+      `SELECT sv.vendedor_id, sv.setor_id FROM movatak_setor_vendedores sv
+         JOIN movatak_vendedores v ON v.id = sv.vendedor_id
+        WHERE v.cliente_id = $1`,
+      [req.params.id]
+    ).catch(() => ({ rows: [] }));
+    const setoresPorVend = {};
+    sv.rows.forEach(row => {
+      (setoresPorVend[row.vendedor_id] = setoresPorVend[row.vendedor_id] || []).push(Number(row.setor_id));
+    });
+    const rows = r.rows.map(v => ({ ...v, setor_ids: setoresPorVend[v.id] || [] }));
+    res.json(rows);
   } catch(e) {
     console.error('[admin/vendedores:list]', e.message);
     // Fallback para bancos antigos/parcialmente migrados: permite o painel abrir e mostra os dados básicos.
@@ -3264,6 +3309,27 @@ app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) 
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
+// Define os setores que um vendedor acessa (substitui o conjunto atual).
+app.patch('/movatak/admin/vendedores/:id/setores', authMovatak, async (req, res) => {
+  try {
+    const vendedorId = parseInt(req.params.id, 10);
+    const setorIds = Array.isArray(req.body && req.body.setor_ids) ? req.body.setor_ids.map(n => parseInt(n, 10)).filter(Boolean) : [];
+    // Confirma que o vendedor existe e pega o cliente, pra só aceitar setores do mesmo cliente.
+    const v = await query('SELECT cliente_id FROM movatak_vendedores WHERE id = $1', [vendedorId]);
+    if (!v.rows.length) return res.status(404).json({ error: 'Vendedor não encontrado.' });
+    const clienteId = v.rows[0].cliente_id;
+    // Remove todos os vínculos atuais e recria com os enviados (que sejam do cliente).
+    await query('DELETE FROM movatak_setor_vendedores WHERE vendedor_id = $1', [vendedorId]);
+    for (const sid of setorIds) {
+      const ok = await query('SELECT 1 FROM movatak_setores WHERE id = $1 AND cliente_id = $2 AND COALESCE(ativo,true)=true', [sid, clienteId]);
+      if (ok.rows.length) {
+        await query('INSERT INTO movatak_setor_vendedores (setor_id, vendedor_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [sid, vendedorId]).catch(() => null);
+      }
+    }
+    res.json({ ok: true, setor_ids: setorIds });
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/movatak/vendedor/login', async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
@@ -3278,7 +3344,18 @@ app.post('/movatak/vendedor/login', async (req, res) => {
       [String(email).trim().toLowerCase(), hashSenha(senha)]
     );
     if (!r.rows.length) return res.status(401).json({ error: 'Acesso inválido.' });
-    res.json({ token: r.rows[0].acesso_token, vendedor: { nome: r.rows[0].nome, cliente_nome: r.rows[0].cliente_nome } });
+    const vend = r.rows[0];
+    // Setores que este vendedor acessa — definem o que ele vê no kanban.
+    const setoresR = await query(
+      `SELECT s.id, s.nome, s.cor FROM movatak_setor_vendedores sv
+         JOIN movatak_setores s ON s.id = sv.setor_id AND COALESCE(s.ativo, true) = true
+        WHERE sv.vendedor_id = $1 ORDER BY s.ordem_bot NULLS LAST, s.nome`,
+      [vend.id]
+    ).catch(() => ({ rows: [] }));
+    res.json({
+      token: vend.acesso_token,
+      vendedor: { nome: vend.nome, cliente_nome: vend.cliente_nome, setores: setoresR.rows }
+    });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -3321,6 +3398,138 @@ app.get('/movatak/vendedor/resumo', authVendedor, async (req, res) => {
     res.json({ vendedor: req.vendedor, periodo_dias: dias, ...row, taxa_conversao: total ? ((vendas/total)*100).toFixed(1) : '0.0', ranking: ranking.rows, leads: eventos.rows });
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
+
+// ============================================================
+// FUNIL DO VENDEDOR — escopo restrito aos setores do vendedor logado.
+// O controle de acesso é feito AQUI no backend: o vendedor só recebe colunas e
+// leads dos setores aos quais ele pertence. Mesmo que o front peça outro setor,
+// o servidor recusa.
+// ============================================================
+app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
+  try {
+    const clienteId = req.vendedor.cliente_id;
+    const setorIds = req.vendedor.setorIds || [];
+    if (!setorIds.length) {
+      // Vendedor sem setor não vê nada — retorna vazio em vez de erro, pra tela mostrar aviso.
+      return res.json({ colunas: [], leads: [], setores: [], totalGeral: 0, totalNaoLidas: 0, semSetor: true });
+    }
+    await garantirFunilPadraoCliente(clienteId);
+
+    // Se o front pediu um setor específico, ele PRECISA estar no escopo do vendedor.
+    let setoresAlvo = setorIds;
+    if (req.query.setor) {
+      const pedido = parseInt(req.query.setor, 10);
+      if (!setorIds.includes(pedido)) return res.status(403).json({ error: 'Sem acesso a este setor.' });
+      setoresAlvo = [pedido];
+    }
+    const inPlaceholders = setoresAlvo.map((_, i) => '$' + (i + 2)).join(',');
+
+    // Colunas: só as atribuídas aos setores do vendedor.
+    const colunasRes = await query(
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, comando, setor_id, ausencia_ativa
+         FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND setor_id IN (${inPlaceholders})
+        ORDER BY ordem ASC, id ASC`,
+      [clienteId, ...setoresAlvo]
+    );
+    const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
+    const colById = new Map(colunas.map(c => [Number(c.id), c]));
+
+    // Leads: só dos setores do vendedor.
+    const leads = await query(
+      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
+         FROM (
+           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+                  l.nao_lida, l.arquivado, s.nome AS setor_nome, s.cor AS setor_cor,
+                  l.criado_em, l.atualizado_em, l.convertido_em,
+                  p.nome AS plano_nome, p.valor AS plano_valor
+             FROM movatak_leads l
+             LEFT JOIN movatak_planos p ON p.id = l.plano_id
+             LEFT JOIN movatak_setores s ON s.id = l.setor_id
+            WHERE l.cliente_id=$1 AND l.setor_id IN (${inPlaceholders})
+         ) lb
+         LEFT JOIN LATERAL (
+           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
+            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
+         ) ult ON true
+        ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
+        LIMIT 500`,
+      [clienteId, ...setoresAlvo]
+    );
+    const leadsAtivos = leads.rows.filter(l => !l.arquivado);
+    for (const lead of leadsAtivos) {
+      let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
+      if (!coluna) coluna = colunas.find(c => c.setor_id === lead.setor_id) || colunas[0];
+      if (coluna) coluna.leads.push(lead);
+    }
+
+    res.json({
+      colunas,
+      leads: leadsAtivos,
+      setores: req.vendedor.setores,
+      totalGeral: leadsAtivos.length,
+      totalNaoLidas: leadsAtivos.filter(l => l.nao_lida && !l.arquivado).length
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Conversa de um lead — só se o lead estiver num setor do vendedor.
+app.get('/movatak/vendedor/leads/:id/conversas', authVendedor, async (req, res) => {
+  try {
+    const lead = await vendedorPodeLead(req, req.params.id);
+    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    const r = await query(
+      `SELECT * FROM (
+         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em, 'banco' AS fonte
+           FROM movatak_conversas WHERE lead_id = $1
+           ORDER BY criado_em DESC LIMIT 500
+       ) sub ORDER BY criado_em ASC`,
+      [req.params.id]
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Enviar mensagem pelo vendedor — só se o lead for de um setor dele.
+app.post('/movatak/vendedor/leads/:id/mensagem', authVendedor, async (req, res) => {
+  try {
+    const lead = await vendedorPodeLead(req, req.params.id);
+    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    const { texto, midia_url, midia_tipo } = req.body || {};
+    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
+    const cli = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
+    const c = cli.rows[0] || {};
+    let tipoFinal = null, msgId = null;
+    if (midia_url) {
+      tipoFinal = tipoMidia(midia_url, midia_tipo);
+      if (tipoFinal === 'video') msgId = await zapiEnviarVideo(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, texto || '');
+      else if (tipoFinal === 'audio') msgId = await zapiEnviarAudio(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url);
+      else msgId = await zapiEnviarImagem(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, texto || '');
+    } else {
+      msgId = await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, texto);
+    }
+    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId).catch(() => null);
+    await registrarEventoLead(lead.id, lead.cliente_id, 'mensagem_vendedor', 'Mensagem enviada pelo vendedor ' + req.vendedor.nome, { texto: (texto||'').slice(0,100) });
+    res.json({ ok: true, conversaId, criado_em: new Date().toISOString() });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Mover lead entre colunas (dentro do escopo do vendedor) e marcar lido/não lido.
+app.patch('/movatak/vendedor/leads/:id/coluna', authVendedor, async (req, res) => {
+  try {
+    const lead = await vendedorPodeLead(req, req.params.id);
+    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    const colunaId = parseInt(req.body && req.body.coluna_id, 10);
+    if (!colunaId) return res.status(400).json({ error: 'coluna_id obrigatório.' });
+    // A coluna destino precisa ser de um setor do vendedor.
+    const col = await query('SELECT setor_id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true', [colunaId, lead.cliente_id]);
+    if (!col.rows.length || !vendedorPodeSetor(req, col.rows[0].setor_id)) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
+    await moverLeadParaColunaFunil(lead.id, colunaId).catch(() => null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
 
 // ============================================================
 // API — Resumo de um cliente (cards do topo do dashboard)
