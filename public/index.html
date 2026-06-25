@@ -496,7 +496,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.5.8-whatsapp-full-tools';
+const PAINEL_VERSION = 'v2.5.10-msgs-rapidas-admin-edit';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -2522,13 +2522,65 @@ async function reativarFollowupManual(leadId) {
 
 async function abrirGerenciarMsgsRapidas() {
   document.getElementById('msgs-gerenciar-status').textContent = '';
+  window._msgRapidaEditandoId = null;
   cancelarSequenciaPendente();
   document.getElementById('modal-gerenciar-msgs').classList.add('open');
   await renderMsgsGerenciar();
 }
 
 function fecharGerenciarMsgsRapidas() {
+  window._msgRapidaEditandoId = null;
   document.getElementById('modal-gerenciar-msgs').classList.remove('open');
+}
+
+function resumoMsgRapidaGerenciar(m, limite = 170) {
+  if (!m) return '';
+  if (m.template_id) return 'Autoatendimento completo vinculado ao fluxo de perguntas.';
+  if (Array.isArray(m.itens) && m.itens.length) {
+    const txt = m.itens.map(it => (it && it.texto) ? it.texto : (it && it.midia_url ? '[mídia]' : '')).filter(Boolean).join(' • ');
+    return txt ? (txt.length > limite ? txt.slice(0, limite) + '...' : txt) : 'Sequência com mídia/anexos.';
+  }
+  const txt = m.texto || (m.midia_url ? '[mídia/anexo]' : 'Sem texto cadastrado.');
+  return String(txt).length > limite ? String(txt).slice(0, limite) + '...' : String(txt);
+}
+
+function renderEditorMsgRapidaAdmin(m) {
+  const id = Number(m.id);
+  const ehAuto = !!m.template_id;
+  const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+  const midiaHtml = m.midia_url
+    ? (/(\.mp4|\.webm|\.mov)/i.test(m.midia_url)
+        ? `<video src="${m.midia_url}" class="msg-admin-midia" controls></video>`
+        : `<img src="${m.midia_url}" class="msg-admin-midia" alt="Mídia da resposta rápida">`)
+      + `<button class="msg-admin-link-danger" type="button" onclick="patchMsgRapida(${id},'midia_url','').then(() => renderMsgsGerenciar())">Remover mídia</button>`
+    : `<label class="msg-admin-link" style="cursor:pointer">📎 Adicionar mídia<input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaMsgExistente(this,${id})"></label>`;
+
+  const conteudoEditor = ehAuto
+    ? `<div class="msg-admin-note">🔄 Esta resposta rápida inicia um autoatendimento completo. Para alterar as perguntas e respostas do fluxo, edite o template em <strong>Auto Atendimento</strong>. Aqui você altera apenas o título/atalho.</div>`
+    : ehSequencia
+      ? `<div class="msg-admin-note">🔁 Sequência com ${m.itens.length} mensagens. Edite os textos abaixo e salve a sequência.</div>` +
+        m.itens.map((it, i) => `
+          <label class="msg-admin-field-label">Mensagem ${i + 1}${it && it.midia_url ? ' · com mídia' : ''}</label>
+          <textarea id="msg-edit-item-${id}-${i}" class="fu-textarea msg-admin-textarea" placeholder="Texto da mensagem ${i + 1}...">${escapeHtml((it && it.texto) || '')}</textarea>
+        `).join('')
+      : `<label class="msg-admin-field-label">Texto</label>
+         <textarea id="msg-edit-texto-${id}" class="fu-textarea msg-admin-textarea" placeholder="Texto da mensagem...">${escapeHtml(m.texto || '')}</textarea>
+         <div class="msg-admin-media-box">${midiaHtml}</div>`;
+
+  return `<div class="msg-admin-card editing">
+    <div class="msg-admin-edit-head">
+      <div>
+        <div class="msg-admin-badge">Editando resposta rápida</div>
+        <label class="msg-admin-field-label">Título/atalho</label>
+      </div>
+    </div>
+    <input id="msg-edit-titulo-${id}" class="fu-textarea msg-admin-title-input" value="${escapeHtml(m.titulo || '')}" placeholder="Título/atalho">
+    ${conteudoEditor}
+    <div class="msg-admin-edit-actions">
+      <button class="btn-cancel" type="button" onclick="cancelarEdicaoMsgRapidaAdmin()">Cancelar</button>
+      <button class="btn-save" type="button" onclick="salvarEdicaoMsgRapidaAdmin(${id})">Salvar edição</button>
+    </div>
+  </div>`;
 }
 
 async function renderMsgsGerenciar() {
@@ -2536,40 +2588,91 @@ async function renderMsgsGerenciar() {
   box.innerHTML = '<div class="fu-hint">Carregando...</div>';
   await carregarMsgsRapidas();
   if (!msgsRapidasCache.length) { box.innerHTML = '<div class="fu-hint">Nenhuma mensagem cadastrada ainda.</div>'; return; }
+  const editandoId = window._msgRapidaEditandoId ? Number(window._msgRapidaEditandoId) : null;
   box.innerHTML = msgsRapidasCache.map(m => {
-    if (Array.isArray(m.itens) && m.itens.length) {
-      const ehAuto = !!m.template_id;
-      const itensHtml = m.itens.map((it, i) => `
-        <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg4);border-radius:6px;margin-bottom:4px">
-          <strong style="color:var(--accent)">${i + 1}.${it.midia_url ? ' 📎' : ''}</strong> ${escapeHtml(String(it.texto || '').slice(0, 80))}
-        </div>`).join('');
-      const cabecalho = ehAuto
-        ? `🔄 Autoatendimento completo — segue o fluxo e espera as respostas do lead nas perguntas:`
-        : `🔁 Sequência de ${m.itens.length} mensagens (disparo direto, sem espera):`;
-      return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
-        <div style="flex:1">
-          <input class="fu-textarea" style="min-height:auto;padding:7px 10px;resize:none;margin-bottom:4px;width:100%" value="${escapeHtml(m.titulo)}" onchange="patchMsgRapida(${m.id},'titulo',this.value)">
-          <div class="fu-hint" style="margin-bottom:4px${ehAuto ? ';color:var(--accent)' : ''}">${cabecalho}</div>
-          ${itensHtml}
+    const id = Number(m.id);
+    if (editandoId === id) return renderEditorMsgRapidaAdmin(m);
+
+    const ehAuto = !!m.template_id;
+    const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+    const icone = ehAuto ? '🔄' : (ehSequencia ? '🔁' : (m.midia_url ? '📎' : '💬'));
+    const tipo = ehAuto ? 'Autoatendimento' : (ehSequencia ? `Sequência · ${m.itens.length} mensagens` : (m.midia_url ? 'Mensagem com mídia' : 'Mensagem simples'));
+    const preview = resumoMsgRapidaGerenciar(m);
+    const midiaMini = m.midia_url && !ehSequencia
+      ? (/(\.mp4|\.webm|\.mov)/i.test(m.midia_url)
+          ? `<video src="${m.midia_url}" class="msg-admin-thumb" controls></video>`
+          : `<img src="${m.midia_url}" class="msg-admin-thumb" alt="Mídia">`)
+      : '';
+
+    return `<div class="msg-admin-card">
+      <div class="msg-admin-main">
+        <div class="msg-admin-title-row">
+          <span class="msg-admin-icon">${icone}</span>
+          <strong>${escapeHtml(m.titulo || 'Sem título')}</strong>
+          <span class="msg-admin-type">${escapeHtml(tipo)}</span>
         </div>
-        <button class="btn-remove" onclick="removerMsgRapida(${m.id})">×</button>
-      </div>`;
-    }
-    const midiaHtml = m.midia_url
-      ? (/\.(mp4|webm|mov)/i.test(m.midia_url)
-          ? `<video src="${m.midia_url}" style="max-width:120px;max-height:70px;border-radius:4px;display:block;margin-top:4px" controls></video>`
-          : `<img src="${m.midia_url}" style="max-width:120px;max-height:70px;border-radius:4px;display:block;margin-top:4px;object-fit:cover">`)
-        + `<button style="font-size:11px;color:var(--red);background:none;border:none;cursor:pointer;padding:2px 0" onclick="patchMsgRapida(${m.id},'midia_url','')">✕ remover mídia</button>`
-      : `<label style="font-size:11px;color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-top:4px">📎 Adicionar mídia<input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaMsgExistente(this,${m.id})"></label>`;
-    return `<div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--border)">
-      <div style="flex:1">
-        <input class="fu-textarea" style="min-height:auto;padding:7px 10px;resize:none;margin-bottom:4px;width:100%" value="${escapeHtml(m.titulo)}" onchange="patchMsgRapida(${m.id},'titulo',this.value)">
-        <textarea class="fu-textarea" style="min-height:60px;width:100%" onchange="patchMsgRapida(${m.id},'texto',this.value)">${escapeHtml(m.texto)}</textarea>
-        ${midiaHtml}
+        <div class="msg-admin-preview">${escapeHtml(preview)}</div>
+        ${midiaMini}
       </div>
-      <button class="btn-remove" onclick="removerMsgRapida(${m.id})">×</button>
+      <div class="msg-admin-actions">
+        <button class="msg-admin-edit-btn" type="button" onclick="iniciarEdicaoMsgRapidaAdmin(${id})">Editar</button>
+        <button class="btn-remove msg-admin-remove-btn" type="button" onclick="removerMsgRapida(${id})" title="Excluir resposta rápida">×</button>
+      </div>
     </div>`;
   }).join('');
+}
+
+function iniciarEdicaoMsgRapidaAdmin(id) {
+  window._msgRapidaEditandoId = Number(id);
+  renderMsgsGerenciar();
+}
+
+function cancelarEdicaoMsgRapidaAdmin() {
+  window._msgRapidaEditandoId = null;
+  renderMsgsGerenciar();
+}
+
+async function salvarEdicaoMsgRapidaAdmin(id) {
+  const st = document.getElementById('msgs-gerenciar-status');
+  const m = msgsRapidasCache.find(x => Number(x.id) === Number(id));
+  if (!m) return;
+
+  const tituloEl = document.getElementById('msg-edit-titulo-' + id);
+  const titulo = (tituloEl ? tituloEl.value : '').trim();
+  if (!titulo) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Preencha o título/atalho.'; } return; }
+
+  const body = { titulo };
+  if (!m.template_id) {
+    if (Array.isArray(m.itens) && m.itens.length) {
+      body.itens = m.itens.map((it, i) => {
+        const el = document.getElementById('msg-edit-item-' + id + '-' + i);
+        return { ...(it || {}), texto: el ? el.value : ((it && it.texto) || '') };
+      });
+      body.texto = body.itens.map(it => it.texto || '').filter(Boolean).join('\n\n');
+      if (!body.texto && !body.itens.some(it => it.midia_url)) {
+        if (st) { st.style.color = 'var(--red)'; st.textContent = 'A sequência precisa ter pelo menos um texto ou mídia.'; }
+        return;
+      }
+    } else {
+      const textoEl = document.getElementById('msg-edit-texto-' + id);
+      const texto = (textoEl ? textoEl.value : '').trim();
+      if (!texto && !m.midia_url) {
+        if (st) { st.style.color = 'var(--red)'; st.textContent = 'A mensagem precisa ter texto ou mídia.'; }
+        return;
+      }
+      body.texto = texto;
+    }
+  }
+
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando edição...'; }
+  try {
+    await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+    window._msgRapidaEditandoId = null;
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Edição salva.'; }
+    await renderMsgsGerenciar();
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar edição: ' + e.message; }
+  }
 }
 
 async function uploadMidiaNovaMsg(input) {
@@ -6313,6 +6416,29 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
 .quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4);padding-left:12px;padding-right:12px}
 .quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
+.modal-msgs-rapidas-admin{max-width:980px!important;width:calc(100vw - 44px);max-height:92vh;overflow-y:auto}
+#msgs-rapidas-lista{max-height:48vh;overflow-y:auto;padding-right:4px;margin-bottom:10px}
+.msg-admin-card{display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:12px;align-items:start;margin-bottom:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.025)}
+.msg-admin-card.editing{display:block;border-color:var(--accent);background:rgba(91,127,255,.08)}
+.msg-admin-title-row{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:5px}
+.msg-admin-title-row strong{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg-admin-icon{font-size:14px;flex-shrink:0}
+.msg-admin-type{font-size:10px;color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:2px 7px;white-space:nowrap}
+.msg-admin-preview{font-size:12px;color:var(--text2);line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.msg-admin-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.msg-admin-edit-btn{padding:7px 12px;border:1px solid var(--accent);border-radius:8px;background:transparent;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)}
+.msg-admin-edit-btn:hover{background:rgba(91,127,255,.12)}
+.msg-admin-remove-btn{border:1px solid var(--border2);border-radius:8px;width:34px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent}
+.msg-admin-badge{font-size:11px;color:var(--accent);font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px}
+.msg-admin-field-label{font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:.35px;margin:8px 0 5px;display:block}
+.msg-admin-title-input{min-height:auto!important;padding:9px 11px!important;resize:none;margin-bottom:8px}
+.msg-admin-textarea{min-height:88px!important;resize:vertical;margin-bottom:8px}
+.msg-admin-note{font-size:12px;color:var(--text2);background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:9px 10px;line-height:1.35;margin-bottom:8px}
+.msg-admin-edit-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
+.msg-admin-thumb{max-width:120px;max-height:64px;border-radius:8px;display:block;margin-top:8px;object-fit:cover;border:1px solid var(--border)}
+.msg-admin-midia{max-width:180px;max-height:90px;border-radius:8px;display:block;margin-top:6px;object-fit:cover;border:1px solid var(--border)}
+.msg-admin-media-box{margin-top:6px}.msg-admin-link,.msg-admin-link-danger{font-size:12px;background:none;border:none;cursor:pointer;padding:4px 0;display:inline-block}.msg-admin-link{color:var(--text2)}.msg-admin-link-danger{color:var(--red)}
+@media(max-width:720px){.modal-msgs-rapidas-admin{width:calc(100vw - 20px);padding:24px 18px}.msg-admin-card{grid-template-columns:1fr}.msg-admin-actions{justify-content:flex-start}.msg-admin-preview{white-space:normal}}
 .zap-tool-btn{display:block;width:100%;text-align:left;background:var(--bg4);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;margin-bottom:6px;font-size:12px;font-family:var(--sans);cursor:pointer}
 .zap-tool-btn:hover{border-color:var(--border2);background:#22243a}
 .zap-msg-status{font-size:10px;opacity:.85}
@@ -6343,7 +6469,7 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 
 <!-- Modal: gerenciar cadastro de mensagens rápidas -->
 <div class="modal-overlay" id="modal-gerenciar-msgs">
-  <div class="modal" style="max-width:560px">
+  <div class="modal modal-msgs-rapidas-admin">
     <button class="modal-x" onclick="fecharGerenciarMsgsRapidas()" title="Fechar">✕</button>
     <h3>Mensagens Rápidas</h3>
     <div class="fu-hint" style="margin-bottom:12px">Mensagens para disparar do kanban com um clique.</div>
