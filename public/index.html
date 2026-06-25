@@ -496,7 +496,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.5.8-whatsapp-full-tools';
+const PAINEL_VERSION = 'v2.5.9-quick-replies-edit';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -1783,22 +1783,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
 
   // Mensagens rápidas (sempre recarrega para garantir ordem por uso atualizada)
   await carregarMsgsRapidas();
-  const grid = document.getElementById('painel-msgs-rapidas-grid');
-  if (grid) {
-    grid.innerHTML = msgsRapidasCache.length
-      ? msgsRapidasCache.map(m => {
-          const ehAutoatendimento = !!m.template_id;
-          const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
-          const icone = ehAutoatendimento ? '🔄 ' : (ehSequencia ? '🔁 ' : '');
-          const titulo = icone + m.titulo;
-          const tip = ehAutoatendimento ? 'Inicia o autoatendimento completo (espera respostas do lead)'
-            : (ehSequencia ? `Envia ${m.itens.length} mensagens em sequência` : m.texto);
-          return `<button onclick="usarMsgRapidaPainel(${m.id}, this)" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
-        }).join('')
-      : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
-    const countEl = document.getElementById('quick-menu-count');
-    if (countEl) countEl.textContent = msgsRapidasCache.length ? '(' + msgsRapidasCache.length + ')' : '';
-  }
+  renderQuickMenuPainel();
 
   // Marca como lido (caixa de entrada + kanban) — não bloqueia a abertura da conversa.
   marcarLeadComoLido(leadId);
@@ -4426,8 +4411,8 @@ function posicionarQuickMenuPainel() {
 
   const margem = 12;
   const rect = trigger.getBoundingClientRect();
-  const largura = Math.min(360, window.innerWidth - (margem * 2));
-  const alturaMaxima = Math.max(220, Math.min(420, rect.top - (margem * 2)));
+  const largura = Math.min(620, window.innerWidth - (margem * 2));
+  const alturaMaxima = Math.max(260, Math.min(520, rect.top - (margem * 2)));
   let left = rect.right - largura;
   left = Math.max(margem, Math.min(left, window.innerWidth - largura - margem));
 
@@ -4452,6 +4437,141 @@ function toggleQuickMenuPainel(ev) {
 function fecharQuickMenuPainel() {
   const wrap = document.getElementById('quick-menu-painel');
   if (wrap) wrap.classList.remove('open');
+}
+
+function resumoMsgRapidaPainel(m) {
+  if (!m) return '';
+  if (m.template_id) return 'Autoatendimento completo — segue o fluxo configurado.';
+  if (Array.isArray(m.itens) && m.itens.length) {
+    const primeiro = (m.itens.find(it => it && it.texto) || {}).texto || '';
+    return 'Sequência de ' + m.itens.length + ' mensagens' + (primeiro ? ': ' + String(primeiro).slice(0, 90) : '');
+  }
+  return String(m.texto || '').slice(0, 140);
+}
+
+function renderQuickMenuPainel() {
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  if (!grid) return;
+  const countEl = document.getElementById('quick-menu-count');
+  if (countEl) countEl.textContent = msgsRapidasCache.length ? '(' + msgsRapidasCache.length + ')' : '';
+
+  if (!msgsRapidasCache.length) {
+    grid.innerHTML = '<button type="button" onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
+    setTimeout(posicionarQuickMenuPainel, 0);
+    return;
+  }
+
+  grid.innerHTML = msgsRapidasCache.map(m => {
+    if (String(window._quickMsgEditId || '') === String(m.id)) return renderQuickMsgEditPainel(m);
+    return renderQuickMsgItemPainel(m);
+  }).join('');
+  setTimeout(posicionarQuickMenuPainel, 0);
+}
+
+function renderQuickMsgItemPainel(m) {
+  const ehAutoatendimento = !!m.template_id;
+  const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+  const icone = ehAutoatendimento ? '🔄 ' : (ehSequencia ? '🔁 ' : '');
+  const titulo = icone + (m.titulo || 'Mensagem rápida');
+  const tip = ehAutoatendimento ? 'Inicia o autoatendimento completo (espera respostas do lead)'
+    : (ehSequencia ? ('Envia ' + m.itens.length + ' mensagens em sequência') : (m.texto || ''));
+  const resumo = resumoMsgRapidaPainel(m);
+  return `<div class="quick-reply-row" data-msg-id="${m.id}">
+    <button type="button" class="quick-reply-send-btn" onclick="usarMsgRapidaPainel(${m.id}, this)" title="${escapeHtml(tip)}">
+      <span class="quick-reply-title">${escapeHtml(titulo)}</span>
+      <span class="quick-reply-preview">${escapeHtml(resumo || 'Clique para enviar')}</span>
+    </button>
+    <button type="button" class="quick-reply-edit-btn" onclick="iniciarEditarMsgRapidaPainel(${m.id}, event)">Editar</button>
+  </div>`;
+}
+
+function renderQuickMsgEditPainel(m) {
+  const ehAutoatendimento = !!m.template_id;
+  const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+  let corpo = '';
+  if (ehAutoatendimento) {
+    corpo = `<div class="quick-edit-note">Esta resposta está vinculada ao Autoatendimento. Aqui você altera o título do atalho. Para mudar as perguntas, edite o template do Autoatendimento.</div>`;
+  } else if (ehSequencia) {
+    corpo = (m.itens || []).map((it, i) => `
+      <label class="quick-edit-label">Mensagem ${i + 1}${it && it.midia_url ? ' · 📎 com mídia' : ''}</label>
+      <textarea id="quick-edit-item-${m.id}-${i}" class="quick-edit-textarea">${escapeHtml((it && it.texto) || '')}</textarea>
+    `).join('');
+  } else {
+    corpo = `<label class="quick-edit-label">Texto da mensagem</label>
+      <textarea id="quick-edit-texto-${m.id}" class="quick-edit-textarea">${escapeHtml(m.texto || '')}</textarea>
+      ${m.midia_url ? '<div class="quick-edit-note">📎 Esta mensagem possui mídia anexada. O texto será salvo sem remover a mídia.</div>' : ''}`;
+  }
+
+  return `<div class="quick-reply-edit-box" data-msg-id="${m.id}" onclick="event.stopPropagation()">
+    <label class="quick-edit-label">Título do atalho</label>
+    <input id="quick-edit-titulo-${m.id}" class="quick-edit-input" value="${escapeHtml(m.titulo || '')}">
+    ${corpo}
+    <div class="quick-edit-actions">
+      <button type="button" class="quick-edit-save" onclick="salvarEdicaoMsgRapidaPainel(${m.id}, event)">Salvar edição</button>
+      <button type="button" class="quick-edit-cancel" onclick="cancelarEdicaoMsgRapidaPainel(event)">Cancelar</button>
+    </div>
+  </div>`;
+}
+
+function iniciarEditarMsgRapidaPainel(id, ev) {
+  if (ev) ev.stopPropagation();
+  window._quickMsgEditId = String(id);
+  renderQuickMenuPainel();
+}
+
+function cancelarEdicaoMsgRapidaPainel(ev) {
+  if (ev) ev.stopPropagation();
+  window._quickMsgEditId = null;
+  renderQuickMenuPainel();
+}
+
+async function salvarEdicaoMsgRapidaPainel(id, ev) {
+  if (ev) ev.stopPropagation();
+  const m = msgsRapidasCache.find(x => String(x.id) === String(id));
+  if (!m) return;
+  const st = document.getElementById('painel-msg-status');
+  const tituloEl = document.getElementById('quick-edit-titulo-' + id);
+  const titulo = (tituloEl ? tituloEl.value : '').trim();
+  if (!titulo) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Informe um título para a resposta rápida.'; }
+    return;
+  }
+
+  const body = { titulo };
+  if (!m.template_id) {
+    if (Array.isArray(m.itens) && m.itens.length) {
+      body.itens = m.itens.map((it, i) => {
+        const el = document.getElementById('quick-edit-item-' + id + '-' + i);
+        return { ...(it || {}), texto: el ? el.value : ((it && it.texto) || '') };
+      });
+      body.texto = body.itens.map(it => it.texto || '').filter(Boolean).join('\n\n');
+      if (!body.texto && !body.itens.some(it => it.midia_url)) {
+        if (st) { st.style.color = 'var(--red)'; st.textContent = 'A sequência precisa ter pelo menos um texto ou mídia.'; }
+        return;
+      }
+    } else {
+      const textoEl = document.getElementById('quick-edit-texto-' + id);
+      const texto = (textoEl ? textoEl.value : '').trim();
+      if (!texto && !m.midia_url) {
+        if (st) { st.style.color = 'var(--red)'; st.textContent = 'A mensagem precisa ter texto ou mídia.'; }
+        return;
+      }
+      body.texto = texto;
+    }
+  }
+
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando resposta rápida...'; }
+  try {
+    await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+    await carregarMsgsRapidas();
+    window._quickMsgEditId = null;
+    renderQuickMenuPainel();
+    const modalGerenciar = document.getElementById('modal-gerenciar-msgs');
+    if (modalGerenciar && modalGerenciar.classList.contains('open')) await renderMsgsGerenciar();
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Resposta rápida atualizada.'; }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar resposta rápida: ' + e.message; }
+  }
 }
 
 document.addEventListener('click', (ev) => {
@@ -6309,10 +6429,24 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .quick-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;border:1px solid var(--accent);border-radius:8px;background:transparent;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--sans);cursor:pointer;white-space:nowrap}
 .quick-menu-trigger:hover{background:rgba(91,127,255,.10)}
 .quick-menu-trigger-count{font-size:10px;color:var(--text2);font-family:var(--mono)}
-.quick-menu-dropdown{position:fixed;left:auto;right:auto;top:auto;bottom:auto;width:360px;max-width:calc(100vw - 24px);max-height:420px;overflow-y:auto;overflow-x:hidden;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;display:none;z-index:9999;box-shadow:0 18px 42px rgba(0,0,0,.55);margin-bottom:0}
-.quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
+.quick-menu-dropdown{position:fixed;left:auto;right:auto;top:auto;bottom:auto;width:620px;max-width:calc(100vw - 24px);max-height:520px;overflow-y:auto;overflow-x:hidden;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:12px;display:none;z-index:9999;box-shadow:0 18px 42px rgba(0,0,0,.55);margin-bottom:0}
+.quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:8px;flex-wrap:nowrap}
 .quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4);padding-left:12px;padding-right:12px}
 .quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
+.quick-reply-row{display:grid;grid-template-columns:minmax(0,1fr) 76px;gap:8px;align-items:stretch;border:1px solid var(--border);background:rgba(255,255,255,.025);border-radius:10px;padding:7px}
+.quick-menu-wrap.open .quick-menu-dropdown .quick-reply-send-btn{display:flex;flex-direction:column;gap:3px;justify-content:center;min-width:0;width:100%;max-width:none;white-space:normal;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:9px 10px}
+.quick-reply-title{display:block;font-size:12px;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quick-reply-preview{display:block;font-size:11px;color:var(--text2);font-weight:400;line-height:1.25;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.quick-menu-wrap.open .quick-menu-dropdown .quick-reply-edit-btn{width:auto;max-width:none;display:flex;align-items:center;justify-content:center;text-align:center;background:transparent;color:var(--accent);border:1px solid var(--accent);border-radius:8px;padding:0 10px;font-size:11px}
+.quick-reply-edit-box{border:1px solid var(--accent);background:rgba(91,127,255,.08);border-radius:10px;padding:10px;display:flex;flex-direction:column;gap:7px}
+.quick-edit-label{font-size:10px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+.quick-edit-input,.quick-edit-textarea{width:100%;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:12px;outline:none;padding:9px 10px}
+.quick-edit-textarea{min-height:76px;resize:vertical;line-height:1.35}
+.quick-edit-note{font-size:11px;color:var(--text2);background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:8px;padding:7px 8px;line-height:1.35}
+.quick-edit-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:2px}
+.quick-menu-wrap.open .quick-menu-dropdown .quick-edit-save,.quick-menu-wrap.open .quick-menu-dropdown .quick-edit-cancel{width:auto;max-width:none;text-align:center;padding:8px 12px;border-radius:8px;font-size:11px;font-weight:700}
+.quick-menu-wrap.open .quick-menu-dropdown .quick-edit-save{background:var(--accent);border:1px solid var(--accent);color:#fff}
+.quick-menu-wrap.open .quick-menu-dropdown .quick-edit-cancel{background:transparent;border:1px solid var(--border2);color:var(--text2)}
 .zap-tool-btn{display:block;width:100%;text-align:left;background:var(--bg4);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;margin-bottom:6px;font-size:12px;font-family:var(--sans);cursor:pointer}
 .zap-tool-btn:hover{border-color:var(--border2);background:#22243a}
 .zap-msg-status{font-size:10px;opacity:.85}
@@ -6343,7 +6477,7 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 
 <!-- Modal: gerenciar cadastro de mensagens rápidas -->
 <div class="modal-overlay" id="modal-gerenciar-msgs">
-  <div class="modal" style="max-width:560px">
+  <div class="modal" style="max-width:780px">
     <button class="modal-x" onclick="fecharGerenciarMsgsRapidas()" title="Fechar">✕</button>
     <h3>Mensagens Rápidas</h3>
     <div class="fu-hint" style="margin-bottom:12px">Mensagens para disparar do kanban com um clique.</div>
