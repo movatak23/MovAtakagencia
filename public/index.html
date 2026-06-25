@@ -496,7 +496,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.5.3-layout-modular-quickmenu-fix';
+const PAINEL_VERSION = 'v2.5.8-whatsapp-full-tools';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -1647,9 +1647,22 @@ function renderBolhaMensagemPainel(m) {
   const btnResponder = m.id
     ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↩</button>`
     : '';
+  const btnReagir = (m.id && m.msg_id)
+    ? `<button onclick="reagirMensagemPainel(${Number(m.id)})" title="Reagir com emoji" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">😊</button>`
+    : '';
+  const btnEncaminhar = (m.id && m.msg_id)
+    ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↪</button>`
+    : '';
+  const btnEditar = (saida && m.id && m.msg_id && !m.midia_url)
+    ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:rgba(255,255,255,.70);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
+    : '';
+  const btnLidaZap = (!saida && m.id && m.msg_id)
+    ? `<button onclick="marcarMensagemZapComoLida(${Number(m.id)})" title="Marcar esta mensagem como lida no WhatsApp" style="background:none;border:none;color:#b8c0d9;cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✓</button>`
+    : '';
   const btnApagar = podeApagar
     ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
     : '';
+  const statusTxt = saida && m.msg_status ? `<span class="zap-msg-status" title="Status WhatsApp: ${escapeHtml(m.msg_status)}"> · ${escapeHtml(formatarStatusZap(m.msg_status))}</span>` : '';
   return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
     <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
       ${renderPreviewRespostaMensagem(m)}
@@ -1657,7 +1670,7 @@ function renderBolhaMensagemPainel(m) {
       ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
         <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
-        ${btnResponder}${btnApagar}
+        ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnEditar}${btnLidaZap}${btnApagar}
       </div>
     </div>
   </div>`;
@@ -2205,6 +2218,146 @@ async function apagarMensagemPainel(conversaId) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao apagar: ' + e.message; }
   }
 }
+
+
+function formatarStatusZap(status) {
+  const s = String(status || '').toLowerCase();
+  if (['read','lido','played'].includes(s)) return 'lida';
+  if (['delivered','entregue'].includes(s)) return 'entregue';
+  if (['sent','enviado'].includes(s)) return 'enviada';
+  if (['error','failed','falha'].includes(s)) return 'falha';
+  return status || '';
+}
+
+function setStatusPainel(msg, cor = 'var(--text2)') {
+  const st = document.getElementById('painel-msg-status');
+  if (!st) return;
+  st.style.color = cor;
+  st.textContent = msg || '';
+}
+
+async function reagirMensagemPainel(conversaId) {
+  const emoji = prompt('Qual emoji deseja usar como reação?', '👍');
+  if (!emoji) return;
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/reagir', { method:'POST', body: JSON.stringify({ reaction: emoji.trim() }) });
+    setStatusPainel('✓ Reação enviada.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao reagir: ' + e.message, 'var(--red)'); }
+}
+
+async function encaminharMensagemPainel(conversaId) {
+  const destino = prompt('Encaminhar para qual WhatsApp? Use DDI + DDD + número. Ex: 5581999999999');
+  if (!destino) return;
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/encaminhar', { method:'POST', body: JSON.stringify({ destino }) });
+    setStatusPainel('✓ Mensagem encaminhada.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao encaminhar: ' + e.message, 'var(--red)'); }
+}
+
+async function editarMensagemPainel(conversaId) {
+  const msg = (painelConversasCache || []).find(m => Number(m.id) === Number(conversaId));
+  const novo = prompt('Novo texto da mensagem:', msg && msg.conteudo ? msg.conteudo : '');
+  if (!novo || !novo.trim()) return;
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/editar', { method:'POST', body: JSON.stringify({ texto: novo.trim() }) });
+    if (msg) msg.conteudo = novo.trim();
+    renderConversaPainel(painelConversasCache);
+    setStatusPainel('✓ Mensagem editada.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao editar: ' + e.message, 'var(--red)'); }
+}
+
+async function marcarMensagemZapComoLida(conversaId) {
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/marcar-lida-zap', { method:'POST', body: JSON.stringify({}) });
+    setStatusPainel('✓ Mensagem marcada como lida no WhatsApp.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao marcar como lida: ' + e.message, 'var(--red)'); }
+}
+
+async function acaoChatWhatsapp(action) {
+  if (!window._painelLeadId) return;
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/zapi/chat-action', { method:'POST', body: JSON.stringify({ action }) });
+    setStatusPainel('✓ Ação aplicada no WhatsApp: ' + action, 'var(--green)');
+    if (typeof agendarReloadKanban === 'function') agendarReloadKanban();
+  } catch(e) { setStatusPainel('Erro na ação do chat: ' + e.message, 'var(--red)'); }
+}
+
+function abrirRecursoWhatsappPainel(tipo) {
+  if (!window._painelLeadId) return;
+  const cfg = {
+    document: ['Enviar documento', ['URL do documento', 'Nome do arquivo', 'Legenda', 'Extensão (pdf, docx, xlsx...)']],
+    link: ['Enviar link com preview', ['URL do link', 'Mensagem', 'Título opcional', 'Imagem opcional']],
+    location: ['Enviar localização', ['Título', 'Endereço completo', 'Latitude', 'Longitude']],
+    contact: ['Enviar contato', ['Nome do contato', 'Telefone do contato', 'É business? sim/não']],
+    pix: ['Enviar botão PIX', ['Mensagem', 'Chave PIX', 'Nome do botão']],
+    option_list: ['Enviar lista de opções', ['JSON da lista de opções conforme Z-API']],
+    poll: ['Enviar enquete', ['JSON da enquete conforme Z-API']],
+    sticker: ['Enviar sticker', ['URL/base64 do sticker']],
+    gif: ['Enviar GIF', ['URL do GIF', 'Legenda opcional']],
+    ptv: ['Enviar PTV/vídeo circular', ['URL do vídeo PTV']]
+  }[tipo];
+  if (!cfg) return;
+  const vals = [];
+  for (const campo of cfg[1]) {
+    const v = prompt(cfg[0] + '\n' + campo + ':');
+    if (v === null) return;
+    vals.push(v);
+  }
+  let payload = {};
+  if (tipo === 'document') payload = { document: vals[0], fileName: vals[1], caption: vals[2], extension: vals[3] };
+  else if (tipo === 'link') payload = { linkUrl: vals[0], message: vals[1], title: vals[2], image: vals[3] };
+  else if (tipo === 'location') payload = { title: vals[0], address: vals[1], latitude: vals[2], longitude: vals[3] };
+  else if (tipo === 'contact') payload = { contactName: vals[0], contactPhone: vals[1], contactBusiness: /^s|true|1$/i.test(vals[2] || '') };
+  else if (tipo === 'pix') payload = { message: vals[0], pixKey: vals[1], buttonText: vals[2] || 'Copiar PIX' };
+  else if (tipo === 'option_list' || tipo === 'poll') {
+    try { payload = JSON.parse(vals[0] || '{}'); } catch(e) { alert('JSON inválido.'); return; }
+  } else if (tipo === 'sticker') payload = { sticker: vals[0] };
+  else if (tipo === 'gif') payload = { gif: vals[0], caption: vals[1] };
+  else if (tipo === 'ptv') payload = { video: vals[0] };
+  enviarRecursoWhatsappPainel(tipo, payload);
+}
+
+async function enviarRecursoWhatsappPainel(recurso, payload) {
+  if (!window._painelLeadId) return;
+  const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
+  setStatusPainel('Enviando recurso...', 'var(--text2)');
+  try {
+    const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/zapi/send-advanced', {
+      method:'POST', body: JSON.stringify({
+        recurso, payload,
+        reply_to_conversa_id: replyTo ? replyTo.id : null,
+        reply_to_msg_id: replyTo ? replyTo.msg_id : null
+      })
+    });
+    adicionarMensagemAoPainel({
+      id: resp.conversaId || null,
+      direcao:'saida', conteudo: payload.caption || payload.message || payload.title || ('Recurso enviado: ' + recurso),
+      midia_url: payload.document || payload.linkUrl || payload.url || payload.image || payload.video || payload.gif || payload.sticker || null,
+      midia_tipo: recurso,
+      reply_to_conversa_id: replyTo ? replyTo.id : null,
+      reply_to_msg_id: replyTo ? replyTo.msg_id : null,
+      reply_to_direcao: replyTo ? replyTo.direcao : null,
+      reply_to_conteudo: replyTo ? replyTo.conteudo : null,
+      reply_to_midia_url: replyTo ? replyTo.midia_url : null,
+      reply_to_midia_tipo: replyTo ? replyTo.midia_tipo : null,
+      criado_em: resp.criado_em || new Date().toISOString()
+    });
+    cancelarRespostaPainel(false);
+    setStatusPainel('✓ Recurso enviado.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro no recurso: ' + e.message, 'var(--red)'); }
+}
+
+function toggleMenuRecursosWhatsapp(ev) {
+  if (ev) ev.stopPropagation();
+  const el = document.getElementById('menu-recursos-whatsapp');
+  if (!el) return;
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+document.addEventListener('click', function(ev){
+  const menu = document.getElementById('menu-recursos-whatsapp');
+  if (menu && !menu.contains(ev.target) && !(ev.target && ev.target.closest && ev.target.closest('#btn-recursos-whatsapp'))) menu.style.display = 'none';
+});
 
 async function enviarMensagemPainel() {
   const texto = (document.getElementById('painel-msg-texto').value || '').trim();
@@ -4422,6 +4575,32 @@ async function iniciarPaginaFunilAtendimento() {
                 </div>
                 <div style="display:flex;gap:8px;align-items:center">
                   <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+                  <div style="position:relative">
+                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋ Recursos</button>
+                    <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Enviar recurso Z-API</div>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('document')">📄 Documento/PDF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('link')">🔗 Link com preview</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('location')">📍 Localização</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('contact')">👤 Contato</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('pix')">💠 Botão PIX</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('option_list')">☑️ Lista de opções</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('poll')">📊 Enquete</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('sticker')">🏷️ Sticker</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('gif')">🎞️ GIF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('ptv')">🎥 PTV</button>
+                      <div style="height:1px;background:var(--border);margin:8px 0"></div>
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Ações do chat</div>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('read')">✓ Marcar chat lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unread')">📩 Marcar não lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('pin')">📌 Fixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unpin')">↘ Desafixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('mute')">🔕 Mutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unmute')">🔔 Desmutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('archive')">🗄️ Arquivar no WhatsApp</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unarchive')">📂 Desarquivar no WhatsApp</button>
+                    </div>
+                  </div>
                   <div class="quick-menu-wrap" id="quick-menu-painel">
                     <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
@@ -6134,6 +6313,9 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
 .quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4);padding-left:12px;padding-right:12px}
 .quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
+.zap-tool-btn{display:block;width:100%;text-align:left;background:var(--bg4);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;margin-bottom:6px;font-size:12px;font-family:var(--sans);cursor:pointer}
+.zap-tool-btn:hover{border-color:var(--border2);background:#22243a}
+.zap-msg-status{font-size:10px;opacity:.85}
 #painel-reply-preview{animation:fadeUp .15s ease both}
 #painel-conversa [data-conversa-id] button:hover{opacity:.85}
 </style>
