@@ -1207,9 +1207,34 @@ function renderMidiaMensagem(m) {
     /\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(m.midia_url) ? 'audio' :
     /\.webm(\?|$)/i.test(m.midia_url) ? 'video' : 'imagem'
   );
-  if (tipo === 'video') return `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
-  if (tipo === 'audio') return `<audio src="${m.midia_url}" controls style="display:block;margin-bottom:4px;height:36px;max-width:230px"></audio>`;
-  return `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`;
+  const btnBaixar = `<button onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px">⬇ Baixar</button>`;
+  let player;
+  if (tipo === 'video') player = `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
+  else if (tipo === 'audio') player = `<audio src="${m.midia_url}" controls style="display:block;margin-bottom:4px;height:36px;max-width:230px"></audio>`;
+  else player = `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`;
+  return player + btnBaixar;
+}
+
+// Baixa a mídia. Como o arquivo está em outro domínio (Supabase), um <a download>
+// simples às vezes só abre em vez de baixar — então buscamos como blob e forçamos
+// o download com o nome de arquivo original.
+async function baixarMidia(url, ev) {
+  if (ev) ev.stopPropagation();
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const nome = (url.split('/').pop() || 'midia').split('?')[0] || 'midia';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    // Fallback: abre em nova aba pra salvar manualmente se o fetch falhar (CORS, etc).
+    window.open(url, '_blank');
+  }
 }
 
 // Rola a conversa até a última mensagem. Mídia (imagem/áudio) só define a altura
