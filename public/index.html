@@ -172,6 +172,12 @@ tr:hover td{background:var(--bg3)}
 .modal-overlay.open .modal{transform:translateY(0)}
 .modal h3{font-size:20px;font-weight:800;margin-bottom:24px}
 .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+/* Config. Inicial (cadastro/edição do cliente): modal largo em 3 colunas,
+   pra reduzir a rolagem vertical. Campos .full continuam ocupando a linha toda. */
+.modal-cliente{max-width:1100px}
+.modal-cliente .form-grid{grid-template-columns:1fr 1fr 1fr}
+@media (max-width:900px){ .modal-cliente .form-grid{grid-template-columns:1fr 1fr} }
+@media (max-width:600px){ .modal-cliente .form-grid{grid-template-columns:1fr} }
 .form-field{display:flex;flex-direction:column;gap:6px}
 .form-field.full{grid-column:1/-1}
 .form-field label{font-size:12px;color:var(--text2);letter-spacing:.4px}
@@ -377,8 +383,8 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <!-- MODAL NOVO CLIENTE -->
 <div class="modal-overlay" id="modal">
-  <div class="modal">
-    <h3 id="modal-titulo">Cadastrar novo cliente</h3>
+  <div class="modal modal-cliente">
+    <h3 id="modal-titulo">Config. Inicial</h3>
     <div class="form-grid">
       <div class="form-field full">
         <label>NOME DA EMPRESA</label>
@@ -397,7 +403,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label id="lbl-token">Z-API TOKEN</label>
         <input type="text" id="f-token" placeholder="token da instância">
       </div>
-      <div class="form-field full">
+      <div class="form-field">
         <label id="lbl-client-token">Z-API CLIENT TOKEN</label>
         <input type="text" id="f-client-token" placeholder="client-token">
       </div>
@@ -444,6 +450,29 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
           <button class="btn-add-small" onclick="adicionarPlano()">Adicionar plano</button>
         </div>
         <div id="plano-status" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+
+      <!-- AUSÊNCIA / FORA DE HORÁRIO -->
+      <div class="form-field full" id="ausencia-section" style="display:none">
+        <label>🌙 MENSAGEM DE AUSÊNCIA (FORA DO HORÁRIO)</label>
+        <div class="fu-hint" style="margin-bottom:8px">Quando um lead fala e o momento cai num horário de ausência, ele recebe um aviso automático — uma vez por período. Ative o aviso em cada coluna do kanban pelo seletor 🌙 dentro dela.</div>
+
+        <textarea id="aus-msg-padrao" class="fu-textarea" rows="2" placeholder="Mensagem padrão de ausência (ex: Olá! No momento estamos fora do horário de atendimento. Retornaremos assim que possível.)"></textarea>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);margin:14px 0 6px">Horários recorrentes de ausência</div>
+        <div class="fu-hint" style="margin-bottom:8px">Marque os dias e a faixa de horário em que você NÃO atende. Pode adicionar várias faixas.</div>
+        <div id="aus-horarios-lista"></div>
+        <button class="btn-add-small" type="button" onclick="addHorarioAusencia()" style="margin-top:8px">+ Adicionar faixa de horário</button>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 6px">Datas específicas (feriados/recessos)</div>
+        <div class="fu-hint" style="margin-bottom:8px">Mensagem própria para datas específicas. Tem prioridade sobre o horário recorrente naquele dia.</div>
+        <div id="aus-datas-lista"></div>
+        <button class="btn-add-small" type="button" onclick="addDataAusencia()" style="margin-top:8px">+ Adicionar data específica</button>
+
+        <div style="margin-top:14px">
+          <button class="btn-add-small" type="button" onclick="salvarAusencia()">Salvar configuração de ausência</button>
+          <span id="aus-status" class="fu-hint" style="margin-left:10px"></span>
+        </div>
       </div>
     </div>
     <div id="token-resultado" style="display:none">
@@ -887,6 +916,7 @@ function abrirModal() {
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
   document.getElementById('f-planos').closest('.form-field').style.display = '';
   document.getElementById('planos-section').style.display = 'none';
+  document.getElementById('ausencia-section').style.display = 'none';
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Cadastrar';
   btn.onclick = salvarCliente;
@@ -902,14 +932,16 @@ async function abrirEdicao(id) {
   document.getElementById('modal').classList.add('open');
   document.getElementById('token-resultado').style.display = 'none';
   document.getElementById('modal-err').textContent = '';
-  document.getElementById('modal-titulo').textContent = 'Editar cliente';
+  document.getElementById('modal-titulo').textContent = 'Config. Inicial';
   document.getElementById('lbl-token').textContent = 'Z-API TOKEN (deixe vazio para manter)';
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN (deixe vazio para manter)';
   // Planos: editados aqui (modo edição), com valor e nota mínima
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
   document.getElementById('planos-section').style.display = '';
+  document.getElementById('ausencia-section').style.display = '';
   planosClienteId = id;
   carregarPlanos(id);
+  carregarAusencia(id);
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Carregando...';
   btn.onclick = salvarEdicao;
@@ -977,6 +1009,95 @@ async function salvarEdicao() {
 
 let planosClienteId = null;
 let planosTemplatesCache = [];
+// ───── Configuração de ausência (Config. Inicial) ─────
+const DIAS_SEMANA = [['Dom',0],['Seg',1],['Ter',2],['Qua',3],['Qui',4],['Sex',5],['Sáb',6]];
+let _ausHorarios = [];
+let _ausDatas = [];
+let _ausClienteId = null;
+
+function renderAusHorarios() {
+  const box = document.getElementById('aus-horarios-lista');
+  if (!box) return;
+  box.innerHTML = _ausHorarios.map((h, i) => `
+    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        ${DIAS_SEMANA.map(([nome, num]) => `
+          <label style="font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 8px">
+            <input type="checkbox" ${(h.dias||[]).includes(num) ? 'checked' : ''} onchange="ausHorarioDia(${i}, ${num}, this.checked)" style="cursor:pointer">${nome}
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--text2)">das</span>
+        <input type="time" value="${h.inicio||''}" onchange="ausHorarioCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">às</span>
+        <input type="time" value="${h.fim||''}" onchange="ausHorarioCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <button class="btn-remove" type="button" onclick="removerHorarioAusencia(${i})" style="margin-left:auto">×</button>
+      </div>
+    </div>`).join('') || '<div class="fu-hint">Nenhuma faixa adicionada.</div>';
+}
+
+function renderAusDatas() {
+  const box = document.getElementById('aus-datas-lista');
+  if (!box) return;
+  box.innerHTML = _ausDatas.map((d, i) => `
+    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="date" value="${d.data||''}" onchange="ausDataCampo(${i},'data',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">das</span>
+        <input type="time" value="${d.inicio||'00:00'}" onchange="ausDataCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">às</span>
+        <input type="time" value="${d.fim||'23:59'}" onchange="ausDataCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <button class="btn-remove" type="button" onclick="removerDataAusencia(${i})" style="margin-left:auto">×</button>
+      </div>
+      <textarea class="fu-textarea" rows="2" placeholder="Mensagem específica desta data (ex: Estamos em recesso de Natal...)" onchange="ausDataCampo(${i},'msg',this.value)" style="min-height:auto">${escapeHtml(d.msg||'')}</textarea>
+    </div>`).join('') || '<div class="fu-hint">Nenhuma data adicionada.</div>';
+}
+
+function addHorarioAusencia() { _ausHorarios.push({ dias: [], inicio: '18:00', fim: '08:00' }); renderAusHorarios(); }
+function removerHorarioAusencia(i) { _ausHorarios.splice(i, 1); renderAusHorarios(); }
+function ausHorarioCampo(i, campo, val) { if (_ausHorarios[i]) _ausHorarios[i][campo] = val; }
+function ausHorarioDia(i, num, marcado) {
+  if (!_ausHorarios[i]) return;
+  const dias = new Set(_ausHorarios[i].dias || []);
+  if (marcado) dias.add(num); else dias.delete(num);
+  _ausHorarios[i].dias = Array.from(dias).sort();
+}
+function addDataAusencia() { _ausDatas.push({ data: '', inicio: '00:00', fim: '23:59', msg: '' }); renderAusDatas(); }
+function removerDataAusencia(i) { _ausDatas.splice(i, 1); renderAusDatas(); }
+function ausDataCampo(i, campo, val) { if (_ausDatas[i]) _ausDatas[i][campo] = val; }
+
+async function carregarAusencia(id) {
+  _ausClienteId = id;
+  const el = document.getElementById('aus-msg-padrao');
+  if (el) el.value = '';
+  _ausHorarios = []; _ausDatas = [];
+  renderAusHorarios(); renderAusDatas();
+  try {
+    const data = await api('/movatak/admin/clientes/' + id + '/ausencia');
+    if (el) el.value = data.ausencia_msg_padrao || '';
+    _ausHorarios = Array.isArray(data.ausencia_horarios) ? data.ausencia_horarios : [];
+    _ausDatas = Array.isArray(data.ausencia_datas) ? data.ausencia_datas : [];
+    renderAusHorarios(); renderAusDatas();
+  } catch (e) { /* silencioso — seção aparece vazia */ }
+}
+
+async function salvarAusencia() {
+  const st = document.getElementById('aus-status');
+  if (!_ausClienteId) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Abra um cliente para editar.'; } return; }
+  const msgPadrao = (document.getElementById('aus-msg-padrao').value || '').trim();
+  const horarios = _ausHorarios.filter(h => (h.dias||[]).length && h.inicio && h.fim);
+  const datas = _ausDatas.filter(d => d.data);
+  try {
+    await api('/movatak/admin/clientes/' + _ausClienteId + '/ausencia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ausencia_msg_padrao: msgPadrao, ausencia_horarios: horarios, ausencia_datas: datas })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração de ausência salva.'; }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }
+  }
+}
+
 async function carregarPlanos(id) {
   const box = document.getElementById('planos-lista');
   if (!box) return;
@@ -2237,7 +2358,6 @@ async function abrirFU(id) {
   document.getElementById('fu-err').textContent = '';
   document.getElementById('btn-fu-save').textContent = 'Carregando...';
   document.getElementById('modal-fu').classList.add('open');
-  carregarAusencia();
   try {
     const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
     // Carregar novo formato (2 blocos) se existir
@@ -4396,7 +4516,7 @@ function renderFunilAtendimento() {
           onchange="salvarComandoColuna(${col.id}, this.value)">
       </div>
       <div class="funil-col-ausencia" style="margin-bottom:8px">
-        <label title="Quando ligado, leads que falam fora do horário definido (no menu Editar) recebem o aviso de ausência" style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
+        <label title="Quando ligado, leads que falam fora do horário definido (em Config. Inicial) recebem o aviso de ausência" style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
           <input type="checkbox" ${col.ausencia_ativa ? 'checked' : ''} onchange="toggleAusenciaColuna(${col.id}, this.checked)" style="cursor:pointer">
           🌙 Aviso de ausência fora do horário
         </label>
@@ -4839,6 +4959,23 @@ async function salvarComandoColuna(colunaId, valor) {
   }
 }
 
+// Liga/desliga o aviso de ausência nesta coluna do kanban. A config de horários/
+// mensagens fica em Config. Inicial; aqui é só o interruptor por etapa.
+async function toggleAusenciaColuna(colunaId, ativa) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/ausencia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ausencia_ativa: !!ativa })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.ausencia_ativa = !!ativa;
+    if (status) { status.style.color = 'var(--green)'; status.textContent = ativa ? 'Aviso de ausência ativado nesta etapa.' : 'Aviso de ausência desativado nesta etapa.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao alterar ausência: ' + e.message; }
+  }
+}
+
 // Define a qual setor esta etapa pertence. "Todos" sempre mostra todas as
 // etapas; os demais setores só mostram as etapas atribuídas a eles.
 async function atribuirSetorColuna(colunaId, setorId) {
@@ -4852,107 +4989,6 @@ async function atribuirSetorColuna(colunaId, setorId) {
     carregarFunilAtendimento();
   } catch (e) {
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao definir setor da etapa: ' + e.message; }
-  }
-}
-
-// ───── Configuração de ausência (menu Editar) ─────
-const DIAS_SEMANA = [['Dom',0],['Seg',1],['Ter',2],['Qua',3],['Qui',4],['Sex',5],['Sáb',6]];
-let _ausHorarios = [];
-let _ausDatas = [];
-
-function renderAusHorarios() {
-  const box = document.getElementById('aus-horarios-lista');
-  if (!box) return;
-  box.innerHTML = _ausHorarios.map((h, i) => `
-    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-        ${DIAS_SEMANA.map(([nome, num]) => `
-          <label style="font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 8px">
-            <input type="checkbox" ${(h.dias||[]).includes(num) ? 'checked' : ''} onchange="ausHorarioDia(${i}, ${num}, this.checked)" style="cursor:pointer">${nome}
-          </label>`).join('')}
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:12px;color:var(--text2)">das</span>
-        <input type="time" value="${h.inicio||''}" onchange="ausHorarioCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
-        <span style="font-size:12px;color:var(--text2)">às</span>
-        <input type="time" value="${h.fim||''}" onchange="ausHorarioCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
-        <button class="btn-remove" type="button" onclick="removerHorarioAusencia(${i})" style="margin-left:auto">×</button>
-      </div>
-    </div>`).join('') || '<div class="fu-hint">Nenhuma faixa adicionada.</div>';
-}
-
-function renderAusDatas() {
-  const box = document.getElementById('aus-datas-lista');
-  if (!box) return;
-  box.innerHTML = _ausDatas.map((d, i) => `
-    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-        <input type="date" value="${d.data||''}" onchange="ausDataCampo(${i},'data',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
-        <span style="font-size:12px;color:var(--text2)">das</span>
-        <input type="time" value="${d.inicio||'00:00'}" onchange="ausDataCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
-        <span style="font-size:12px;color:var(--text2)">às</span>
-        <input type="time" value="${d.fim||'23:59'}" onchange="ausDataCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
-        <button class="btn-remove" type="button" onclick="removerDataAusencia(${i})" style="margin-left:auto">×</button>
-      </div>
-      <textarea class="fu-textarea" rows="2" placeholder="Mensagem específica desta data (ex: Estamos em recesso de Natal...)" onchange="ausDataCampo(${i},'msg',this.value)" style="min-height:auto">${escapeHtml(d.msg||'')}</textarea>
-    </div>`).join('') || '<div class="fu-hint">Nenhuma data adicionada.</div>';
-}
-
-function addHorarioAusencia() { _ausHorarios.push({ dias: [], inicio: '18:00', fim: '08:00' }); renderAusHorarios(); }
-function removerHorarioAusencia(i) { _ausHorarios.splice(i, 1); renderAusHorarios(); }
-function ausHorarioCampo(i, campo, val) { if (_ausHorarios[i]) _ausHorarios[i][campo] = val; }
-function ausHorarioDia(i, num, marcado) {
-  if (!_ausHorarios[i]) return;
-  const dias = new Set(_ausHorarios[i].dias || []);
-  if (marcado) dias.add(num); else dias.delete(num);
-  _ausHorarios[i].dias = Array.from(dias).sort();
-}
-function addDataAusencia() { _ausDatas.push({ data: '', inicio: '00:00', fim: '23:59', msg: '' }); renderAusDatas(); }
-function removerDataAusencia(i) { _ausDatas.splice(i, 1); renderAusDatas(); }
-function ausDataCampo(i, campo, val) { if (_ausDatas[i]) _ausDatas[i][campo] = val; }
-
-async function carregarAusencia() {
-  if (!fuId) return;
-  try {
-    const data = await api('/movatak/admin/clientes/' + fuId + '/ausencia');
-    const el = document.getElementById('aus-msg-padrao');
-    if (el) el.value = data.ausencia_msg_padrao || '';
-    _ausHorarios = Array.isArray(data.ausencia_horarios) ? data.ausencia_horarios : [];
-    _ausDatas = Array.isArray(data.ausencia_datas) ? data.ausencia_datas : [];
-    renderAusHorarios();
-    renderAusDatas();
-  } catch (e) { /* silencioso — bloco aparece vazio */ }
-}
-
-async function salvarAusencia() {
-  const st = document.getElementById('aus-status');
-  const msgPadrao = (document.getElementById('aus-msg-padrao').value || '').trim();
-  // Validação leve: faixa precisa de dias e horários; data precisa da data preenchida.
-  const horarios = _ausHorarios.filter(h => (h.dias||[]).length && h.inicio && h.fim);
-  const datas = _ausDatas.filter(d => d.data);
-  try {
-    await api('/movatak/admin/clientes/' + fuId + '/ausencia', {
-      method: 'PATCH',
-      body: JSON.stringify({ ausencia_msg_padrao: msgPadrao, ausencia_horarios: horarios, ausencia_datas: datas })
-    });
-    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração de ausência salva.'; }
-  } catch (e) {
-    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }
-  }
-}
-
-async function toggleAusenciaColuna(colunaId, ativa) {
-  const status = document.getElementById('funil-status');
-  try {
-    await api('/movatak/admin/funil/colunas/' + colunaId + '/ausencia', {
-      method: 'PATCH',
-      body: JSON.stringify({ ausencia_ativa: !!ativa })
-    });
-    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
-    if (col) col.ausencia_ativa = !!ativa;
-    if (status) { status.style.color = 'var(--green)'; status.textContent = ativa ? 'Aviso de ausência ativado nesta etapa.' : 'Aviso de ausência desativado nesta etapa.'; }
-  } catch (e) {
-    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao alterar ausência: ' + e.message; }
   }
 }
 
@@ -5177,30 +5213,6 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
       <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
-    </div>
-
-    <!-- BLOCO AUSÊNCIA -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">🌙 Mensagem de ausência fora do horário</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Quando um lead fala e o momento cai num horário de ausência, ele recebe um aviso automático — uma vez por período. Ative o aviso em cada coluna do kanban pelo seletor 🌙 dentro dela.</div>
-
-      <label class="fu-label" style="margin-top:0">Mensagem padrão de ausência</label>
-      <textarea class="fu-textarea" id="aus-msg-padrao" rows="3" placeholder="Ex: Olá! No momento estamos fora do horário de atendimento. Retornaremos assim que possível. Obrigado pela mensagem!"></textarea>
-
-      <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">Horários recorrentes de ausência</div>
-      <div class="fu-hint" style="margin-bottom:8px">Marque os dias e a faixa de horário em que você NÃO atende. Pode adicionar várias faixas (ex: almoço + noite).</div>
-      <div id="aus-horarios-lista"></div>
-      <button class="btn-add-small" type="button" onclick="addHorarioAusencia()" style="margin-top:8px">+ Adicionar faixa de horário</button>
-
-      <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 8px">Datas específicas (feriados/recessos)</div>
-      <div class="fu-hint" style="margin-bottom:8px">Mensagem própria para datas específicas. Tem prioridade sobre o horário recorrente naquele dia.</div>
-      <div id="aus-datas-lista"></div>
-      <button class="btn-add-small" type="button" onclick="addDataAusencia()" style="margin-top:8px">+ Adicionar data específica</button>
-
-      <div style="margin-top:16px">
-        <button class="btn-save" type="button" onclick="salvarAusencia()">Salvar configuração de ausência</button>
-        <span id="aus-status" class="fu-hint" style="margin-left:10px"></span>
-      </div>
     </div>
 
     <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
