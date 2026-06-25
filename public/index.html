@@ -1642,6 +1642,7 @@ function renderConversaPainel(msgs) {
 
 async function abrirPainelLead(leadId, nomeAbrev) {
   window._painelLeadId = leadId;
+  garantirColunaFunilVisivel('chat');
   document.getElementById('painel-lead-nome').textContent = nomeAbrev || 'Lead';
   document.getElementById('painel-lead-fone').textContent = '';
   document.getElementById('painel-msg-texto').value = '';
@@ -1689,6 +1690,8 @@ async function abrirPainelLead(leadId, nomeAbrev) {
           return `<button onclick="usarMsgRapidaPainel(${m.id}, this)" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
         }).join('')
       : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
+    const countEl = document.getElementById('quick-menu-count');
+    if (countEl) countEl.textContent = msgsRapidasCache.length ? '(' + msgsRapidasCache.length + ')' : '';
   }
 
   // Marca como lido (caixa de entrada + kanban) — não bloqueia a abertura da conversa.
@@ -1765,6 +1768,7 @@ function usarMsgRapidaPainel(id, btnEl) {
   if (window._enviandoMsgRapida) return;
   const m = msgsRapidasCache.find(x => String(x.id) === String(id));
   if (!m) return;
+  fecharQuickMenuPainel();
   // Sequência vinculada a um autoatendimento: dispara o motor real do autoatendimento,
   // que respeita perguntas que esperam resposta do lead, saltos, opções, etc.
   if (m.template_id) {
@@ -4074,6 +4078,118 @@ function adicionarMensagemAoPainel(m) {
   rolarConversaParaFim();
 }
 
+
+// ── Layout modular do funil + menu de respostas rápidas ───────
+const FUNIL_LAYOUT_STORAGE_PREFIX = 'movatak_funil_layout_';
+
+function getFunilLayoutGrid() {
+  return document.getElementById('funil-layout-grid');
+}
+
+function getFunilLayoutKey() {
+  const id = funilState && funilState.clienteId ? String(funilState.clienteId) : 'global';
+  return FUNIL_LAYOUT_STORAGE_PREFIX + id;
+}
+
+function colunaFunilEstaOculta(coluna) {
+  const grid = getFunilLayoutGrid();
+  return !!(grid && grid.classList.contains('hide-' + coluna));
+}
+
+function contarColunasFunilVisiveis() {
+  const cols = ['inbox', 'kanban', 'chat'];
+  return cols.filter(c => !colunaFunilEstaOculta(c)).length;
+}
+
+function salvarLayoutFunil() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  const prefs = {
+    inbox: grid.classList.contains('hide-inbox'),
+    kanban: grid.classList.contains('hide-kanban'),
+    chat: grid.classList.contains('hide-chat')
+  };
+  try { localStorage.setItem(getFunilLayoutKey(), JSON.stringify(prefs)); } catch(e) {}
+  atualizarBotoesLayoutFunil();
+}
+
+function restaurarLayoutFunil() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  try {
+    const prefs = JSON.parse(localStorage.getItem(getFunilLayoutKey()) || '{}');
+    ['inbox', 'kanban', 'chat'].forEach(c => {
+      grid.classList.toggle('hide-' + c, !!prefs[c]);
+    });
+    // Segurança: nunca deixa as três colunas sumirem ao mesmo tempo.
+    if (['inbox','kanban','chat'].every(c => grid.classList.contains('hide-' + c))) {
+      grid.classList.remove('hide-chat');
+    }
+  } catch(e) {}
+  atualizarBotoesLayoutFunil();
+}
+
+function atualizarBotoesLayoutFunil() {
+  ['inbox', 'kanban', 'chat'].forEach(c => {
+    const btn = document.getElementById('layout-btn-' + c);
+    if (!btn) return;
+    const oculto = colunaFunilEstaOculta(c);
+    btn.classList.toggle('is-hidden', oculto);
+    btn.classList.toggle('is-active', !oculto);
+    btn.title = oculto ? 'Mostrar coluna' : 'Ocultar coluna';
+  });
+}
+
+function toggleColunaFunil(coluna) {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  const cls = 'hide-' + coluna;
+  const vaiOcultar = !grid.classList.contains(cls);
+  if (vaiOcultar && contarColunasFunilVisiveis() <= 1) {
+    const st = document.getElementById('funil-status');
+    if (st) {
+      st.style.color = 'var(--amber)';
+      st.textContent = 'Pelo menos uma coluna precisa ficar visível.';
+      setTimeout(() => { if (st.textContent.includes('Pelo menos')) st.textContent = ''; }, 2200);
+    }
+    return;
+  }
+  grid.classList.toggle(cls);
+  salvarLayoutFunil();
+}
+
+function mostrarTodasColunasFunil() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  grid.classList.remove('hide-inbox', 'hide-kanban', 'hide-chat');
+  salvarLayoutFunil();
+}
+
+function garantirColunaFunilVisivel(coluna) {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  grid.classList.remove('hide-' + coluna);
+  salvarLayoutFunil();
+}
+
+function toggleQuickMenuPainel(ev) {
+  if (ev) ev.stopPropagation();
+  const wrap = document.getElementById('quick-menu-painel');
+  if (!wrap) return;
+  wrap.classList.toggle('open');
+}
+
+function fecharQuickMenuPainel() {
+  const wrap = document.getElementById('quick-menu-painel');
+  if (wrap) wrap.classList.remove('open');
+}
+
+document.addEventListener('click', (ev) => {
+  const wrap = document.getElementById('quick-menu-painel');
+  if (wrap && !wrap.contains(ev.target)) wrap.classList.remove('open');
+});
+
+
 async function iniciarPaginaFunilAtendimento() {
   const params = new URLSearchParams(window.location.search);
   const id = Number(params.get('clienteId'));
@@ -4093,7 +4209,14 @@ async function iniciarPaginaFunilAtendimento() {
     main.classList.add('funil-main-3col');
     main.innerHTML = `
       <div class="funil-page funil-page-3col">
-        <div class="funil-3col-grid">
+        <div class="funil-layout-controls" id="funil-layout-controls">
+          <span class="layout-label">Visual:</span>
+          <button type="button" class="funil-layout-btn" id="layout-btn-inbox" onclick="toggleColunaFunil('inbox')" title="Mostrar/ocultar caixa de entrada">☰ Inbox</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-kanban" onclick="toggleColunaFunil('kanban')" title="Mostrar/ocultar funil">▦ Kanban</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-chat" onclick="toggleColunaFunil('chat')" title="Mostrar/ocultar conversa">💬 Chat</button>
+          <button type="button" class="funil-layout-btn" onclick="mostrarTodasColunasFunil()" title="Restaurar layout completo">Mostrar tudo</button>
+        </div>
+        <div class="funil-3col-grid" id="funil-layout-grid">
           <!-- Coluna 1: Caixa de entrada (conversas) -->
           <div class="funil-inbox-col">
             <div class="funil-inbox-head">
@@ -4177,9 +4300,12 @@ async function iniciarPaginaFunilAtendimento() {
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
                   <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
                 </div>
-                <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid" style="margin-bottom:8px"></div>
-                <div style="display:flex;gap:8px">
+                <div style="display:flex;gap:8px;align-items:center">
                   <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+                  <div class="quick-menu-wrap" id="quick-menu-painel">
+                    <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
+                    <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
+                  </div>
                   <button onclick="reativarFollowupManual(window._painelLeadId)" style="padding:8px 12px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px">+ FU</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
@@ -4191,6 +4317,7 @@ async function iniciarPaginaFunilAtendimento() {
         <div id="funil-status"></div>
       </div>`;
   }
+  restaurarLayoutFunil();
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
 }
@@ -5641,6 +5768,28 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 
 /* Grid de 3 colunas: inbox | kanban | chat — tudo travado à altura visível */
 .funil-3col-grid{display:grid;grid-template-columns:280px 1fr 380px;gap:16px;flex:1;min-height:0;overflow:hidden}
+.funil-layout-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
+.funil-layout-controls .layout-label{font-size:11px;color:var(--text2);margin-right:2px}
+.funil-layout-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:11px;padding:7px 10px;cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px}
+.funil-layout-btn:hover{border-color:var(--accent);color:var(--text)}
+.funil-layout-btn.is-hidden{border-color:rgba(255,90,90,.35);color:var(--red);background:rgba(255,90,90,.08)}
+.funil-layout-btn.is-active{border-color:rgba(0,208,132,.35);color:var(--green);background:rgba(0,208,132,.08)}
+.funil-3col-grid.hide-inbox{grid-template-columns:minmax(520px,1fr) 420px}
+.funil-3col-grid.hide-inbox .funil-inbox-col{display:none}
+.funil-3col-grid.hide-kanban{grid-template-columns:300px minmax(420px,1fr)}
+.funil-3col-grid.hide-kanban .funil-kanban-col{display:none}
+.funil-3col-grid.hide-chat{grid-template-columns:300px minmax(520px,1fr)}
+.funil-3col-grid.hide-chat .funil-chat-col{display:none}
+.funil-3col-grid.hide-inbox.hide-chat{grid-template-columns:1fr}
+.funil-3col-grid.hide-inbox.hide-chat .funil-kanban-col{display:flex}
+.funil-3col-grid.hide-kanban.hide-chat{grid-template-columns:320px}
+.funil-3col-grid.hide-kanban.hide-chat .funil-inbox-col{display:flex}
+.funil-3col-grid.hide-inbox.hide-kanban{grid-template-columns:minmax(420px,1fr)}
+.funil-3col-grid.hide-inbox.hide-kanban .funil-chat-col{display:flex}
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat{grid-template-columns:1fr}
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-chat-col{display:flex}
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-kanban-col,
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-inbox-col{display:none}
 .funil-inbox-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-height:0}
 .funil-inbox-head{padding:12px;border-bottom:1px solid var(--border);flex-shrink:0}
 .funil-inbox-head input{width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:9px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;box-sizing:border-box}
@@ -5857,6 +6006,14 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .msgs-rapidas-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
 .msgs-rapidas-grid button{padding:7px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer;text-align:left;flex-shrink:0;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .msgs-rapidas-grid button:hover{border-color:var(--accent);color:var(--accent)}
+.quick-menu-wrap{position:relative;display:flex;align-items:center;justify-content:flex-end;min-width:0}
+.quick-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;border:1px solid var(--accent);border-radius:8px;background:transparent;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--sans);cursor:pointer;white-space:nowrap}
+.quick-menu-trigger:hover{background:rgba(91,127,255,.10)}
+.quick-menu-trigger-count{font-size:10px;color:var(--text2);font-family:var(--mono)}
+.quick-menu-dropdown{position:absolute;right:0;bottom:42px;width:min(340px,calc(100vw - 40px));max-height:360px;overflow-y:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;display:none;z-index:80;box-shadow:0 18px 42px rgba(0,0,0,.45);margin-bottom:0}
+.quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
+.quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4)}
+.quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
 </style>
 
 <!-- Modal: enviar mensagem rápida a um lead -->
