@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.5.4-kanban-historico-zap-fix';
+const MOVATAK_VERSION = 'v2.5.5-whatsapp-inbox-sync-unread-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2630,12 +2630,27 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         || contemComando(texto, comandosColuna);
       const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatLid, ehComandoInterno);
 
+      const midiaFromMe = extrairMidiaPayloadZapi(body);
+
       if (!leadFromMe) {
         console.log('[zapi][fromMe] lead nao encontrado para registrar mensagem/comando', JSON.stringify({ chatLid, telefone, ehComandoInterno }));
+
+        // Mensagem enviada diretamente pelo WhatsApp Web para um contato que ainda não
+        // existe no CRM. Antes era ignorada; agora cria um contato simples, sem acionar
+        // automação nem marcar como não lido.
+        if (!ehComandoInterno && telefone && ((texto && String(texto).trim()) || midiaFromMe.url)) {
+          const novoLeadFromMe = await query(
+            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+             VALUES ($1, $2, $3, 'lead', $4, false, NOW())
+             RETURNING id`,
+            [cliente.id, telefone, body.senderName || null, chatLid]
+          );
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null).catch(() => null);
+          await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
+        }
         return;
       }
 
-      const midiaFromMe = extrairMidiaPayloadZapi(body);
       if ((texto && String(texto).trim()) || midiaFromMe.url) {
         // Evita duplicar: se a mensagem foi enviada pelo PRÓPRIO painel, ela já foi
         // gravada no banco (com o mesmo messageId do Z-API) no momento do envio. O
@@ -3029,6 +3044,21 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
         console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
       }
+    } else {
+      // Novo contato comum do WhatsApp: não bateu com gatilho de campanha, mas ainda
+      // precisa aparecer na caixa de entrada para o CRM espelhar o WhatsApp.
+      // Não dispara boas-vindas, questionário nem follow-up.
+      const novoContato = await query(
+        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+         VALUES ($1, $2, $3, 'lead', $4, true, NOW())
+         RETURNING id`,
+        [cliente.id, telefone, body.senderName || null, chatLid]
+      );
+      const midiaNovoContato = extrairMidiaPayloadZapi(body);
+      const msgIdNovoContato = body.messageId || body.id || null;
+      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato).catch(() => null);
+      await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
+      console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
     console.error('[zapi] erro processamento:', e.message);
@@ -5322,10 +5352,14 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   if (!ins || !ins.rows.length) return null;
   const novoId = ins.rows[0].id;
 
-  // Mensagem do lead (entrada) marca o lead como não lido — só é "lido" quando
-  // alguém abre o painel de conversa dele ou responde manualmente pelo painel.
+  // Regra correta de leitura da caixa de entrada:
+  // - entrada do cliente => fica não lida;
+  // - saída do vendedor/painel/WhatsApp Web => limpa o não lido.
+  // Isso evita que mensagens enviadas pelo próprio WhatsApp Web apareçam como novas.
   if (direcao === 'entrada') {
-    query(`UPDATE movatak_leads SET nao_lida = true WHERE id = $1`, [leadId]).catch(() => null);
+    query(`UPDATE movatak_leads SET nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
+  } else if (direcao === 'saida') {
+    query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
   }
 
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
