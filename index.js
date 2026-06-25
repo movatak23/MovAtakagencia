@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.5.8-whatsapp-full-tools';
+const MOVATAK_VERSION = 'v2.6.3-zapi-own-number-filter';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2576,25 +2576,95 @@ function textoPareceComandoInterno(texto, comandos, vendedores, comandoParar, co
 
 
 // Extrai telefone numérico de vários formatos possíveis do payload Z-API.
-// Em alguns eventos fromMe, o phone pode vir como @lid; por isso testamos campos alternativos.
-function extrairTelefonePayload(body) {
-  const candidatos = [
-    body.phone,
-    body.senderPhone,
-    body.connectedPhone,
-    body.participantPhone,
-    body.from,
-    body.to
-  ];
+// Importante: connectedPhone costuma ser o número da própria instância; por isso
+// NÃO deve ser usado como telefone do lead. Em fromMe, priorizamos destinatário/remoteJid.
+function extrairDigitosTelefone(valor) {
+  if (!valor) return null;
+  const raw = String(valor);
+  if (raw.includes('@g.us') || raw.includes('@newsletter')) return null;
+  const digitos = raw.replace(/\D/g, '');
+  if (digitos.length < 10 || digitos.length > 15) return null;
+  return digitos;
+}
 
+function telefonesEquivalentes(a, b) {
+  const da = extrairDigitosTelefone(a);
+  const db = extrairDigitosTelefone(b);
+  if (!da || !db) return false;
+  const va = variantesTelefone(da);
+  const vb = variantesTelefone(db);
+  return va.some(x => vb.includes(x));
+}
+
+function telefoneEhDaEmpresa(telefone, cliente) {
+  if (!telefone || !cliente) return false;
+  const candidatosEmpresa = [
+    cliente.whatsapp,
+    cliente.telefone,
+    cliente.zapi_phone,
+    cliente.numero_whatsapp,
+    cliente.connectedPhone
+  ].filter(Boolean);
+  return candidatosEmpresa.some(n => telefonesEquivalentes(telefone, n));
+}
+
+function primeiroTelefoneValido(candidatos, cliente) {
+  const vistos = new Set();
   for (const valor of candidatos) {
-    if (!valor) continue;
-    const raw = String(valor);
-    if (raw.includes('@lid') || raw.includes('@g.us') || raw.includes('@newsletter')) continue;
-    const digitos = raw.replace(/\D/g, '');
-    if (digitos.length >= 10 && digitos.length <= 15) return digitos;
+    const digitos = extrairDigitosTelefone(valor);
+    if (!digitos || vistos.has(digitos)) continue;
+    vistos.add(digitos);
+    if (telefoneEhDaEmpresa(digitos, cliente)) continue;
+    return digitos;
   }
+  return null;
+}
 
+function extrairTelefonePayload(body, cliente = null) {
+  const candidatos = body && body.fromMe
+    ? [
+        body.to,
+        body.recipient,
+        body.recipientPhone,
+        body.chatId,
+        body.remoteJid,
+        body.key && body.key.remoteJid,
+        body.message && body.message.key && body.message.key.remoteJid,
+        body.phone,
+        body.senderPhone,
+        body.from,
+        body.participantPhone
+      ]
+    : [
+        body.phone,
+        body.senderPhone,
+        body.from,
+        body.chatId,
+        body.remoteJid,
+        body.key && body.key.remoteJid,
+        body.message && body.message.key && body.message.key.remoteJid,
+        body.participantPhone,
+        body.to,
+        body.recipient,
+        body.recipientPhone
+      ];
+
+  return primeiroTelefoneValido(candidatos, cliente);
+}
+
+function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
+  const nomes = body && body.fromMe
+    ? [body.contactName, body.chatName, body.pushName, body.notifyName]
+    : [body.senderName, body.contactName, body.chatName, body.pushName, body.notifyName];
+
+  for (const nome of nomes) {
+    const s = String(nome || '').trim();
+    if (!s) continue;
+    // Evita salvar o nome da própria empresa como nome do lead em payload fromMe.
+    if (cliente && cliente.nome && s.toLowerCase() === String(cliente.nome).trim().toLowerCase()) continue;
+    if (telefone && telefoneEhDaEmpresa(telefone, cliente)) continue;
+    return s;
+  }
   return null;
 }
 
@@ -2859,7 +2929,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
     // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
-    const telefone   = extrairTelefonePayload(body);
+    let telefone     = extrairTelefonePayload(body);
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
     const replyPayload = extrairReplyPayloadZapi(body);
@@ -2910,6 +2980,17 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
     const cliente = rc.rows[0];
+
+    // Depois de identificar o cliente/instância, recalcula o telefone ignorando
+    // qualquer número que seja da própria empresa. Isso evita criar lead
+    // "falando consigo mesmo" quando o webhook fromMe traz connectedPhone/phone
+    // como número da conta conectada.
+    const telefoneAntesFiltroEmpresa = telefone;
+    telefone = extrairTelefonePayload(body, cliente);
+    if (telefoneAntesFiltroEmpresa && !telefone) {
+      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe }));
+    }
+
     const comandos = cliente.comandos || {};
     await registrarWebhookCliente(cliente.id, {
       fromMe: !!body.fromMe,
@@ -2920,6 +3001,20 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       texto_preview: texto ? String(texto).slice(0, 120) : null
     });
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
+
+    if (!telefone) {
+      logDebug('[zapi][ignorado] telefone real do contato não identificado após filtro anti-próprio-número', JSON.stringify({
+        fromMe: !!body.fromMe,
+        phone: body.phone || null,
+        senderPhone: body.senderPhone || null,
+        connectedPhone: body.connectedPhone || null,
+        to: body.to || null,
+        from: body.from || null,
+        chatId: body.chatId || null,
+        remoteJid: body.remoteJid || null
+      }));
+      return;
+    }
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR / PRÓPRIO WHATSAPP (fromMe) =====
     // Antes o CRM descartava toda mensagem fromMe que não fosse comando interno.
@@ -2957,7 +3052,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
             `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
              VALUES ($1, $2, $3, 'lead', $4, false, NOW())
              RETURNING id`,
-            [cliente.id, telefone, body.senderName || null, chatLid]
+            [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
           );
           await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
@@ -3323,7 +3418,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
            (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado)
          VALUES ($1, $2, $3, 'followup', $4, $5, $5, $6, $7)
          RETURNING id`,
-        [cliente.id, telefone, body.senderName || null, chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
+        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
       );
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
       // Registra também a primeira mensagem do lead que criou o atendimento.
@@ -3339,7 +3434,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const campanhaPermiteQuest = !campanhaDetectada || campanhaDetectada.questionario_ativo !== false;
       const temTemplateQuest = campanhaDetectada && campanhaDetectada.questionario_template_id;
       const deveIniciarQuest = campanhaPermiteQuest && (temTemplateQuest || cliente.questionario_ativo);
-      const leadObj = { id: novoLead.rows[0].id, telefone, nome: body.senderName || null, chat_lid: chatLid, campanha_id: campanhaDetectada ? campanhaDetectada.id : null };
+      const leadObj = { id: novoLead.rows[0].id, telefone, nome: extrairNomeContatoPayloadZapi(body, cliente, telefone), chat_lid: chatLid, campanha_id: campanhaDetectada ? campanhaDetectada.id : null };
 
       // PASSO ZERO: Boas-Vindas ao Lead (saudação independente, invisível ao sistema).
       // Enviada antes de qualquer fluxo, se preenchida. Não afeta o follow-up.
@@ -3368,7 +3463,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
          VALUES ($1, $2, $3, 'lead', $4, true, NOW())
          RETURNING id`,
-        [cliente.id, telefone, body.senderName || null, chatLid]
+        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
       );
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
