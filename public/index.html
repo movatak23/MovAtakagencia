@@ -1378,7 +1378,6 @@ function usarMsgRapidaPainel(id, btnEl) {
 // Inicia o autoatendimento real do template vinculado à mensagem rápida.
 async function dispararAutoatendimentoPainel(m, btnEl) {
   if (!window._painelLeadId) return;
-  if (!confirm('Iniciar o autoatendimento "' + (m.titulo || '') + '" para este lead? Ele vai seguir o fluxo completo, esperando as respostas do lead nas perguntas.')) return;
   window._enviandoMsgRapida = true;
   const grid = document.getElementById('painel-msgs-rapidas-grid');
   const st = document.getElementById('painel-msg-status');
