@@ -2530,7 +2530,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
 
-    console.log(`[DIAG-Q] WEBHOOK RECEBIDO: fromMe=${!!body.fromMe} type=${body.type || '?'} phone=${phoneRaw} texto="${texto}"`);
 
     logDebug('[zapi][entrada]', JSON.stringify({
       fromMe: !!body.fromMe,
@@ -2801,7 +2800,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       [cliente.id, ..._varMsg]
     );
     const lead = rl.rows[0] || null;
-    console.log(`[DIAG-Q] ENTRADA lead recebida: telefone=${telefone} texto="${texto}" lead_encontrado=${!!lead} ${lead ? 'lead_id='+lead.id+' automacao_pausada='+lead.automacao_pausada : ''}`);
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
@@ -2856,7 +2854,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           ORDER BY id DESC LIMIT 1`,
         [cliente.id, lead.id]
       ).catch(() => ({ rows: [] }));
-      console.log(`[DIAG-Q] webhook lead=${lead.id} texto="${texto}" estado_em_andamento=${estQ.rows.length} ${estQ.rows.length ? 'passo_idx='+estQ.rows[0].passo_idx+' template_id='+estQ.rows[0].template_id : ''}`);
       if (estQ.rows.length) {
         await processarRespostaQuestionario(cliente, lead, estQ.rows[0], texto);
         return;
@@ -4290,9 +4287,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
     const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
     const idx = estado.passo_idx || 0;
     const passo = passos[idx];
-    console.log(`[DIAG-Q] processar resposta: template_estado=${estado.template_id} via_template=${!!porTemplate} total_passos=${passos.length} idx=${idx} passo_existe=${!!passo} passo_tipo=${passo ? passo.tipo : 'N/A'} aguardar=${passo ? passo.aguardar : 'N/A'}`);
     if (!passo) {
-      console.log('[DIAG-Q] passo inexistente no idx — concluindo. Isso indica passos errados ou idx fora do range.');
       await query(`UPDATE movatak_questionario_estado SET status='concluido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
       return;
     }
@@ -4306,7 +4301,6 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
     }
 
     const interp = interpretarResposta(passo, texto);
-    console.log(`[DIAG-Q] interpretarResposta texto="${texto}" tipo=${passo.tipo} resultado_ok=${interp.ok} indice=${interp.indice} valor=${interp.valor}`);
     if (!interp.ok) {
       const tentativas = (estado.tentativas_invalidas || 0) + 1;
       await query(
@@ -5305,6 +5299,9 @@ app.post('/movatak/admin/leads/:id/iniciar-autoatendimento', authMovatak, async 
       [req.params.id]
     );
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    // Despausa a automação deste lead: se estiver pausado, o webhook ignora as
+    // respostas dele e o autoatendimento trava na primeira pergunta que espera resposta.
+    await query('UPDATE movatak_leads SET automacao_pausada = false WHERE id = $1', [req.params.id]).catch(() => null);
     // Separa lead e cliente do JOIN (ambos têm colunas; reconsultamos pra ter objetos limpos)
     const leadRow = await query('SELECT * FROM movatak_leads WHERE id = $1', [req.params.id]);
     const lead = leadRow.rows[0];
