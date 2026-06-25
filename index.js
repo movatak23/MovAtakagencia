@@ -1387,6 +1387,37 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 });
 
 // Buscar mensagens de follow up de um cliente
+app.get('/movatak/admin/clientes/:id/ausencia', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT ausencia_msg_padrao, ausencia_horarios, ausencia_datas FROM movatak_clientes WHERE id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const row = r.rows[0];
+    res.json({
+      ausencia_msg_padrao: row.ausencia_msg_padrao || '',
+      ausencia_horarios: Array.isArray(row.ausencia_horarios) ? row.ausencia_horarios : [],
+      ausencia_datas: Array.isArray(row.ausencia_datas) ? row.ausencia_datas : []
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/clientes/:id/ausencia', authMovatak, async (req, res) => {
+  try {
+    const { ausencia_msg_padrao, ausencia_horarios, ausencia_datas } = req.body || {};
+    const horarios = Array.isArray(ausencia_horarios) ? ausencia_horarios : [];
+    const datas = Array.isArray(ausencia_datas) ? ausencia_datas : [];
+    await query(
+      `UPDATE movatak_clientes
+         SET ausencia_msg_padrao = $1, ausencia_horarios = $2::jsonb, ausencia_datas = $3::jsonb
+       WHERE id = $4`,
+      [ausencia_msg_padrao || null, JSON.stringify(horarios), JSON.stringify(datas), req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
   try {
     const r = await query(
@@ -2803,6 +2834,38 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
+    // ===== MENSAGEM DE AUSÊNCIA =====
+    // Se o lead está numa coluna do kanban com ausência ativada, e o momento atual
+    // cai num período de ausência configurado, manda o aviso — uma vez por período.
+    if (lead && lead.funil_coluna_id) {
+      try {
+        const av = avaliarAusencia(cliente);
+        if (av.ausente && av.mensagem) {
+          const col = await query(
+            'SELECT ausencia_ativa FROM movatak_funil_colunas WHERE id = $1',
+            [lead.funil_coluna_id]
+          ).catch(() => ({ rows: [] }));
+          if (col.rows.length && col.rows[0].ausencia_ativa) {
+            // Tenta registrar que avisou neste período; índice único garante "uma vez por período".
+            const reg = await query(
+              `INSERT INTO movatak_ausencia_enviada (lead_id, cliente_id, periodo_chave)
+               VALUES ($1, $2, $3)
+               ON CONFLICT (lead_id, periodo_chave) DO NOTHING
+               RETURNING id`,
+              [lead.id, cliente.id, av.periodoChave]
+            ).catch(() => ({ rows: [] }));
+            // Só envia se o INSERT criou a linha (ou seja, ainda não tinha avisado neste período).
+            if (reg.rows.length) {
+              const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, av.mensagem).catch(() => null);
+              await registrarConversa(lead.id, cliente.id, 'saida', av.mensagem, null, null, msgId).catch(() => null);
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[ausencia] erro ao processar:', e.message);
+      }
+    }
+
     // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
     // Retomar: vendedor usa o comando de followup ou convertido para reativar.
     if (lead && lead.automacao_pausada) {
@@ -3817,6 +3880,74 @@ function normalizarCep(cep) {
 }
 
 // Envia mensagem do questionário: com mídia (legenda junto) quando houver, senão texto.
+// Avalia se AGORA (fuso de Brasília/Recife, UTC-3) está dentro de um período de
+// ausência configurado pelo cliente. Retorna { ausente, mensagem, periodoChave } —
+// periodoChave identifica o período pra controlar o "uma vez por período".
+// Data específica (feriado) tem prioridade sobre o horário recorrente semanal.
+function avaliarAusencia(cliente) {
+  const vazio = { ausente: false, mensagem: null, periodoChave: null };
+  try {
+    // Hora local de Brasília a partir do horário do servidor (Railway roda em UTC).
+    const agora = new Date(Date.now() - 3 * 3600 * 1000);
+    const ano = agora.getUTCFullYear();
+    const mes = String(agora.getUTCMonth() + 1).padStart(2, '0');
+    const dia = String(agora.getUTCDate()).padStart(2, '0');
+    const dataHoje = `${ano}-${mes}-${dia}`;
+    const diaSemana = agora.getUTCDay(); // 0=domingo
+    const minutosAgora = agora.getUTCHours() * 60 + agora.getUTCMinutes();
+
+    const paraMin = (hhmm) => {
+      const [h, m] = String(hhmm || '').split(':').map(n => parseInt(n, 10));
+      if (isNaN(h)) return null;
+      return h * 60 + (m || 0);
+    };
+    // Cobre faixas que viram a meia-noite (ex: 18:00–08:00).
+    const dentroFaixa = (ini, fim) => {
+      if (ini === null || fim === null) return false;
+      if (ini <= fim) return minutosAgora >= ini && minutosAgora < fim;
+      return minutosAgora >= ini || minutosAgora < fim; // atravessa meia-noite
+    };
+
+    // 1) Datas específicas (feriados) — prioridade. Mensagem própria de cada data.
+    const datas = Array.isArray(cliente.ausencia_datas) ? cliente.ausencia_datas : [];
+    for (const d of datas) {
+      if (d && d.data === dataHoje) {
+        const ini = paraMin(d.inicio || '00:00');
+        const fim = paraMin(d.fim || '23:59');
+        if (dentroFaixa(ini, fim)) {
+          return {
+            ausente: true,
+            mensagem: d.msg || cliente.ausencia_msg_padrao || '',
+            periodoChave: `data:${d.data}:${d.inicio || '00:00'}-${d.fim || '23:59'}`
+          };
+        }
+      }
+    }
+
+    // 2) Horário recorrente semanal — mensagem padrão.
+    const horarios = Array.isArray(cliente.ausencia_horarios) ? cliente.ausencia_horarios : [];
+    for (const h of horarios) {
+      const dias = Array.isArray(h.dias) ? h.dias : [];
+      if (!dias.includes(diaSemana)) continue;
+      const ini = paraMin(h.inicio);
+      const fim = paraMin(h.fim);
+      if (dentroFaixa(ini, fim)) {
+        // Chave por dia+faixa: o período "reinicia" a cada dia, permitindo novo aviso.
+        return {
+          ausente: true,
+          mensagem: cliente.ausencia_msg_padrao || '',
+          periodoChave: `sem:${dataHoje}:${h.inicio}-${h.fim}`
+        };
+      }
+    }
+
+    return vazio;
+  } catch (e) {
+    console.error('[ausencia] erro ao avaliar:', e.message);
+    return vazio;
+  }
+}
+
 function tipoMidia(url, hint) {
   if (hint === 'audio' || hint === 'video' || hint === 'imagem' || hint === 'documento') return hint;
   const u = String(url || '');
@@ -5498,8 +5629,28 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
     ADD COLUMN IF NOT EXISTS comando TEXT,
     ADD COLUMN IF NOT EXISTS setor_id INTEGER,
+    ADD COLUMN IF NOT EXISTS ausencia_ativa BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
+
+  // Configuração de ausência do cliente:
+  //   ausencia_msg_padrao  → mensagem disparada nos horários recorrentes de ausência
+  //   ausencia_horarios    → JSONB: [{ dias:[0..6], inicio:"HH:MM", fim:"HH:MM" }]  (0=domingo)
+  //   ausencia_datas       → JSONB: [{ data:"YYYY-MM-DD", inicio:"HH:MM", fim:"HH:MM", msg:"..." }]
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS ausencia_msg_padrao TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS ausencia_horarios JSONB DEFAULT '[]'::jsonb`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS ausencia_datas JSONB DEFAULT '[]'::jsonb`).catch(() => null);
+
+  // Controle de "uma vez por período": registra qual período de ausência já foi
+  // avisado a cada lead, pra não repetir dentro do mesmo período.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_ausencia_enviada (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    cliente_id INTEGER NOT NULL,
+    periodo_chave TEXT NOT NULL,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_ausencia_lead_periodo ON movatak_ausencia_enviada(lead_id, periodo_chave)`).catch(() => null);
 
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_arquivar_ao_final BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_marcar_nao_lido BOOLEAN DEFAULT false`).catch(() => null);
@@ -5692,7 +5843,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       filtroColunaSetorSql = ' AND setor_id = $2';
     }
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
         ORDER BY ordem ASC, id ASC`,
@@ -5889,6 +6040,18 @@ app.patch('/movatak/admin/funil/colunas/:id/setor', authMovatak, async (req, res
     const r = await query(
       `UPDATE movatak_funil_colunas SET setor_id = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
       [setorId, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/funil/colunas/:id/ausencia', authMovatak, async (req, res) => {
+  try {
+    const ativa = !!(req.body && req.body.ausencia_ativa);
+    const r = await query(
+      `UPDATE movatak_funil_colunas SET ausencia_ativa = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
+      [ativa, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
