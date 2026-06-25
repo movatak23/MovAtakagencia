@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.5.7-reply-message-zapi-field-fix';
+const MOVATAK_VERSION = 'v2.5.8-whatsapp-full-tools';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -61,6 +61,11 @@ function emitirMensagemLead(clienteId, leadId, mensagem) {
 function emitirMensagemApagada(clienteId, leadId, conversaId) {
   if (!clienteId) return;
   io.to(`cliente-${clienteId}`).emit('mensagem:apagada', { leadId, conversaId });
+}
+
+function emitirStatusMensagem(clienteId, leadId, conversaId, status) {
+  if (!clienteId) return;
+  io.to(`cliente-${clienteId}`).emit('mensagem:status', { leadId, conversaId, status });
 }
 
 // Logs completos somente quando necessário. Em produção, deixe MOVATAK_DEBUG=false
@@ -321,6 +326,104 @@ async function zapiArquivar(instance, token, clientToken, telefone) {
 async function zapiMarcarNaoLido(instance, token, clientToken, telefone) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/mark-message-as-unread`;
   await axios.post(url, { phone: telefone }, { headers: { 'Client-Token': clientToken } });
+}
+
+
+function zapiHeaders(clientToken) {
+  return { 'Client-Token': clientToken };
+}
+
+function zapiUrl(instance, token, endpoint) {
+  return `${ZAPI_BASE}/${instance}/token/${token}/${String(endpoint || '').replace(/^\/+/, '')}`;
+}
+
+async function zapiPost(instance, token, clientToken, endpoint, payload = {}) {
+  const resp = await axios.post(zapiUrl(instance, token, endpoint), payload, { headers: zapiHeaders(clientToken) });
+  return resp.data || {};
+}
+
+async function zapiGet(instance, token, clientToken, endpoint, params = {}) {
+  const resp = await axios.get(zapiUrl(instance, token, endpoint), { headers: zapiHeaders(clientToken), params });
+  return resp.data || {};
+}
+
+async function zapiEnviarDocumento(instance, token, clientToken, telefone, documentUrl, fileName, caption, extension, replyMsgId = null) {
+  const ext = String(extension || (fileName || '').split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'pdf';
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-document/${ext}`;
+  const payload = { phone: telefone, document: documentUrl };
+  if (fileName) payload.fileName = fileName;
+  if (caption) payload.caption = caption;
+  return zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId);
+}
+
+async function zapiEnviarLocalizacao(instance, token, clientToken, telefone, title, address, latitude, longitude, replyMsgId = null) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-location`;
+  return zapiPostComPossivelResposta(url, { phone: telefone, title, address, latitude: String(latitude), longitude: String(longitude) }, clientToken, replyMsgId);
+}
+
+async function zapiEnviarLink(instance, token, clientToken, telefone, linkUrl, message, title, image, replyMsgId = null) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-link`;
+  const payload = { phone: telefone, linkUrl };
+  if (message) payload.message = message;
+  if (title) payload.title = title;
+  if (image) payload.image = image;
+  return zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId);
+}
+
+async function zapiEnviarContato(instance, token, clientToken, telefone, contactName, contactPhone, contactBusiness = false, replyMsgId = null) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-contact`;
+  return zapiPostComPossivelResposta(url, { phone: telefone, contactName, contactPhone, contactBusiness: !!contactBusiness }, clientToken, replyMsgId);
+}
+
+async function zapiReagirMensagem(instance, token, clientToken, telefone, messageId, reaction) {
+  return zapiPost(instance, token, clientToken, 'send-reaction', { phone: telefone, messageId, reaction });
+}
+
+async function zapiEncaminharMensagem(instance, token, clientToken, destino, messageId, messagePhone) {
+  return zapiPost(instance, token, clientToken, 'forward-message', { phone: destino, messageId, messagePhone });
+}
+
+async function zapiLerMensagem(instance, token, clientToken, telefone, messageId) {
+  return zapiPost(instance, token, clientToken, 'read-message', { phone: telefone, messageId });
+}
+
+async function zapiEditarTexto(instance, token, clientToken, telefone, messageId, novoTexto) {
+  return zapiPost(instance, token, clientToken, 'send-text', { phone: telefone, message: novoTexto, editMessageId: messageId });
+}
+
+async function zapiModificarChat(instance, token, clientToken, telefone, action) {
+  return zapiPost(instance, token, clientToken, 'modify-chat', { phone: telefone, action });
+}
+
+async function zapiListarChats(instance, token, clientToken) {
+  return zapiGet(instance, token, clientToken, 'chats');
+}
+
+const ZAPI_ADVANCED_ENDPOINTS = {
+  sticker: 'send-sticker',
+  gif: 'send-gif',
+  ptv: 'send-ptv',
+  catalog: 'send-catalog',
+  product: 'send-product',
+  poll: 'send-poll',
+  button_actions: 'send-button-actions',
+  button_list: 'send-button-list',
+  button_image: 'send-button-list-image',
+  button_video: 'send-button-list-video',
+  option_list: 'send-option-list',
+  otp: 'send-button-otp',
+  pix: 'send-button-pix',
+  carousel: 'send-carousel',
+  order: 'send-order',
+  order_status: 'send-order-status-update',
+  order_payment: 'send-order-payment-update',
+  pin_message: 'pin-message'
+};
+
+function limparPayloadAvancado(payload) {
+  const out = { ...(payload || {}) };
+  delete out.phone; delete out.telefone; delete out.endpoint; delete out.recurso; delete out.tipo;
+  return out;
 }
 
 const MOVATAK_ADMIN_WA = '558176041948';
@@ -3650,7 +3753,7 @@ app.get('/movatak/vendedor/leads/:id/conversas', authVendedor, async (req, res) 
       `SELECT * FROM (
          SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
                 reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
-                reply_to_midia_url, reply_to_midia_tipo, criado_em, 'banco' AS fonte
+                reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
            FROM movatak_conversas WHERE lead_id = $1
            ORDER BY criado_em DESC LIMIT 500
        ) sub ORDER BY criado_em ASC`,
@@ -3946,7 +4049,9 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
     // e em leads com +500 mensagens as recém-enviadas caíam fora do limite e sumiam da tela.
     const r = await query(
       `SELECT * FROM (
-         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em, 'banco' AS fonte
+         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
+                reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
+                reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
            FROM movatak_conversas WHERE lead_id = $1
            ORDER BY criado_em DESC LIMIT 500
        ) sub ORDER BY criado_em ASC`,
@@ -3994,6 +4099,207 @@ app.delete('/movatak/admin/conversas/:id', authMovatak, async (req, res) => {
     emitirMensagemApagada(msg.cliente_id, msg.lead_id, Number(req.params.id));
     res.json({ ok: true, apagadaNoZap, avisoZap });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ============================================================
+// Z-API — recursos avançados de WhatsApp no CRM
+// ============================================================
+async function obterLeadComZapi(leadId) {
+  const r = await query(
+    `SELECT l.id, l.nome, l.telefone, l.cliente_id,
+            c.zapi_instance, c.zapi_token, c.zapi_client_token
+       FROM movatak_leads l
+       JOIN movatak_clientes c ON c.id = l.cliente_id
+      WHERE l.id = $1`,
+    [leadId]
+  );
+  return r.rows[0] || null;
+}
+
+async function obterMensagemComZapi(conversaId) {
+  const r = await query(
+    `SELECT cv.*, l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
+       FROM movatak_conversas cv
+       JOIN movatak_leads l ON l.id = cv.lead_id
+       JOIN movatak_clientes c ON c.id = cv.cliente_id
+      WHERE cv.id = $1`,
+    [conversaId]
+  );
+  return r.rows[0] || null;
+}
+
+app.post('/movatak/admin/conversas/:id/reagir', authMovatak, async (req, res) => {
+  try {
+    const { reaction } = req.body || {};
+    if (!reaction) return res.status(400).json({ error: 'Informe o emoji da reação.' });
+    const msg = await obterMensagemComZapi(req.params.id);
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
+    const data = await zapiReagirMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id, reaction);
+    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_reacao', 'Reação enviada pelo CRM', { conversa_id: msg.id, reaction });
+    res.json({ ok: true, data });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/admin/conversas/:id/encaminhar', authMovatak, async (req, res) => {
+  try {
+    const { destino } = req.body || {};
+    if (!destino) return res.status(400).json({ error: 'Informe o destino.' });
+    const msg = await obterMensagemComZapi(req.params.id);
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
+    const data = await zapiEncaminharMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, String(destino).replace(/\D/g, ''), msg.msg_id, msg.telefone);
+    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_encaminhamento', 'Mensagem encaminhada pelo CRM', { conversa_id: msg.id, destino });
+    res.json({ ok: true, data });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/admin/conversas/:id/marcar-lida-zap', authMovatak, async (req, res) => {
+  try {
+    const msg = await obterMensagemComZapi(req.params.id);
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
+    const data = await zapiLerMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id);
+    await query(`UPDATE movatak_conversas SET msg_status='read', msg_status_em=NOW() WHERE id=$1`, [msg.id]).catch(() => null);
+    res.json({ ok: true, data });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/admin/conversas/:id/editar', authMovatak, async (req, res) => {
+  try {
+    const { texto } = req.body || {};
+    if (!String(texto || '').trim()) return res.status(400).json({ error: 'Informe o novo texto.' });
+    const msg = await obterMensagemComZapi(req.params.id);
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    if (msg.direcao !== 'saida') return res.status(400).json({ error: 'Só é possível editar mensagens enviadas pelo CRM/WhatsApp.' });
+    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
+    const data = await zapiEditarTexto(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id, texto);
+    await query(`UPDATE movatak_conversas SET conteudo=$1 WHERE id=$2`, [texto, msg.id]);
+    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_edicao', 'Mensagem editada pelo CRM', { conversa_id: msg.id });
+    emitirMensagemLead(msg.cliente_id, msg.lead_id, { ...msg, conteudo: texto, editada: true });
+    res.json({ ok: true, data });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/admin/leads/:id/zapi/chat-action', authMovatak, async (req, res) => {
+  try {
+    const { action } = req.body || {};
+    const allowed = ['read','unread','pin','unpin','mute','unmute','archive','unarchive'];
+    if (!allowed.includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
+    const lead = await obterLeadComZapi(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
+    let data;
+    if (action === 'archive' || action === 'unarchive') {
+      const url = `${ZAPI_BASE}/${lead.zapi_instance}/token/${lead.zapi_token}/archive-chat`;
+      const resp = await axios.post(url, { phone: lead.telefone, archive: action === 'archive' }, { headers: zapiHeaders(lead.zapi_client_token) });
+      data = resp.data || {};
+      await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
+    } else {
+      data = await zapiModificarChat(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, action);
+      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
+      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
+    }
+    await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação aplicada no chat do WhatsApp', { action });
+    res.json({ ok: true, data });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/admin/leads/:id/zapi/send-advanced', authMovatak, async (req, res) => {
+  try {
+    const { recurso, payload, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
+    const lead = await obterLeadComZapi(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const replyResolvido = await resolverReplyInfoLead(lead.id, reply_to_conversa_id, reply_to_msg_id, null);
+    const replyMsgIdZap = replyResolvido.msgId || null;
+    const p = payload || {};
+    let msgId = null;
+    let conteudo = '';
+    let midiaUrl = null;
+    let midiaTipo = null;
+
+    if (recurso === 'document') {
+      msgId = await zapiEnviarDocumento(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.document || p.url, p.fileName || p.nome, p.caption || '', p.extension || p.ext, replyMsgIdZap);
+      conteudo = p.caption || p.fileName || 'Documento enviado'; midiaUrl = p.document || p.url; midiaTipo = 'documento';
+    } else if (recurso === 'location') {
+      msgId = await zapiEnviarLocalizacao(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.title, p.address, p.latitude, p.longitude, replyMsgIdZap);
+      conteudo = `Localização: ${p.title || ''}`.trim(); midiaTipo = 'localizacao';
+    } else if (recurso === 'link') {
+      msgId = await zapiEnviarLink(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.linkUrl || p.url, p.message || p.texto || '', p.title || '', p.image || '', replyMsgIdZap);
+      conteudo = p.message || p.texto || p.linkUrl || p.url || 'Link enviado'; midiaUrl = p.linkUrl || p.url || null; midiaTipo = 'link';
+    } else if (recurso === 'contact') {
+      msgId = await zapiEnviarContato(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.contactName || p.nome, p.contactPhone || p.telefone, !!p.contactBusiness, replyMsgIdZap);
+      conteudo = `Contato: ${p.contactName || p.nome || ''}`.trim(); midiaTipo = 'contato';
+    } else {
+      const endpoint = ZAPI_ADVANCED_ENDPOINTS[recurso];
+      if (!endpoint) return res.status(400).json({ error: 'Recurso não liberado ou não reconhecido.' });
+      const clean = limparPayloadAvancado(p);
+      clean.phone = lead.telefone;
+      if (replyMsgIdZap) clean.messageId = replyMsgIdZap;
+      const data = await zapiPost(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, endpoint, clean);
+      msgId = data.messageId || data.id || data.zaapId || null;
+      conteudo = p.message || p.text || p.caption || p.title || ('Recurso enviado: ' + recurso);
+      midiaUrl = p.image || p.video || p.gif || p.sticker || null;
+      midiaTipo = recurso;
+    }
+    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midiaUrl || null, midiaTipo || recurso, msgId, replyResolvido.info).catch(() => null);
+    await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_recurso_avancado', 'Recurso avançado enviado pelo CRM', { recurso, conversaId });
+    res.json({ ok: true, conversaId, messageId: msgId, criado_em: new Date().toISOString() });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || JSON.stringify(e.response?.data || {}) || e.message }); }
+});
+
+app.get('/movatak/admin/clientes/:id/zapi/chats', authMovatak, async (req, res) => {
+  try {
+    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const cli = c.rows[0];
+    const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
+    res.json(data);
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/zapi/sincronizar-chats', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaQuestionario();
+    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const cli = c.rows[0];
+    const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
+    const chats = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : []);
+    let criados = 0, atualizados = 0, ignorados = 0;
+    for (const ch of chats) {
+      const phone = String(ch.phone || ch.id || '').replace(/\D/g, '');
+      if (!phone || ch.isGroup) { ignorados++; continue; }
+      const existe = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [cli.id, phone]).catch(() => ({ rows: [] }));
+      if (existe.rows.length) {
+        await query(`UPDATE movatak_leads SET nome=COALESCE(NULLIF($1,''),nome), nao_lida=COALESCE($2,nao_lida), atualizado_em=NOW() WHERE id=$3`, [ch.name || null, !!ch.unread, existe.rows[0].id]).catch(() => null);
+        atualizados++;
+      } else {
+        await query(`INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, nao_lida, criado_em, atualizado_em)
+                    VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,NOW(),NOW())`, [cli.id, ch.name || phone, phone, !!ch.unread]).catch(() => null);
+        criados++;
+      }
+    }
+    res.json({ ok: true, total: chats.length, criados, atualizados, ignorados });
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+// Webhook opcional da Z-API para status de mensagem: enviado/entregue/lido/falha.
+// Configure no painel Z-API apontando para /movatak/webhook/zapi-status.
+app.post('/movatak/webhook/zapi-status', async (req, res) => {
+  try {
+    await garantirEstruturaConversas();
+    const body = req.body || {};
+    const messageId = body.messageId || body.id || body.messageID || body.msgId || body.message_id;
+    const status = body.status || body.messageStatus || body.type || body.ack || body.event || null;
+    if (!messageId) return res.json({ ok: true, ignored: true });
+    const r = await query(`UPDATE movatak_conversas
+                             SET msg_status=$1, msg_status_em=NOW(), zapi_status_payload=$2::jsonb
+                           WHERE msg_id=$3
+                           RETURNING id, lead_id, cliente_id`, [String(status || ''), JSON.stringify(body), messageId]);
+    if (r.rows.length) emitirStatusMensagem(r.rows[0].cliente_id, r.rows[0].lead_id, r.rows[0].id, status);
+    res.json({ ok: true, atualizadas: r.rows.length });
+  } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/movatak/admin/leads/:id/historico', authMovatak, async (req, res) => {
@@ -5712,6 +6018,9 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_midia_url TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_midia_tipo TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status_em TIMESTAMPTZ`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS zapi_status_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
   // Garante que a mesma mensagem do WhatsApp (mesmo lead + mesmo messageId) nunca
   // seja gravada duas vezes — fecha a corrida entre o envio pelo painel e o webhook fromMe.
