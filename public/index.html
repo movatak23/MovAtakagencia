@@ -496,7 +496,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.5.10-msgs-rapidas-admin-edit';
+const PAINEL_VERSION = 'v2.6.1-kanban-lead-selecionado';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -1764,6 +1764,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   if (vazio) vazio.style.display = 'none';
   if (conteudo) conteudo.style.display = 'flex';
   marcarItemInboxAtivo(leadId);
+  destacarLeadKanban(leadId, true);
   painelTab('conversa');
 
   // Conversa + Histórico em paralelo
@@ -1819,6 +1820,7 @@ function fecharPainelLead() {
   if (conteudo) conteudo.style.display = 'none';
   window._painelLeadId = null;
   marcarItemInboxAtivo(null);
+  limparDestaqueLeadKanban();
 }
 
 async function arquivarLeadAtual() {
@@ -5260,6 +5262,32 @@ async function excluirSetor(setorId, nome) {
   }
 }
 
+
+function destacarLeadKanban(leadId, rolar = true) {
+  if (!leadId) return;
+  const id = String(leadId);
+  document.querySelectorAll('.funil-page .funil-card.funil-card-selecionado').forEach(card => {
+    card.classList.remove('funil-card-selecionado');
+    card.removeAttribute('data-card-selecionado');
+  });
+  const cards = Array.from(document.querySelectorAll('.funil-page .funil-card[data-lead-id]'))
+    .filter(card => String(card.dataset.leadId) === id);
+  cards.forEach(card => {
+    card.classList.add('funil-card-selecionado');
+    card.setAttribute('data-card-selecionado', 'true');
+  });
+  if (rolar && cards[0]) {
+    cards[0].scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }
+}
+
+function limparDestaqueLeadKanban() {
+  document.querySelectorAll('.funil-page .funil-card.funil-card-selecionado').forEach(card => {
+    card.classList.remove('funil-card-selecionado');
+    card.removeAttribute('data-card-selecionado');
+  });
+}
+
 function renderFunilAtendimento() {
   const board = document.getElementById('funil-board');
   if (!board) return;
@@ -5355,6 +5383,7 @@ function renderFunilAtendimento() {
   board.scrollLeft = _scrollPreservadoBoard.left;
   board.scrollTop = _scrollPreservadoBoard.top;
   enableDragScroll(board);
+  if (window._painelLeadId) destacarLeadKanban(window._painelLeadId, false);
   const sec = document.getElementById('funil-vendedores-section');
   if (sec) sec.style.display = 'none';
 }
@@ -5394,7 +5423,8 @@ function renderFunilCardVendedor(lead, vendedorAtualId) {
   const opts = (funilState.colunasVendedores || []).map(c =>
     `<option value="${c.vendedor_id}" ${Number(c.vendedor_id) === Number(vendedorAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`
   ).join('');
-  return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}"
+  const selecionado = String(window._painelLeadId || '') === String(lead.id);
+  return `<div class="funil-card${selecionado ? ' funil-card-selecionado' : ''}" draggable="true" data-lead-id="${lead.id}"
     ondragstart="funilDragStart(event,${lead.id})" ondragend="funilDragEnd(event)">
     <div class="funil-card-top"><strong>${escapeHtml(nome)}</strong></div>
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
@@ -5508,7 +5538,8 @@ function renderFunilCard(lead, colunaAtualId) {
     ? `<div class="funil-card-preview">${escapeHtml((prefixoVoce + String(lead.ultima_msg)).slice(0, 60))}</div>`
     : '';
   const dotNaoLida = lead.nao_lida ? '<span class="funil-card-dot" title="Não lida"></span>' : '';
-  return `<div class="funil-card" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
+  const selecionado = String(window._painelLeadId || '') === String(lead.id);
+  return `<div class="funil-card${selecionado ? ' funil-card-selecionado' : ''}" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
             ondragstart="funilDragStart(event, ${lead.id})" ondragend="funilDragEnd(event)"
             onclick="abrirPainelLead(${lead.id}, '${nomeSeguro}')">
     <div class="funil-card-top">
@@ -6234,6 +6265,8 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-page .funil-cards{display:flex;flex-direction:column;gap:8px}
 .funil-page .funil-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;cursor:pointer;position:relative}
 .funil-page .funil-card:hover{border-color:var(--accent)}
+.funil-page .funil-card.funil-card-selecionado{border-color:var(--amber)!important;background:linear-gradient(135deg, rgba(245,166,35,.18), rgba(91,127,255,.12)), var(--bg2);box-shadow:0 0 0 1px rgba(245,166,35,.45),0 0 22px rgba(245,166,35,.22);transform:translateY(-1px)}
+.funil-page .funil-card.funil-card-selecionado::before{content:'Selecionado';position:absolute;top:8px;right:8px;font-size:9px;letter-spacing:.3px;text-transform:uppercase;color:var(--amber);background:rgba(245,166,35,.12);border:1px solid rgba(245,166,35,.45);border-radius:999px;padding:2px 6px;pointer-events:none}
 .funil-page .funil-card-top{display:flex;justify-content:flex-start;gap:6px;align-items:center;margin-bottom:3px;flex-wrap:wrap}
 .funil-page .funil-card-top strong{font-size:13px}
 .funil-card-avatar{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
