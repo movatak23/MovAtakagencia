@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.5.5-whatsapp-inbox-sync-unread-fix';
+const MOVATAK_VERSION = 'v2.5.7-reply-message-zapi-field-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -242,37 +242,52 @@ function extrairIdMensagemZapi(resp) {
   return d.messageId || d.id || d.zaapId || null;
 }
 
-async function zapiEnviar(instance, token, clientToken, telefone, mensagem) {
+function montarPayloadRespostaZapi(payload, replyMsgId) {
+  if (!replyMsgId) return payload;
+
+  // Z-API documenta oficialmente o vínculo de resposta pelo campo `messageId`.
+  // Não enviar aliases extras aqui, porque alguns endpoints podem rejeitar
+  // propriedades desconhecidas e cair no fallback sem responder nativamente.
+  return {
+    ...payload,
+    messageId: String(replyMsgId)
+  };
+}
+async function zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId) {
+  const headers = { 'Client-Token': clientToken };
+  if (!replyMsgId) {
+    const resp = await axios.post(url, payload, { headers });
+    return extrairIdMensagemZapi(resp);
+  }
+  try {
+    const resp = await axios.post(url, montarPayloadRespostaZapi(payload, replyMsgId), { headers });
+    return extrairIdMensagemZapi(resp);
+  } catch (e) {
+    console.warn('[zapi][reply] envio com referência falhou; reenviando sem vínculo. status:', e.response?.status, 'body:', JSON.stringify(e.response?.data || {}));
+    const resp = await axios.post(url, payload, { headers });
+    return extrairIdMensagemZapi(resp);
+  }
+}
+
+async function zapiEnviar(instance, token, clientToken, telefone, mensagem, replyMsgId = null) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
-  const resp = await axios.post(url, { phone: telefone, message: mensagem }, {
-    headers: { 'Client-Token': clientToken }
-  });
-  return extrairIdMensagemZapi(resp);
+  return zapiPostComPossivelResposta(url, { phone: telefone, message: mensagem }, clientToken, replyMsgId);
 }
 
-async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption) {
+async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption, replyMsgId = null) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-image`;
-  const resp = await axios.post(url, { phone: telefone, image: imageUrl, caption: caption || '' }, {
-    headers: { 'Client-Token': clientToken }
-  });
-  return extrairIdMensagemZapi(resp);
+  return zapiPostComPossivelResposta(url, { phone: telefone, image: imageUrl, caption: caption || '' }, clientToken, replyMsgId);
 }
 
-async function zapiEnviarVideo(instance, token, clientToken, telefone, videoUrl, caption) {
+async function zapiEnviarVideo(instance, token, clientToken, telefone, videoUrl, caption, replyMsgId = null) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-video`;
-  const resp = await axios.post(url, { phone: telefone, video: videoUrl, caption: caption || '' }, {
-    headers: { 'Client-Token': clientToken }
-  });
-  return extrairIdMensagemZapi(resp);
+  return zapiPostComPossivelResposta(url, { phone: telefone, video: videoUrl, caption: caption || '' }, clientToken, replyMsgId);
 }
 
-async function zapiEnviarAudio(instance, token, clientToken, telefone, audioUrl) {
+async function zapiEnviarAudio(instance, token, clientToken, telefone, audioUrl, replyMsgId = null) {
   // Mensagem de voz (PTT) no WhatsApp não tem legenda — só o áudio.
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-audio`;
-  const resp = await axios.post(url, { phone: telefone, audio: audioUrl }, {
-    headers: { 'Client-Token': clientToken }
-  });
-  return extrairIdMensagemZapi(resp);
+  return zapiPostComPossivelResposta(url, { phone: telefone, audio: audioUrl }, clientToken, replyMsgId);
 }
 
 // Apaga a mensagem no WhatsApp do lead (delete for everyone). Convenção do Z-API
@@ -2532,6 +2547,156 @@ function extrairMidiaPayloadZapi(body) {
   return fallback ? { url: fallback, tipo: null } : { url: null, tipo: null };
 }
 
+
+function primeiroValor(...vals) {
+  for (const v of vals) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
+  }
+  return null;
+}
+
+function textoDePossivelMensagem(obj) {
+  if (!obj || typeof obj !== 'object') return '';
+  return primeiroValor(
+    obj.text && obj.text.message,
+    typeof obj.text === 'string' ? obj.text : null,
+    obj.message,
+    obj.caption,
+    obj.body,
+    obj.conversation,
+    obj.extendedTextMessage && obj.extendedTextMessage.text,
+    obj.image && obj.image.caption,
+    obj.video && obj.video.caption,
+    obj.document && (obj.document.caption || obj.document.title || obj.document.fileName),
+    obj.audio && 'Áudio',
+    obj.image && 'Imagem',
+    obj.video && 'Vídeo',
+    obj.document && 'Documento'
+  ) || '';
+}
+
+function tipoMidiaDePossivelMensagem(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  if (obj.image) return 'imagem';
+  if (obj.video) return 'video';
+  if (obj.audio) return 'audio';
+  if (obj.document) return 'documento';
+  if (obj.midia_tipo) return obj.midia_tipo;
+  if (obj.type && ['image','imagem'].includes(String(obj.type).toLowerCase())) return 'imagem';
+  if (obj.type && ['audio','ptt'].includes(String(obj.type).toLowerCase())) return 'audio';
+  if (obj.type && ['video'].includes(String(obj.type).toLowerCase())) return 'video';
+  if (obj.type && ['document','documento','file'].includes(String(obj.type).toLowerCase())) return 'documento';
+  return null;
+}
+
+function urlMidiaDePossivelMensagem(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  return primeiroValor(
+    obj.midia_url,
+    obj.image && (obj.image.imageUrl || obj.image.url),
+    obj.video && (obj.video.videoUrl || obj.video.url),
+    obj.audio && (obj.audio.audioUrl || obj.audio.url),
+    obj.document && (obj.document.documentUrl || obj.document.url),
+    obj.fileUrl,
+    obj.mediaUrl
+  );
+}
+
+function extrairReplyPayloadZapi(body) {
+  const candidatos = [
+    body.quotedMessage,
+    body.quotedMsg,
+    body.quoted,
+    body.replyTo,
+    body.reply,
+    body.referenceMessage,
+    body.referencedMessage,
+    body.contextInfo,
+    body.message && body.message.contextInfo,
+    body.text && body.text.contextInfo,
+    body.image && body.image.contextInfo,
+    body.video && body.video.contextInfo,
+    body.audio && body.audio.contextInfo,
+    body.document && body.document.contextInfo,
+    body.extendedTextMessage && body.extendedTextMessage.contextInfo
+  ].filter(Boolean);
+
+  let ref = candidatos.find(c => typeof c === 'object') || {};
+  const quotedMessage = ref.quotedMessage || ref.message || ref.quoted || ref;
+  const msgId = primeiroValor(
+    body.quotedMessageId,
+    body.quotedMsgId,
+    body.replyMessageId,
+    body.referenceMessageId,
+    ref.quotedMessageId,
+    ref.quotedMsgId,
+    ref.messageId,
+    ref.id,
+    ref.stanzaId,
+    ref.key && ref.key.id,
+    quotedMessage && quotedMessage.messageId,
+    quotedMessage && quotedMessage.id
+  );
+
+  if (!msgId && !textoDePossivelMensagem(quotedMessage) && !urlMidiaDePossivelMensagem(quotedMessage)) return null;
+  return {
+    reply_to_msg_id: msgId ? String(msgId) : null,
+    reply_to_conteudo: textoDePossivelMensagem(quotedMessage) || null,
+    reply_to_midia_url: urlMidiaDePossivelMensagem(quotedMessage) || null,
+    reply_to_midia_tipo: tipoMidiaDePossivelMensagem(quotedMessage) || null,
+    reply_payload: { raw_keys: Object.keys(ref || {}).slice(0, 25), quoted: quotedMessage || null }
+  };
+}
+
+async function resolverReplyInfoLead(leadId, replyToConversaId, replyToMsgId, payloadInfo = null) {
+  await garantirEstruturaConversas();
+  let r = { rows: [] };
+  if (replyToConversaId) {
+    r = await query(
+      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id
+         FROM movatak_conversas WHERE id = $1 AND lead_id = $2 LIMIT 1`,
+      [replyToConversaId, leadId]
+    ).catch(() => ({ rows: [] }));
+  }
+  if (!r.rows.length && replyToMsgId) {
+    r = await query(
+      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id
+         FROM movatak_conversas WHERE lead_id = $1 AND msg_id = $2 LIMIT 1`,
+      [leadId, replyToMsgId]
+    ).catch(() => ({ rows: [] }));
+  }
+  if (r.rows.length) {
+    const m = r.rows[0];
+    return {
+      msgId: m.msg_id || replyToMsgId || null,
+      info: {
+        reply_to_conversa_id: m.id,
+        reply_to_msg_id: m.msg_id || replyToMsgId || null,
+        reply_to_direcao: m.direcao || null,
+        reply_to_conteudo: m.conteudo || null,
+        reply_to_midia_url: m.midia_url || null,
+        reply_to_midia_tipo: m.midia_tipo || null,
+        reply_payload: payloadInfo && payloadInfo.reply_payload ? payloadInfo.reply_payload : null
+      }
+    };
+  }
+  if (payloadInfo) {
+    return {
+      msgId: payloadInfo.reply_to_msg_id || replyToMsgId || null,
+      info: {
+        reply_to_conversa_id: null,
+        reply_to_msg_id: payloadInfo.reply_to_msg_id || replyToMsgId || null,
+        reply_to_direcao: null,
+        reply_to_conteudo: payloadInfo.reply_to_conteudo || null,
+        reply_to_midia_url: payloadInfo.reply_to_midia_url || null,
+        reply_to_midia_tipo: payloadInfo.reply_to_midia_tipo || null,
+        reply_payload: payloadInfo.reply_payload || null
+      }
+    };
+  }
+  return { msgId: replyToMsgId || null, info: null };
+}
+
 async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFallbackRecente = false) {
   let rl = null;
 
@@ -2594,6 +2759,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const telefone   = extrairTelefonePayload(body);
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
+    const replyPayload = extrairReplyPayloadZapi(body);
 
 
     logDebug('[zapi][entrada]', JSON.stringify({
@@ -2690,7 +2856,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
              RETURNING id`,
             [cliente.id, telefone, body.senderName || null, chatLid]
           );
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null).catch(() => null);
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
         return;
@@ -2722,7 +2888,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
           jaRegistrada = dup.rows.length > 0;
         }
         if (!jaRegistrada) {
-          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe).catch(() => null);
+          const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
+          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info).catch(() => null);
         } else {
           logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
         }
@@ -2885,7 +3052,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
     if (lead && (texto || midiaRecebida.url)) {
       const msgIdEntrada = body.messageId || body.id || null;
-      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada).catch(() => null);
+      const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
+      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
     }
 
     // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.
@@ -3059,7 +3227,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
       const msgIdNovoLead = body.messageId || body.id || null;
-      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead).catch(() => null);
+      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload).catch(() => null);
 
       // Decide se inicia o questionário:
       // - Campanha com template de questionário vinculado → usa o questionário do template.
@@ -3101,7 +3269,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       );
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
-      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato).catch(() => null);
+      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload).catch(() => null);
       await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
       console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
     }
@@ -3480,7 +3648,9 @@ app.get('/movatak/vendedor/leads/:id/conversas', authVendedor, async (req, res) 
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const r = await query(
       `SELECT * FROM (
-         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id, criado_em, 'banco' AS fonte
+         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
+                reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
+                reply_to_midia_url, reply_to_midia_tipo, criado_em, 'banco' AS fonte
            FROM movatak_conversas WHERE lead_id = $1
            ORDER BY criado_em DESC LIMIT 500
        ) sub ORDER BY criado_em ASC`,
@@ -3495,7 +3665,7 @@ app.post('/movatak/vendedor/leads/:id/mensagem', authVendedor, async (req, res) 
   try {
     const lead = await vendedorPodeLead(req, req.params.id);
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const { texto, midia_url, midia_tipo } = req.body || {};
+    const { texto, midia_url, midia_tipo, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
     if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
     const cli = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
     const c = cli.rows[0] || {};
@@ -5535,13 +5705,41 @@ async function garantirEstruturaConversas() {
   )`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_tipo TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_id TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_conversa_id INTEGER`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_msg_id TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_direcao TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_conteudo TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_midia_url TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_midia_tipo TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
   // Garante que a mesma mensagem do WhatsApp (mesmo lead + mesmo messageId) nunca
   // seja gravada duas vezes — fecha a corrida entre o envio pelo painel e o webhook fromMe.
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_conversas_lead_msgid ON movatak_conversas(lead_id, msg_id) WHERE msg_id IS NOT NULL`).catch(() => null);
 }
 
-async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId) {
+function normalizarReplyInfoConversa(replyInfo) {
+  if (!replyInfo) return {
+    reply_to_conversa_id: null,
+    reply_to_msg_id: null,
+    reply_to_direcao: null,
+    reply_to_conteudo: null,
+    reply_to_midia_url: null,
+    reply_to_midia_tipo: null,
+    reply_payload: null
+  };
+  return {
+    reply_to_conversa_id: replyInfo.reply_to_conversa_id || replyInfo.conversa_id || null,
+    reply_to_msg_id: replyInfo.reply_to_msg_id || replyInfo.msg_id || null,
+    reply_to_direcao: replyInfo.reply_to_direcao || replyInfo.direcao || null,
+    reply_to_conteudo: replyInfo.reply_to_conteudo || replyInfo.conteudo || null,
+    reply_to_midia_url: replyInfo.reply_to_midia_url || replyInfo.midia_url || null,
+    reply_to_midia_tipo: replyInfo.reply_to_midia_tipo || replyInfo.midia_tipo || null,
+    reply_payload: replyInfo.reply_payload || null
+  };
+}
+
+async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId, replyInfo = null) {
   if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
   // Evita duplicar a mesma mensagem do WhatsApp: se já existe uma conversa com esse
@@ -5553,10 +5751,18 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
     ).catch(() => ({ rows: [] }));
     if (existe.rows.length) return null; // já registrada — não duplica nem reemite socket
   }
+  const reply = normalizarReplyInfoConversa(replyInfo);
   const ins = await query(
-    `INSERT INTO movatak_conversas (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-    [leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null]
+    `INSERT INTO movatak_conversas
+       (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id,
+        reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
+        reply_to_midia_url, reply_to_midia_tipo, reply_payload)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`,
+    [
+      leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null,
+      reply.reply_to_conversa_id, reply.reply_to_msg_id, reply.reply_to_direcao, reply.reply_to_conteudo,
+      reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {})
+    ]
   ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
   if (!ins || !ins.rows.length) return null;
   const novoId = ins.rows[0].id;
@@ -5580,6 +5786,12 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
     midia_url: midiaUrl || null,
     midia_tipo: midiaTipo || null,
     msg_id: msgId || null,
+    reply_to_conversa_id: reply.reply_to_conversa_id,
+    reply_to_msg_id: reply.reply_to_msg_id,
+    reply_to_direcao: reply.reply_to_direcao,
+    reply_to_conteudo: reply.reply_to_conteudo,
+    reply_to_midia_url: reply.reply_to_midia_url,
+    reply_to_midia_tipo: reply.reply_to_midia_tipo,
     criado_em: new Date().toISOString()
   });
   return novoId;
@@ -5701,26 +5913,28 @@ app.post('/movatak/admin/leads/:id/iniciar-autoatendimento', authMovatak, async 
 
 app.post('/movatak/admin/leads/:id/mensagem-rapida', authMovatak, async (req, res) => {
   try {
-    const { texto, midia_url, midia_tipo } = req.body || {};
+    const { texto, midia_url, midia_tipo, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
     if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
     const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     const row = rl.rows[0];
     let tipoFinal = null;
     let msgId = null;
+    const replyResolvido = await resolverReplyInfoLead(row.id, reply_to_conversa_id, reply_to_msg_id, null);
+    const replyMsgIdZap = replyResolvido.msgId || null;
     if (midia_url) {
       tipoFinal = tipoMidia(midia_url, midia_tipo);
       if (tipoFinal === 'video') {
-        msgId = await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+        msgId = await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '', replyMsgIdZap);
       } else if (tipoFinal === 'audio') {
-        msgId = await zapiEnviarAudio(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url);
+        msgId = await zapiEnviarAudio(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, replyMsgIdZap);
       } else {
-        msgId = await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
+        msgId = await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '', replyMsgIdZap);
       }
     } else {
-      msgId = await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
+      msgId = await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto, replyMsgIdZap);
     }
-    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId).catch(() => null);
+    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
     if (texto) {
