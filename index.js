@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-vendedor-definitivo';
+const MOVATAK_VERSION = 'v2.7.3-grupos-inbox';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2990,8 +2990,46 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       keys: Object.keys(body).slice(0, 30)
     }));
 
-    if (body.isGroup || body.isNewsletter) {
-      logDebug('[zapi][ignorado] grupo ou newsletter');
+    if (body.isNewsletter) {
+      logDebug('[zapi][ignorado] newsletter');
+      return;
+    }
+
+    // ===== GRUPOS (entram na inbox como um contato, espelhando o WhatsApp) =====
+    // Em vez de descartar, registramos a conversa do grupo usando o id do grupo
+    // (@g.us) como "telefone"/chave. Fluxo isolado e curto: NÃO dispara gatilho,
+    // follow-up, questionário nem comando — só garante que a conversa apareça na
+    // inbox. Não cria coluna nova nem altera a query do funil (que quebrou antes).
+    if (body.isGroup) {
+      try {
+        if (!instanceId) return;
+        const rcg = await query('SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
+        if (!rcg.rows.length) return;
+        const clienteG = rcg.rows[0];
+        const grupoChave = String(body.phone || body.chatId || body.remoteJid || '').trim();
+        if (!grupoChave) return;
+        const nomeGrupo = body.chatName || body.notifyName || ('Grupo ' + grupoChave.slice(0, 10));
+        const ehSaidaG = !!body.fromMe;
+        // Localiza pela "chave" do grupo, guardada no campo telefone do lead.
+        let lg = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [clienteG.id, grupoChave]);
+        let lgId;
+        if (lg.rows.length) {
+          lgId = lg.rows[0].id;
+          await query('UPDATE movatak_leads SET atualizado_em=NOW(), nao_lida=$2 WHERE id=$1', [lgId, ehSaidaG ? false : true]).catch(() => null);
+        } else {
+          const nv = await query(
+            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+             VALUES ($1, $2, $3, 'lead', $4, $5, NOW()) RETURNING id`,
+            [clienteG.id, grupoChave, nomeGrupo, chatLid, ehSaidaG ? false : true]
+          );
+          lgId = nv.rows[0].id;
+        }
+        const midiaG = extrairMidiaPayloadZapi(body);
+        const remetenteG = ehSaidaG ? '' : (body.senderName ? body.senderName + ': ' : '');
+        await registrarConversa(lgId, clienteG.id, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null).catch(() => null);
+      } catch (e) {
+        console.error('[zapi][grupo] erro:', e.message);
+      }
       return;
     }
 
