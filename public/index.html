@@ -4734,6 +4734,20 @@ function preencherAgendaForm() {
   if (tituloEl && !tituloEl.value) tituloEl.value = 'Atendimento agendado';
 }
 
+const AGENDA_STATUS = [
+  ['agendado','Agendado','#6b7280'],
+  ['confirmado','Confirmado','#2563eb'],
+  ['compareceu','Compareceu','#16a34a'],
+  ['faltou','Faltou','#dc2626'],
+  ['reagendar','Reagendar','#d97706'],
+  ['concluido','Concluído','#15803d'],
+  ['cancelado','Cancelado','#9ca3af']
+];
+
+function agendaStatusInfo(st) {
+  return AGENDA_STATUS.find(s => s[0] === st) || AGENDA_STATUS[0];
+}
+
 async function carregarAgendaFunil() {
   const lista = document.getElementById('agenda-lista');
   if (!lista || !funilState.clienteId) return;
@@ -4743,15 +4757,98 @@ async function carregarAgendaFunil() {
     if (!itens.length) { lista.innerHTML = '<div class="fu-hint">Nenhum agendamento próximo.</div>'; return; }
     lista.innerHTML = itens.map(a => {
       const data = new Date(a.inicio).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-      return `<div class="agenda-item-card">
+      const si = agendaStatusInfo(a.status);
+      const cancelado = a.status === 'cancelado';
+      const opcoesStatus = AGENDA_STATUS.map(s => `<option value="${s[0]}" ${s[0]===a.status?'selected':''}>${s[1]}</option>`).join('');
+      const btnAbrirLead = a.lead_id
+        ? `<button class="btn-add-small" style="padding:4px 8px;font-size:11px" onclick="abrirLeadDaAgenda(${a.lead_id})" title="Abrir conversa do lead">💬 Abrir lead</button>`
+        : '';
+      return `<div class="agenda-item-card" style="${cancelado?'opacity:.55':''}">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-          <div><strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong><div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div></div>
-          <span style="font-size:11px;color:var(--accent);font-family:var(--mono);white-space:nowrap">${data}</span>
+          <div>
+            <strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div>
+          </div>
+          <div style="text-align:right">
+            <span style="font-size:11px;color:var(--accent);font-family:var(--mono);white-space:nowrap;display:block">${data}</span>
+            <span style="font-size:10px;color:#fff;background:${si[2]};border-radius:4px;padding:1px 7px;display:inline-block;margin-top:3px">${si[1]}</span>
+          </div>
         </div>
         ${a.observacao ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">${escapeHtml(a.observacao)}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <select onchange="mudarStatusAgendamento(${a.id}, this.value)" style="font-size:11px;padding:4px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text)" ${cancelado?'disabled':''}>
+            ${opcoesStatus}
+          </select>
+          ${btnAbrirLead}
+          <button class="btn-remove" style="margin-left:auto" title="Excluir agendamento" onclick="excluirAgendamento(${a.id})">×</button>
+        </div>
       </div>`;
     }).join('');
   } catch (e) { lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+// Muda o status do agendamento. Se houver coluna vinculada (status->coluna), pergunta
+// se quer mover o lead pra ela.
+async function mudarStatusAgendamento(id, status) {
+  const body = { status };
+  // Oferece mover o lead para a coluna escolhida (se o usuário quiser).
+  const moverCol = await escolherColunaParaStatus();
+  if (moverCol) body.mover_para_coluna_id = moverCol;
+  try {
+    await api('/movatak/admin/agendamentos/' + id + '/status', { method: 'PATCH', body: JSON.stringify(body) });
+    mostrarToast('Status atualizado.' + (body.mover_para_coluna_id ? ' Lead movido.' : ''), 'sucesso');
+    await carregarAgendaFunil();
+    if (body.mover_para_coluna_id) await carregarFunilAtendimento();
+  } catch (e) {
+    mostrarToast('Erro ao mudar status: ' + e.message, 'erro');
+  }
+}
+
+// Pergunta (opcional) para qual coluna mover o lead ao mudar status. Retorna o id ou null.
+function escolherColunaParaStatus() {
+  return new Promise(resolve => {
+    const cols = (funilState.colunas || []);
+    if (!cols.length) return resolve(null);
+    let modal = document.getElementById('modal-agenda-mover');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'modal-agenda-mover';
+      modal.className = 'modal-overlay';
+      document.body.appendChild(modal);
+    }
+    const opcoes = cols.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+    modal.innerHTML = `
+      <div class="modal" style="max-width:400px">
+        <h3>Mover o lead?</h3>
+        <p style="font-size:13px;color:var(--text2);margin:8px 0 12px">Você pode mover o lead para uma coluna do kanban junto com a mudança de status. Opcional.</p>
+        <select id="agenda-mover-col" class="fu-textarea" style="min-height:auto;padding:10px 12px">${opcoes}</select>
+        <div class="modal-btns" style="margin-top:14px">
+          <button class="btn-cancel" id="agenda-mover-nao">Não mover</button>
+          <button class="btn-save" id="agenda-mover-sim">Mover lead</button>
+        </div>
+      </div>`;
+    modal.classList.add('open');
+    const fechar = (val) => { modal.classList.remove('open'); resolve(val); };
+    document.getElementById('agenda-mover-nao').onclick = () => fechar(null);
+    document.getElementById('agenda-mover-sim').onclick = () => fechar(parseInt(document.getElementById('agenda-mover-col').value, 10) || null);
+  });
+}
+
+async function excluirAgendamento(id) {
+  if (!confirm('Excluir este agendamento?')) return;
+  try {
+    await api('/movatak/admin/agendamentos/' + id, { method: 'DELETE' });
+    mostrarToast('Agendamento excluído.', 'sucesso');
+    await carregarAgendaFunil();
+  } catch (e) {
+    mostrarToast('Erro ao excluir: ' + e.message, 'erro');
+  }
+}
+
+// Abre a conversa do lead a partir de um item da agenda.
+function abrirLeadDaAgenda(leadId) {
+  fecharAgendaFunil();
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId);
 }
 
 async function salvarAgendamentoFunil() {
