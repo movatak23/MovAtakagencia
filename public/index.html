@@ -307,8 +307,10 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     </div>
     <div class="header-right">
       <span id="header-status" style="font-size:12px;color:var(--text2)"></span>
+      <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
       <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
+      <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -4586,23 +4588,71 @@ window.addEventListener('scroll', posicionarQuickMenuPainel, true);
 
 
 
+// Abre o modal de Template (acionado pelo botão do topo). Separado de Msgs rápidas
+// e Agenda. O template é uma AJUDA: aplica colunas do nicho; o usuário continua livre
+// pra excluir/criar qualquer coluna depois.
+function abrirTemplateFunil() {
+  if (!funilState.clienteId) return;
+  let modal = document.getElementById('modal-template-funil');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-template-funil';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal" style="max-width:480px">
+      <h3>🧩 Template de funil por nicho</h3>
+      <p style="font-size:13px;color:var(--text2);line-height:1.5;margin:10px 0 14px">
+        Escolha um modelo pronto de etapas para o segmento do cliente. As colunas do modelo
+        que ainda não existem serão criadas. <strong>As colunas atuais são preservadas</strong> —
+        o template é uma ajuda, não substitui o que você já montou. Depois de aplicar, você
+        continua livre pra excluir ou criar qualquer coluna.
+      </p>
+      <label class="fu-label">Modelo de nicho</label>
+      <select id="template-modelo-nicho" class="fu-textarea" style="min-height:auto;padding:10px 12px">
+        <option value="">Selecione um modelo...</option>
+        <option value="estetica">Clínica de estética</option>
+        <option value="barbearia">Barbearia</option>
+        <option value="salao">Salão de beleza</option>
+        <option value="odontologia">Clínica odontológica</option>
+        <option value="provedor">Provedor de internet</option>
+        <option value="assistencia">Assistência técnica</option>
+        <option value="grafica_dtf">DTF / Gráfica</option>
+        <option value="generico">Comercial genérico</option>
+      </select>
+      <div id="template-status" class="fu-hint" style="margin-top:10px"></div>
+      <div class="modal-btns" style="margin-top:16px">
+        <button class="btn-cancel" onclick="fecharTemplateFunil()">Cancelar</button>
+        <button class="btn-save" onclick="aplicarModeloNichoFunil()">Aplicar template</button>
+      </div>
+    </div>`;
+  modal.classList.add('open');
+}
+
+function fecharTemplateFunil() {
+  const modal = document.getElementById('modal-template-funil');
+  if (modal) modal.classList.remove('open');
+}
+
 async function aplicarModeloNichoFunil() {
   if (!funilState.clienteId) return;
-  const sel = document.getElementById('funil-modelo-nicho');
+  // Lê do modal de template (novo) ou, como fallback, do select antigo da toolbar.
+  const sel = document.getElementById('template-modelo-nicho') || document.getElementById('funil-modelo-nicho');
   const nicho = sel ? sel.value : '';
-  const status = document.getElementById('funil-status');
+  const status = document.getElementById('template-status') || document.getElementById('funil-status');
   if (!nicho) { if (status) { status.style.color='var(--amber)'; status.textContent='Selecione um modelo de nicho.'; } return; }
-  const ok = confirm('Aplicar o modelo de nicho no kanban? As colunas existentes serão preservadas; novas colunas serão criadas ou reativadas.');
-  if (!ok) return;
-  if (status) { status.style.color='var(--text2)'; status.textContent='Aplicando modelo de nicho...'; }
+  if (status) { status.style.color='var(--text2)'; status.textContent='Aplicando template...'; }
   try {
     await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/aplicar-nicho', {
       method: 'POST', body: JSON.stringify({ nicho, sincronizar_whatsapp: false })
     });
-    if (status) { status.style.color='var(--green)'; status.textContent='✓ Modelo aplicado ao kanban.'; }
+    if (status) { status.style.color='var(--green)'; status.textContent='✓ Template aplicado ao kanban.'; }
+    fecharTemplateFunil();
+    mostrarToast('Template aplicado ao kanban.', 'sucesso');
     await carregarFunilAtendimento();
   } catch (e) {
-    if (status) { status.style.color='var(--red)'; status.textContent='Erro ao aplicar modelo: ' + e.message; }
+    if (status) { status.style.color='var(--red)'; status.textContent='Erro ao aplicar template: ' + e.message; }
   }
 }
 
@@ -4739,6 +4789,8 @@ async function iniciarPaginaFunilAtendimento() {
   if (btnMsgs) btnMsgs.style.display = '';
   const btnAgenda = document.getElementById('btn-agenda');
   if (btnAgenda) btnAgenda.style.display = '';
+  const btnTemplate = document.getElementById('btn-template-funil');
+  if (btnTemplate) btnTemplate.style.display = '';
   const headerTitle = document.querySelector('.header-title');
   const headerSub = document.querySelector('.header-sub');
   if (headerTitle) headerTitle.textContent = 'Funil de Atendimento';
@@ -4772,18 +4824,6 @@ async function iniciarPaginaFunilAtendimento() {
           <div class="funil-kanban-col">
             <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
             <div class="funil-toolbar">
-              <select id="funil-modelo-nicho" class="funil-toolbar-select" title="Modelo de funil por nicho">
-                <option value="">Modelo por nicho...</option>
-                <option value="estetica">Clínica de estética</option>
-                <option value="barbearia">Barbearia</option>
-                <option value="salao">Salão de beleza</option>
-                <option value="odontologia">Clínica odontológica</option>
-                <option value="provedor">Provedor de internet</option>
-                <option value="assistencia">Assistência técnica</option>
-                <option value="grafica_dtf">DTF / Gráfica</option>
-                <option value="generico">Comercial genérico</option>
-              </select>
-              <button class="btn-cancel" style="padding:9px 14px" onclick="aplicarModeloNichoFunil()">Aplicar modelo</button>
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
               <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
               <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
@@ -5126,8 +5166,6 @@ async function carregarFunilAtendimento() {
     funilState.totalNaoLidas = data.totalNaoLidas || 0;
     funilState.nicho = data.nicho || '';
     funilState.agendaAtiva = !!data.agenda_ativa;
-    const modeloNichoSel = document.getElementById('funil-modelo-nicho');
-    if (modeloNichoSel && funilState.nicho) modeloNichoSel.value = funilState.nicho;
     renderBarraSetores();
     renderFunilAtendimento();
     renderInboxFunil();
