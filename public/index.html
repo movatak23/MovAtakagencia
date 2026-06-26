@@ -383,7 +383,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.19-inbound-link-validated</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-vendedor-definitivo</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -513,7 +513,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.19-inbound-link-validated';
+const PAINEL_VERSION = 'v2.7.3-vendedor-definitivo';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -522,10 +522,6 @@ let secret = '';
 let periodoAtual = 0;
 let tokenGerado  = '';
 let templatesFollowupCache = [];
-// Controle global de sincronização WhatsApp → CRM. Precisa existir antes de qualquer chamada
-// a carregarFunilAtendimento(), senão o browser cai em TDZ na primeira carga.
-var _syncWhatsappFunilAtivo = false;
-var _ultimaSyncWhatsappFunil = 0;
 
 function getPermissoesPortal() {
   const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
@@ -659,7 +655,7 @@ async function iniciarAppVendedor() {
             <div class="funil-toolbar">
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
               <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
-              <button class="btn-cancel" style="padding:9px 14px" onclick="atualizarFunilComSync()">Atualizar</button>
+              <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
             </div>
             <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0">
               <span id="funil-lote-count" style="font-size:13px;color:var(--accent);font-weight:600"></span>
@@ -982,7 +978,7 @@ function recuperarSecretFunilJanela() {
   return auth;
 }
 
-let funilState = { clienteId: null, clienteNome: '', colunas: [], setores: [], setorAtivo: null, inboxLeads: [] };
+let funilState = { clienteId: null, clienteNome: '', colunas: [], setores: [], setorAtivo: null };
 // Restaura sessão de vendedor, se houver (tem prioridade sobre a de gestor).
 let _vendTokenSalvo = '';
 try { _vendTokenSalvo = sessionStorage.getItem('mvtk_vend_token') || ''; } catch(e) {}
@@ -2033,11 +2029,10 @@ async function abrirPainelLead(leadId, nomeAbrev) {
 
 // Atualiza o estado local (sem reload de rede) pra badge de não-lido desaparecer na hora.
 async function marcarLeadComoLido(leadId) {
-  atualizarLeadLocal(leadId, { nao_lida: false, nao_lidas_count: 0, whatsapp_unread_count: 0 });
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+  if (lead) lead.nao_lida = false;
   renderInboxFunil();
-  try { await api('/movatak/admin/leads/' + leadId + '/marcar-lida', { method: 'PATCH', body: JSON.stringify({ nao_lida: false }) }); } catch (e) {
-    await carregarFunilAtendimento().catch(() => null);
-  }
+  try { await api('/movatak/admin/leads/' + leadId + '/marcar-lida', { method: 'PATCH' }); } catch (e) {}
 }
 
 function fecharPainelLead() {
@@ -2069,7 +2064,8 @@ async function marcarLeadAtualComoNaoLida() {
   const leadId = window._painelLeadId;
   try {
     await api('/movatak/admin/leads/' + leadId + '/marcar-lida', { method: 'PATCH', body: JSON.stringify({ nao_lida: true }) });
-    atualizarLeadLocal(leadId, { nao_lida: true, nao_lidas_count: 1, whatsapp_unread_count: 1 });
+    const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+    if (lead) lead.nao_lida = true;
     renderInboxFunil();
     const status = document.getElementById('funil-status');
     if (status) { status.style.color = 'var(--green)'; status.textContent = 'Conversa marcada como não lida.'; }
@@ -2505,9 +2501,6 @@ async function acaoChatWhatsapp(action) {
   if (!window._painelLeadId) return;
   try {
     await api('/movatak/admin/leads/' + window._painelLeadId + '/zapi/chat-action', { method:'POST', body: JSON.stringify({ action }) });
-    if (action === 'read') atualizarLeadLocal(window._painelLeadId, { nao_lida:false, nao_lidas_count:0, whatsapp_unread_count:0 });
-    if (action === 'unread') atualizarLeadLocal(window._painelLeadId, { nao_lida:true, nao_lidas_count:1, whatsapp_unread_count:1 });
-    renderInboxFunil();
     setStatusPainel('✓ Ação aplicada no WhatsApp: ' + action, 'var(--green)');
     if (typeof agendarReloadKanban === 'function') agendarReloadKanban();
   } catch(e) { setStatusPainel('Erro na ação do chat: ' + e.message, 'var(--red)'); }
@@ -5092,7 +5085,7 @@ async function iniciarPaginaFunilAtendimento() {
   const nome = params.get('clienteNome') || '';
   if (!id) return;
 
-  funilState = { clienteId: id, clienteNome: nome, colunas: [], setores: [], setorAtivo: null, leads: [], inboxLeads: [], totalGeral: 0, filtroInbox: 'todos', buscaInbox: '' };
+  funilState = { clienteId: id, clienteNome: nome, colunas: [], setores: [], setorAtivo: null, leads: [], totalGeral: 0, filtroInbox: 'todos', buscaInbox: '' };
   const btnMsgs = document.getElementById('btn-msgs-rapidas');
   if (btnMsgs) btnMsgs.style.display = '';
   const btnAgenda = document.getElementById('btn-agenda');
@@ -5134,7 +5127,7 @@ async function iniciarPaginaFunilAtendimento() {
             <div class="funil-toolbar">
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
               <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
-              <button class="btn-cancel" style="padding:9px 14px" onclick="atualizarFunilComSync()">Atualizar</button>
+              <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
             </div>
             <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0">
               <span id="funil-lote-count" style="font-size:13px;color:var(--accent);font-weight:600"></span>
@@ -5454,37 +5447,6 @@ function fecharFunilAtendimento() {
   if (modal) modal.classList.remove('open');
 }
 
-
-async function sincronizarWhatsAppFunilSilencioso() {
-  if (!funilState || !funilState.clienteId || _syncWhatsappFunilAtivo) return null;
-  _syncWhatsappFunilAtivo = true;
-  const status = document.getElementById('funil-status');
-  try {
-    if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Sincronizando WhatsApp...'; }
-    const endpoint = _vendedorToken
-      ? '/movatak/vendedor/zapi/sincronizar-chats'
-      : '/movatak/admin/clientes/' + funilState.clienteId + '/zapi/sincronizar-chats';
-    const r = await api(endpoint, { method: 'POST', body: JSON.stringify({ max: 500 }) });
-    _ultimaSyncWhatsappFunil = Date.now();
-    if (status) {
-      status.style.color = 'var(--green)';
-      status.textContent = 'WhatsApp sincronizado: ' + (r.criados || 0) + ' novos, ' + (r.marcadosNaoLidos || 0) + ' não lidos.';
-      setTimeout(() => { if (status && status.textContent.startsWith('WhatsApp sincronizado')) status.textContent = ''; }, 4500);
-    }
-    return r;
-  } catch (e) {
-    if (status) { status.style.color = 'var(--amber)'; status.textContent = 'Não foi possível sincronizar WhatsApp agora: ' + e.message; }
-    return null;
-  } finally {
-    _syncWhatsappFunilAtivo = false;
-  }
-}
-
-async function atualizarFunilComSync() {
-  await sincronizarWhatsAppFunilSilencioso();
-  await carregarFunilAtendimento();
-}
-
 async function carregarFunilAtendimento() {
   const board = document.getElementById('funil-board');
   const status = document.getElementById('funil-status');
@@ -5495,18 +5457,12 @@ async function carregarFunilAtendimento() {
   }
   if (status) status.textContent = '';
   try {
-    // O Inbox precisa copiar a lista do WhatsApp: reconciliamos os chats no primeiro carregamento
-    // e, depois, no máximo a cada 60 segundos para não sobrecarregar a Z-API.
-    if (!_syncWhatsappFunilAtivo && (!board.dataset.carregado || (Date.now() - _ultimaSyncWhatsappFunil > 60000))) {
-      await sincronizarWhatsAppFunilSilencioso();
-    }
     const qs = funilState.setorAtivo ? ('?setor=' + funilState.setorAtivo) : '';
     const data = await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil' + qs);
     funilState.colunas = data.colunas || [];
     funilState.colunasVendedores = data.colunasVendedores || [];
     funilState.setores = data.setores || [];
     funilState.leads = data.leads || [];
-    funilState.inboxLeads = data.inbox || data.leads || [];
     funilState.totalGeral = data.totalGeral || 0;
     funilState.totalNaoLidas = data.totalNaoLidas || 0;
     funilState.nicho = data.nicho || '';
@@ -5575,7 +5531,7 @@ function filtrosInboxDefs() {
 }
 
 function contagemInbox(tipo) {
-  const base = funilState.inboxLeads || funilState.leads || [];
+  const base = funilState.leads || [];
   if (tipo === 'todos') return base.filter(l => !l.arquivado).length;
   if (tipo === 'arquivados') return base.filter(l => l.arquivado).length;
   if (tipo === 'nao_lidos') return base.filter(l => !l.arquivado && l.nao_lida).length;
@@ -5586,7 +5542,7 @@ function contagemInbox(tipo) {
 function leadsFiltradosInbox() {
   const termo = (funilState.buscaInbox || '').toLowerCase().trim();
   const tipo = funilState.filtroInbox || 'todos';
-  let lista = (funilState.inboxLeads || funilState.leads || []).slice();
+  let lista = (funilState.leads || []).slice();
   if (tipo === 'arquivados') {
     lista = lista.filter(l => l.arquivado);
   } else {
@@ -5656,17 +5612,7 @@ function horaCurtaInbox(iso) {
 }
 
 function etapaDoLead(lead) {
-  const col = (funilState.colunas || []).find(c => Number(c.id) === Number(lead.funil_coluna_id));
-  if (col) return col;
-  if (lead && lead.funil_coluna_nome) return { nome: lead.funil_coluna_nome, cor: lead.funil_coluna_cor || '#9aa3b2' };
-  return null;
-}
-
-function atualizarLeadLocal(leadId, patch) {
-  for (const lista of [funilState.leads || [], funilState.inboxLeads || []]) {
-    const lead = lista.find(l => String(l.id) === String(leadId));
-    if (lead) Object.assign(lead, patch || {});
-  }
+  return (funilState.colunas || []).find(c => Number(c.id) === Number(lead.funil_coluna_id)) || null;
 }
 
 function renderInboxFunil() {
@@ -5679,17 +5625,15 @@ function renderInboxFunil() {
     return;
   }
   box.innerHTML = lista.map(lead => {
-    const temLead = lead.id != null && String(lead.id) !== '0' && String(lead.id) !== 'null';
-    const ativo = (window._painelLeadId != null && temLead && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
+    const ativo = (window._painelLeadId != null && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
     const naoLida = lead.arquivado ? false : !!lead.nao_lida;
-    const countNaoLida = parseInt(lead.nao_lidas_count || lead.whatsapp_unread_count || 0, 10) || 0;
     const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
     const preview = lead.ultima_msg ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56) : 'Sem mensagens ainda';
     const col = etapaDoLead(lead);
     const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
-    const click = temLead ? `onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')"` : `title="Chat ainda sem lead vinculado. Clique em Atualizar para reconciliar."`;
-    return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${temLead ? lead.id : ''}" ${click}>
-      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)}">${lead.is_group ? '👥' : iniciaisAvatarLead(lead.nome)}</div>
+    return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
+              onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')">
+      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</div>
       <div class="inbox-info">
         <div class="inbox-top-row">
           <strong>${escapeHtml(lead.nome || 'Sem nome')}</strong>
@@ -5698,12 +5642,11 @@ function renderInboxFunil() {
         <div class="inbox-preview">${escapeHtml(preview)}</div>
         <div class="inbox-tags">
           <span class="tag-whatsapp">WhatsApp</span>
-          ${lead.is_group ? '<span class="tag-etapa" style="color:#22B8CF;border-color:#22B8CF66">Grupo</span>' : ''}
           ${col ? `<span class="tag-etapa" style="color:${col.cor || '#9aa3b2'};border-color:${col.cor || '#6b7280'}66">${escapeHtml(col.nome)}</span>` : ''}
           ${lead.arquivado ? '<span class="tag-arquivado">Arquivado</span>' : ''}
         </div>
       </div>
-      ${naoLida ? `<span class="inbox-dot" title="${countNaoLida > 1 ? countNaoLida + ' não lidas' : 'Não lida'}"></span>` : ''}
+      ${naoLida ? '<span class="inbox-dot" title="Não lida"></span>' : ''}
     </div>`;
   }).join('');
 }
@@ -5715,7 +5658,6 @@ function marcarItemInboxAtivo(leadId) {
 }
 
 function selecionarLeadInbox(id, nome) {
-  if (id == null || String(id) === '0') return;
   abrirPainelLead(id, nome);
 }
 
@@ -6957,7 +6899,7 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
     <div class="funil-toolbar">
       <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
       <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
-      <button class="btn-cancel" style="padding:9px 14px" onclick="atualizarFunilComSync()">Atualizar</button>
+      <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
     </div>
 
     <div id="funil-board" class="funil-board">
