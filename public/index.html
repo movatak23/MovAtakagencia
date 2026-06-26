@@ -383,7 +383,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.3-vendedor-definitivo</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-avatar</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -513,7 +513,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.3-vendedor-definitivo';
+const PAINEL_VERSION = 'v2.7.3-avatar';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -2003,6 +2003,15 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   } catch (e) {
     document.getElementById('painel-conversa').innerHTML = '<div style="font-size:12px;color:red">Erro: ' + e.message + '</div>';
   }
+
+  // Busca a foto de perfil em segundo plano (sob demanda, com cache no backend).
+  // Atualiza o avatar do lead na inbox quando chega, sem travar a abertura.
+  api('/movatak/admin/leads/' + leadId + '/foto').then(r => {
+    if (r && r.foto_url) {
+      const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId));
+      if (lead) { lead.foto_url = r.foto_url; renderInboxFunil(); }
+    }
+  }).catch(() => {});
 
   // Mensagens rápidas (sempre recarrega para garantir ordem por uso atualizada)
   await carregarMsgsRapidas();
@@ -5600,6 +5609,19 @@ function iniciaisAvatarLead(nome) {
   return (a + b).toUpperCase();
 }
 
+// Monta o conteúdo interno do avatar: foto de perfil do WhatsApp quando existe,
+// senão as iniciais coloridas. Se a imagem falhar ao carregar (URL expirada do
+// WhatsApp ~48h), o onerror troca de volta pelas iniciais — sem quebrar o layout.
+function avatarConteudoLead(lead) {
+  const iniciais = iniciaisAvatarLead(lead.nome);
+  if (lead.foto_url) {
+    const fb = iniciais.replace(/'/g, '');
+    return `<img src="${escapeHtml(lead.foto_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%"
+      onerror="this.style.display='none';this.parentNode.textContent='${fb}'">`;
+  }
+  return iniciais;
+}
+
 function horaCurtaInbox(iso) {
   if (!iso) return '';
   const d = new Date(iso);
@@ -5633,7 +5655,7 @@ function renderInboxFunil() {
     const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
     return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
               onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')">
-      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</div>
+      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)};overflow:hidden">${avatarConteudoLead(lead)}</div>
       <div class="inbox-info">
         <div class="inbox-top-row">
           <strong>${escapeHtml(lead.nome || 'Sem nome')}</strong>
