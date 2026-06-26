@@ -356,6 +356,20 @@ async function zapiMarcarNaoLido(instance, token, clientToken, telefone) {
   await axios.post(url, { phone: telefone }, { headers: { 'Client-Token': clientToken } });
 }
 
+// Busca a URL da foto de perfil do contato. A URL retornada pelo WhatsApp expira
+// em ~48h, então não vale guardar para sempre — buscamos sob demanda e cacheamos
+// por algumas horas (controle via foto_atualizada_em).
+async function zapiBuscarFoto(instance, token, clientToken, telefone) {
+  try {
+    const url = `${ZAPI_BASE}/${instance}/token/${token}/profile-picture`;
+    const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, params: { phone: telefone }, timeout: 8000 });
+    const d = resp.data || {};
+    return d.link || d.imgUrl || d.url || d.profilePicture || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 
 function zapiHeaders(clientToken) {
   return { 'Client-Token': clientToken };
@@ -2048,6 +2062,36 @@ app.patch('/movatak/admin/leads/:id/marcar-lida', authMovatak, async (req, res) 
   }
 });
 
+// Retorna a foto de perfil do lead. Usa cache de 24h (foto_atualizada_em). Se estiver
+// vazia ou velha, busca no Z-API uma vez e salva. A URL do WhatsApp expira ~48h, por
+// isso renovamos sob demanda em vez de guardar para sempre.
+app.get('/movatak/admin/leads/:id/foto', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT l.id, l.telefone, l.foto_url, l.foto_atualizada_em,
+              c.zapi_instance, c.zapi_token, c.zapi_client_token
+         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
+        WHERE l.id = $1`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = r.rows[0];
+    const agora = Date.now();
+    const idade = lead.foto_atualizada_em ? (agora - new Date(lead.foto_atualizada_em).getTime()) : Infinity;
+    const cacheValido = lead.foto_url && idade < 24 * 3600 * 1000;
+    if (cacheValido) return res.json({ foto_url: lead.foto_url });
+
+    if (!lead.zapi_instance || !lead.zapi_token || !lead.zapi_client_token || !lead.telefone) {
+      return res.json({ foto_url: lead.foto_url || null });
+    }
+    const foto = await zapiBuscarFoto(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone);
+    if (foto) {
+      await query(`UPDATE movatak_leads SET foto_url=$1, foto_atualizada_em=NOW() WHERE id=$2`, [foto, lead.id]).catch(() => null);
+    }
+    res.json({ foto_url: foto || lead.foto_url || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // Arquiva/desarquiva um lead na caixa de entrada (não afeta o WhatsApp real,
 // é só organização dentro do CRM — diferente de acao_arquivar_ao_final).
 app.patch('/movatak/admin/leads/:id/arquivar', authMovatak, async (req, res) => {
@@ -2710,6 +2754,13 @@ function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
   return null;
 }
 
+// Extrai a URL da foto de perfil que o Z-API às vezes já manda no payload do webhook.
+// Quando presente, é grátis (não precisa chamar a API). Vale ~48h.
+function extrairFotoPayloadZapi(body) {
+  if (!body) return null;
+  return body.senderPhoto || body.photo || body.chatPhoto || body.profileThumbnail || body.profilePicThumb || null;
+}
+
 // Gera as variantes de um telefone BR considerando o 9º dígito do celular.
 // Ex.: "5581976041948" (com 9) e "558176041948" (sem 9) são tratados como o mesmo número.
 // Retorna lista de variantes (sempre inclui o original), sem duplicatas.
@@ -3094,6 +3145,19 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         remoteJid: body.remoteJid || null
       }));
       return;
+    }
+
+    // Se o payload trouxe a foto de perfil do contato (entrada), salva no lead.
+    // É grátis (não chama a API) e mantém o avatar atualizado conforme as mensagens chegam.
+    if (!body.fromMe) {
+      const fotoPayload = extrairFotoPayloadZapi(body);
+      if (fotoPayload) {
+        await query(
+          `UPDATE movatak_leads SET foto_url=$1, foto_atualizada_em=NOW()
+            WHERE cliente_id=$2 AND telefone=$3`,
+          [fotoPayload, cliente.id, telefone]
+        ).catch(() => null);
+      }
     }
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR / PRÓPRIO WHATSAPP (fromMe) =====
@@ -5524,6 +5588,8 @@ async function garantirEstruturaQuestionario() {
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS nao_lida BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_atualizada_em TIMESTAMPTZ`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -7775,6 +7841,8 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     const clienteId = parseInt(req.params.id, 10);
     const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
     await garantirFunilPadraoCliente(clienteId);
+    // Garante a coluna do avatar antes da query referenciá-la (no-op se já existe).
+    await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
 
     // "Todos" mostra todas as colunas. Um setor específico mostra só as colunas
     // atribuídas a ele (configurado pelo seletor de setor no cabeçalho da coluna).
@@ -7805,7 +7873,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  l.nao_lida, l.arquivado,
+                  l.nao_lida, l.arquivado, l.foto_url,
                   s.nome AS setor_nome, s.cor AS setor_cor,
                   l.criado_em, l.atualizado_em, l.convertido_em,
                   v.nome AS vendedor_nome,
