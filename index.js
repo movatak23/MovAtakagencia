@@ -3283,9 +3283,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR / PRÓPRIO WHATSAPP (fromMe) =====
-    // Antes o CRM descartava toda mensagem fromMe que não fosse comando interno.
-    // Isso quebrava o histórico do Kanban, porque respostas manuais do vendedor nunca eram gravadas.
-    // Agora a mensagem é registrada primeiro; depois a lógica de comandos continua igual.
+    console.log('[DIAG-RX] processando', JSON.stringify({ fromMe: !!body.fromMe, telefone, temTexto: !!texto, chatLid, clienteId: cliente.id }));
     if (body.fromMe) {
       logDebug('[zapi][fromMe] recebido', JSON.stringify({ texto, chatLid, telefone }));
 
@@ -5905,10 +5903,6 @@ async function garantirEstruturaQuestionario() {
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS nao_lida BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
-  // Suporte a conversas de grupo na inbox (entram, mas sem disparar automação).
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS is_grupo BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS grupo_id TEXT`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_leads_grupo ON movatak_leads(cliente_id, is_grupo)`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -7417,6 +7411,7 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
       [leadId, msgId]
     ).catch(() => ({ rows: [] }));
     if (existe.rows.length) {
+      console.log('[DIAG-RX] registrarConversa DEDUP (já existe)', JSON.stringify({ leadId, msgId, direcao }));
       // Mesmo em duplicata, mantém o estado de leitura consistente. Isso resolve
       // casos em que a reconciliação criou/atualizou o lead e o webhook chegou depois.
       if (direcao === 'entrada') {
@@ -7445,6 +7440,7 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
   if (!ins || !ins.rows.length) return null;
   const novoId = ins.rows[0].id;
+  console.log('[DIAG-RX] registrarConversa INSERIU + vai emitir socket', JSON.stringify({ leadId, clienteId, direcao, novoId }));
 
   // Regra correta de leitura da caixa de entrada:
   // - entrada do cliente => fica não lida;
@@ -8190,6 +8186,9 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     const clienteId = parseInt(req.params.id, 10);
     const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
     await garantirFunilPadraoCliente(clienteId);
+    // Garante que as colunas de grupo existem antes da query abaixo referenciá-las.
+    // ALTER ... IF NOT EXISTS é no-op instantâneo quando a coluna já existe.
+    await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS is_grupo BOOLEAN DEFAULT false`).catch(() => null);
 
     // "Todos" mostra todas as colunas. Um setor específico mostra só as colunas
     // atribuídas a ele (configurado pelo seletor de setor no cabeçalho da coluna).
@@ -8323,7 +8322,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
       leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error('[DIAG-RX] ERRO na query do funil:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 // Métricas do rodapé do Funil de Atendimento (Total de leads, Novas mensagens,
@@ -8813,6 +8812,11 @@ app.use((err, req, res, next) => {
 // queries, não alteram dados. Criados CONCURRENTLY não dá em migração de boot simples,
 // então usamos IF NOT EXISTS comum (rápido em tabelas que ainda não têm o índice).
 async function garantirIndices() {
+  // Colunas de suporte a grupos na inbox (criadas aqui pra garantir execução no boot,
+  // já que migrarTudo chama garantirIndices sem o guard interno das outras migrações).
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS is_grupo BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS grupo_id TEXT`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_grupo ON movatak_leads(cliente_id, is_grupo)`).catch(() => null);
   // lead_eventos: tabela de auditoria que mais cresce. Toda consulta de histórico
   // filtra por lead_id e ordena por criado_em desc.
   await query(`CREATE INDEX IF NOT EXISTS idx_lead_eventos_lead_criado ON movatak_lead_eventos(lead_id, criado_em DESC)`).catch(() => null);
