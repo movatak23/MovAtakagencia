@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.6.3-zapi-own-number-filter';
+const MOVATAK_VERSION = 'v2.7.0-nicho-agenda-inicial';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -133,7 +133,9 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS permissoes_portal JSONB DEFAULT '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb,
     ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS followup_msgs_v2 JSONB DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS trigger_msg TEXT`, []);
+    ADD COLUMN IF NOT EXISTS trigger_msg TEXT,
+    ADD COLUMN IF NOT EXISTS nicho TEXT,
+    ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
   await query(`UPDATE movatak_clientes
      SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
    WHERE permissoes_portal IS NULL`, []);
@@ -1423,7 +1425,7 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
     await garantirColunasClientesPortal();
     const {
       nome, whatsapp, zapi_instance, zapi_token, zapi_client_token,
-      trigger_msg, teto_cpl, planos, permissoes_portal
+      trigger_msg, teto_cpl, planos, permissoes_portal, nicho
     } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_client_token) {
@@ -1440,6 +1442,14 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
        RETURNING id, app_token`,
       [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, triggerPadrao, teto_cpl || null, app_token, JSON.stringify(normalizarPermissoes(permissoes_portal))]
     );
+
+    const nichoNormalizado = normalizarNichoCliente(nicho);
+    if (nichoNormalizado) {
+      await query('UPDATE movatak_clientes SET nicho=$1, agenda_ativa=true WHERE id=$2', [nichoNormalizado, r.rows[0].id]).catch(() => null);
+      await aplicarTemplateNichoCliente(r.rows[0].id, nichoNormalizado, { sincronizar: false }).catch(e => console.error('[nicho][novo-cliente]', e.message));
+    } else {
+      await garantirFunilPadraoCliente(r.rows[0].id).catch(() => null);
+    }
 
     const clienteId = r.rows[0].id;
 
@@ -1463,7 +1473,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
     const r = await query(
-      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
+      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
               boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
@@ -1479,7 +1489,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay } = req.body;
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance) {
       return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
@@ -1489,6 +1499,8 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
     const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
     const valores = [nome, whatsapp, zapi_instance, triggerPadrao, teto_cpl ? parseFloat(teto_cpl) : null];
     let idx = 6;
+    if (nicho !== undefined) { campos.push('nicho = $' + idx); valores.push(normalizarNichoCliente(nicho) || null); idx++; }
+    if (agenda_ativa !== undefined) { campos.push('agenda_ativa = $' + idx); valores.push(!!agenda_ativa); idx++; }
     if (permissoes_portal) { campos.push('permissoes_portal = $' + idx + '::jsonb'); valores.push(JSON.stringify(normalizarPermissoes(permissoes_portal))); idx++; }
     if (acao_arquivar_ao_final !== undefined) { campos.push('acao_arquivar_ao_final = $' + idx); valores.push(!!acao_arquivar_ao_final); idx++; }
     if (acao_marcar_nao_lido !== undefined) { campos.push('acao_marcar_nao_lido = $' + idx); valores.push(!!acao_marcar_nao_lido); idx++; }
@@ -1512,6 +1524,10 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
       `UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx}`,
       valores
     );
+    const nichoAplicar = normalizarNichoCliente(nicho);
+    if (nicho !== undefined && nichoAplicar) {
+      await aplicarTemplateNichoCliente(req.params.id, nichoAplicar, { sincronizar: false }).catch(e => console.error('[nicho][editar-cliente]', e.message));
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -6491,6 +6507,9 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS comando TEXT,
     ADD COLUMN IF NOT EXISTS setor_id INTEGER,
     ADD COLUMN IF NOT EXISTS ausencia_ativa BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS nicho_template TEXT,
+    ADD COLUMN IF NOT EXISTS agenda_tipo TEXT,
+    ADD COLUMN IF NOT EXISTS agenda_status TEXT,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
 
@@ -6515,6 +6534,8 @@ async function garantirEstruturaFunil() {
 
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_arquivar_ao_final BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_marcar_nao_lido BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS nicho TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads
     ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER`).catch(() => null);
 
@@ -6525,8 +6546,182 @@ async function garantirEstruturaFunil() {
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
 }
 
+
+const NICHO_TEMPLATES = {
+  estetica: {
+    label: 'Clínica de estética',
+    agendaTipos: ['avaliacao','consulta','retorno'],
+    colunas: [
+      ['Novo lead','novo_lead','lead'], ['Avaliação solicitada','avaliacao_solicitada','negociacao'],
+      ['Consulta agendada','consulta_agendada','negociacao','consulta'], ['Confirmar presença','confirmar_presenca','followup'],
+      ['Compareceu','compareceu','negociacao'], ['Procedimento realizado','procedimento_realizado','cliente'],
+      ['Retorno / Pós-venda','retorno_pos_venda','followup','retorno'], ['Perdido','perdido','descartado']
+    ]
+  },
+  barbearia: {
+    label: 'Barbearia',
+    agendaTipos: ['corte','barba','combo','retorno'],
+    colunas: [
+      ['Novo contato','novo_contato','lead'], ['Serviço desejado','servico_desejado','negociacao'],
+      ['Horário solicitado','horario_solicitado','negociacao'], ['Agendado','agendado','negociacao','corte'],
+      ['Confirmado','confirmado','followup'], ['Atendido','atendido','cliente'], ['Reagendar','reagendar','followup','retorno'], ['Perdido','perdido','descartado']
+    ]
+  },
+  salao: {
+    label: 'Salão de beleza',
+    agendaTipos: ['escova','coloracao','manicure','retorno'],
+    colunas: [
+      ['Novo contato','novo_contato','lead'], ['Serviço desejado','servico_desejado','negociacao'],
+      ['Orçamento enviado','orcamento_enviado','negociacao'], ['Agendado','agendado','negociacao','escova'],
+      ['Confirmado','confirmado','followup'], ['Atendido','atendido','cliente'], ['Retorno / Fidelização','retorno_fidelizacao','followup','retorno'], ['Perdido','perdido','descartado']
+    ]
+  },
+  odontologia: {
+    label: 'Clínica odontológica',
+    agendaTipos: ['avaliacao','consulta','retorno'],
+    colunas: [
+      ['Novo lead','novo_lead','lead'], ['Triagem','triagem','negociacao'], ['Avaliação agendada','avaliacao_agendada','negociacao','avaliacao'],
+      ['Confirmar presença','confirmar_presenca','followup'], ['Plano de tratamento enviado','plano_tratamento_enviado','negociacao'],
+      ['Tratamento iniciado','tratamento_iniciado','cliente'], ['Retorno','retorno','followup','retorno'], ['Perdido','perdido','descartado']
+    ]
+  },
+  provedor: {
+    label: 'Provedor de internet',
+    agendaTipos: ['instalacao','suporte','visita_tecnica'],
+    colunas: [
+      ['Novo lead','novo_lead','lead'], ['Verificar cobertura','verificar_cobertura','negociacao'], ['Plano escolhido','plano_escolhido','negociacao'],
+      ['Instalação agendada','instalacao_agendada','negociacao','instalacao'], ['Instalado','instalado','cliente'],
+      ['Suporte','suporte','followup','suporte'], ['Financeiro','financeiro','negociacao'], ['Perdido','perdido','descartado']
+    ]
+  },
+  assistencia: {
+    label: 'Assistência técnica',
+    agendaTipos: ['orcamento','suporte','retirada','entrega'],
+    colunas: [
+      ['Novo atendimento','novo_atendimento','lead'], ['Diagnóstico','diagnostico','negociacao'], ['Orçamento enviado','orcamento_enviado','negociacao','orcamento'],
+      ['Serviço agendado','servico_agendado','negociacao','suporte'], ['Em execução','em_execucao','negociacao'],
+      ['Pronto para entrega','pronto_entrega','followup','entrega'], ['Entregue','entregue','cliente'], ['Cancelado','cancelado','descartado']
+    ]
+  },
+  grafica_dtf: {
+    label: 'DTF / Gráfica',
+    agendaTipos: ['producao','retirada','envio','retorno'],
+    colunas: [
+      ['Novo orçamento','novo_orcamento','lead'], ['Modelo enviado','modelo_enviado','negociacao'], ['Aguardando arte','aguardando_arte','followup'],
+      ['Pagamento pendente','pagamento_pendente','negociacao'], ['Produção','producao','negociacao','producao'],
+      ['Envio / Retirada','envio_retirada','followup','envio'], ['Pedido concluído','pedido_concluido','cliente'], ['Perdido','perdido','descartado']
+    ]
+  },
+  generico: {
+    label: 'Comercial genérico',
+    agendaTipos: ['atendimento','retorno','reuniao'],
+    colunas: [
+      ['Novo contato','novo_contato','lead'], ['Em atendimento','em_atendimento','negociacao'], ['Proposta enviada','proposta_enviada','negociacao'],
+      ['Retorno agendado','retorno_agendado','followup','retorno'], ['Negociação','negociacao','negociacao'],
+      ['Cliente fechado','cliente_fechado','cliente'], ['Perdido','perdido','descartado']
+    ]
+  }
+};
+
+function normalizarNichoCliente(v) {
+  const key = String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+  const aliases = { clinica_estetica: 'estetica', estetica_clinica: 'estetica', salao_de_beleza: 'salao', salao_beleza: 'salao', clinica_odontologica: 'odontologia', odontologica: 'odontologia', provedor_internet: 'provedor', isp: 'provedor', assistencia_tecnica: 'assistencia', dtf: 'grafica_dtf', grafica: 'grafica_dtf', dtf_grafica: 'grafica_dtf', generico_comercial: 'generico' };
+  const finalKey = aliases[key] || key;
+  return NICHO_TEMPLATES[finalKey] ? finalKey : '';
+}
+
+function getNichoTemplate(nicho) {
+  const key = normalizarNichoCliente(nicho) || 'generico';
+  return { key, ...(NICHO_TEMPLATES[key] || NICHO_TEMPLATES.generico) };
+}
+
+async function aplicarTemplateNichoCliente(clienteId, nicho, opts = {}) {
+  await garantirEstruturaFunil();
+  const tpl = getNichoTemplate(nicho);
+  const sincronizar = opts.sincronizar !== false;
+  let ordemBase = 0;
+  const maxR = await query('SELECT COALESCE(MAX(ordem),0)::int AS max FROM movatak_funil_colunas WHERE cliente_id=$1', [clienteId]).catch(() => ({ rows: [{ max: 0 }] }));
+  ordemBase = parseInt((maxR.rows[0] || {}).max || 0, 10);
+  const criadas = [];
+  let pos = ordemBase + 1;
+  for (const item of tpl.colunas) {
+    const [nome, slugBase, etapa, agendaTipo] = item;
+    const slug = slugifyFunil(slugBase || nome);
+    const ins = await query(
+      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp, nicho_template, agenda_tipo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (cliente_id, slug) DO UPDATE SET
+         nome = EXCLUDED.nome,
+         etapa_sistema = EXCLUDED.etapa_sistema,
+         nicho_template = EXCLUDED.nicho_template,
+         agenda_tipo = COALESCE(EXCLUDED.agenda_tipo, movatak_funil_colunas.agenda_tipo),
+         ativo = true,
+         atualizado_em = NOW()
+       RETURNING *`,
+      [clienteId, nome, slug, pos++, etapa || etapaSistemaPorSlug(slug), sincronizar, tpl.key, agendaTipo || null]
+    ).catch(e => { console.error('[nicho][coluna]', e.message); return { rows: [] }; });
+    if (ins.rows[0]) criadas.push(ins.rows[0]);
+  }
+  await query('UPDATE movatak_clientes SET nicho=$1, agenda_ativa=true WHERE id=$2', [tpl.key, clienteId]).catch(() => null);
+  return { key: tpl.key, label: tpl.label, colunas: criadas };
+}
+
+async function garantirEstruturaAgenda() {
+  await garantirEstruturaFunil();
+  await query(`CREATE TABLE IF NOT EXISTS movatak_agendamentos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    lead_id INTEGER,
+    vendedor_id INTEGER,
+    titulo TEXT NOT NULL,
+    tipo TEXT,
+    status TEXT DEFAULT 'agendado',
+    inicio TIMESTAMPTZ NOT NULL,
+    fim TIMESTAMPTZ,
+    observacao TEXT,
+    funil_coluna_id INTEGER,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`ALTER TABLE movatak_agendamentos
+    ADD COLUMN IF NOT EXISTS vendedor_id INTEGER,
+    ADD COLUMN IF NOT EXISTS tipo TEXT,
+    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'agendado',
+    ADD COLUMN IF NOT EXISTS fim TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS observacao TEXT,
+    ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER,
+    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_cliente_inicio ON movatak_agendamentos(cliente_id, inicio)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_lead ON movatak_agendamentos(lead_id)`).catch(() => null);
+}
+
+async function buscarColunaAgenda(clienteId, tipo, colunaId) {
+  if (colunaId) {
+    const r = await query('SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND id=$2 AND ativo=true LIMIT 1', [clienteId, colunaId]).catch(() => ({ rows: [] }));
+    if (r.rows[0]) return r.rows[0].id;
+  }
+  const tipoNorm = String(tipo || '').trim().toLowerCase();
+  if (tipoNorm) {
+    const r = await query('SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND ativo=true AND agenda_tipo=$2 ORDER BY ordem ASC, id ASC LIMIT 1', [clienteId, tipoNorm]).catch(() => ({ rows: [] }));
+    if (r.rows[0]) return r.rows[0].id;
+  }
+  const fallback = await query(
+    `SELECT id FROM movatak_funil_colunas
+      WHERE cliente_id=$1 AND ativo=true AND (slug LIKE '%agend%' OR LOWER(nome) LIKE '%agend%')
+      ORDER BY ordem ASC, id ASC LIMIT 1`,
+    [clienteId]
+  ).catch(() => ({ rows: [] }));
+  return fallback.rows[0] ? fallback.rows[0].id : null;
+}
+
 async function garantirFunilPadraoCliente(clienteId) {
   await garantirEstruturaFunil();
+  const cliNichoR = await query('SELECT nicho FROM movatak_clientes WHERE id=$1', [clienteId]).catch(() => ({ rows: [] }));
+  const nichoCliente = normalizarNichoCliente((cliNichoR.rows[0] || {}).nicho);
+  if (nichoCliente) {
+    await aplicarTemplateNichoCliente(clienteId, nichoCliente, { sincronizar: false }).catch(e => console.error('[nicho][garantir-funil]', e.message));
+    return;
+  }
   const padrao = [
     { nome: 'Novo contato', slug: 'novo_contato', ordem: 1, etapa: 'lead' },
     { nome: 'Auto Atendimento', slug: 'auto_atendimento', ordem: 2, etapa: 'auto_atendimento' },
@@ -6704,7 +6899,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       filtroColunaSetorSql = ' AND setor_id = $2';
     }
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, nicho_template, agenda_tipo, agenda_status
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
         ORDER BY ordem ASC, id ASC`,
@@ -6771,6 +6966,12 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
 
     // Setores do cliente + contagem ao vivo (independente do filtro atual,
     // pra mostrar "Financeiro 5 / Negociação 4" nas abas mesmo trocando de aba).
+    const clienteInfoRes = await query(
+      `SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1`,
+      [clienteId]
+    ).catch(() => ({ rows: [] }));
+    const clienteInfo = clienteInfoRes.rows[0] || {};
+
     const setoresRes = await query(
       `SELECT id, nome, cor FROM movatak_setores
         WHERE cliente_id=$1 AND COALESCE(ativo,true)=true
@@ -6797,6 +6998,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     res.json({
       colunas, colunasVendedores,
       setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
+      nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
       leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6838,6 +7040,91 @@ app.get('/movatak/admin/clientes/:id/funil/metricas', authMovatak, async (req, r
       emNegociacao: (negociacaoR.rows[0] || {}).n || 0,
       conversaoMes
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+app.get('/movatak/admin/nichos-templates', authMovatak, async (req, res) => {
+  try {
+    res.json(Object.entries(NICHO_TEMPLATES).map(([key, tpl]) => ({
+      key,
+      label: tpl.label,
+      agendaTipos: tpl.agendaTipos || [],
+      colunas: (tpl.colunas || []).map(c => ({ nome: c[0], slug: c[1], etapa: c[2], agenda_tipo: c[3] || null }))
+    })));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/funil/aplicar-nicho', authMovatak, async (req, res) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    const nicho = normalizarNichoCliente(req.body?.nicho);
+    if (!nicho) return res.status(400).json({ error: 'Nicho inválido.' });
+    const result = await aplicarTemplateNichoCliente(clienteId, nicho, { sincronizar: req.body?.sincronizar_whatsapp !== false });
+    res.json({ ok: true, ...result });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaAgenda();
+    const clienteId = parseInt(req.params.id, 10);
+    const dias = Math.max(1, Math.min(parseInt(req.query.dias || '30', 10), 120));
+    const r = await query(
+      `SELECT a.*, l.nome AS lead_nome, l.telefone AS lead_telefone, c.nome AS coluna_nome
+         FROM movatak_agendamentos a
+         LEFT JOIN movatak_leads l ON l.id = a.lead_id
+         LEFT JOIN movatak_funil_colunas c ON c.id = a.funil_coluna_id
+        WHERE a.cliente_id=$1
+          AND a.inicio >= NOW() - INTERVAL '1 day'
+          AND a.inicio <= NOW() + ($2 || ' days')::INTERVAL
+        ORDER BY a.inicio ASC
+        LIMIT 200`,
+      [clienteId, dias]
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaAgenda();
+    const clienteId = parseInt(req.params.id, 10);
+    const { lead_id, titulo, tipo, inicio, fim, status, observacao, coluna_id, mover_kanban } = req.body || {};
+    if (!titulo || !inicio) return res.status(400).json({ error: 'Título e data/horário são obrigatórios.' });
+    const tipoNorm = String(tipo || 'atendimento').trim().toLowerCase();
+    const colunaDestino = await buscarColunaAgenda(clienteId, tipoNorm, coluna_id || null);
+    const ins = await query(
+      `INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       RETURNING *`,
+      [clienteId, lead_id || null, titulo, tipoNorm, status || 'agendado', inicio, fim || null, observacao || null, colunaDestino]
+    );
+    if (lead_id && colunaDestino && mover_kanban !== false) {
+      await moverLeadParaColunaFunil(lead_id, colunaDestino, true).catch(e => console.error('[agenda][mover-kanban]', e.message));
+      await registrarEventoLead(lead_id, clienteId, 'agendamento_criado', 'Agendamento criado e lead movido no kanban', { agendamento_id: ins.rows[0].id, tipo: tipoNorm, inicio, coluna_id: colunaDestino }).catch(() => null);
+    }
+    res.json({ ok: true, agendamento: ins.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaAgenda();
+    const { status, observacao, inicio, fim, funil_coluna_id } = req.body || {};
+    const r = await query(
+      `UPDATE movatak_agendamentos SET
+         status = COALESCE($1, status),
+         observacao = CASE WHEN $2::text IS NULL THEN observacao ELSE $2 END,
+         inicio = COALESCE($3::timestamptz, inicio),
+         fim = COALESCE($4::timestamptz, fim),
+         funil_coluna_id = COALESCE($5, funil_coluna_id),
+         atualizado_em = NOW()
+       WHERE id=$6 RETURNING *`,
+      [status || null, observacao !== undefined ? observacao : null, inicio || null, fim || null, funil_coluna_id || null, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    res.json({ ok: true, agendamento: r.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
