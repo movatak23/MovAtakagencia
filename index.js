@@ -3143,6 +3143,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
   // ---- Processamento Movatak ----
   try {
     const instanceId = body.instanceId || body.instance || '';
+    console.log('[DIAG2] webhook recebido', JSON.stringify({
+      fromMe: !!body.fromMe, isGroup: !!body.isGroup, isNewsletter: !!body.isNewsletter,
+      type: body.type, instanceId, phone: body.phone || null,
+      temText: !!(body.text), temTextMessage: !!(body.text && body.text.message),
+      keys: Object.keys(body).slice(0, 40)
+    }));
     const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
     // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
@@ -3166,24 +3172,24 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }));
 
     if (body.isGroup || body.isNewsletter) {
-      logDebug('[zapi][ignorado] grupo ou newsletter');
+      console.log('[DIAG2] BARRADO: grupo ou newsletter');
       return;
     }
 
     // Mensagem apagada (revogada) — ignorar para não disparar "Não entendi" no questionário
     if (body.type === 'revoked' || body.isDeleted || body.revoked) {
-      logDebug('[zapi][ignorado] mensagem apagada/revogada');
+      console.log('[DIAG2] BARRADO: revogada');
       return;
     }
 
     // Notificações de status (leitura, entrega, etc.) — não são mensagens reais
     if (body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase())) {
-      logDebug('[zapi][ignorado] evento de status: ' + body.type);
+      console.log('[DIAG2] BARRADO: evento de status: ' + body.type);
       return;
     }
 
     if (!instanceId) {
-      logDebug('[zapi][ignorado] payload sem instanceId/instance');
+      console.log('[DIAG2] BARRADO: sem instanceId');
       return;
     }
 
@@ -3193,10 +3199,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       [instanceId]
     );
     if (!rc.rows.length) {
-      console.log('[zapi][ignorado] nenhum cliente ativo encontrado para instanceId ' + instanceId);
+      console.log('[DIAG2] BARRADO: nenhum cliente para instanceId ' + instanceId);
       return;
     }
     const cliente = rc.rows[0];
+    console.log('[DIAG2] cliente OK id=' + cliente.id + ' | telefone antes do filtro: ' + telefone);
 
     // Depois de identificar o cliente/instância, recalcula o telefone ignorando
     // qualquer número que seja da própria empresa. Isso evita criar lead
@@ -3204,9 +3211,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // como número da conta conectada.
     const telefoneAntesFiltroEmpresa = telefone;
     telefone = extrairTelefonePayload(body, cliente);
-    if (telefoneAntesFiltroEmpresa && !telefone) {
-      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe }));
-    }
+    console.log('[DIAG2] telefone após filtro anti-próprio: ' + telefone + ' (antes: ' + telefoneAntesFiltroEmpresa + ')');
 
     const comandos = cliente.comandos || {};
     await registrarWebhookCliente(cliente.id, {
@@ -3220,18 +3225,14 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
     if (!telefone) {
-      logDebug('[zapi][ignorado] telefone real do contato não identificado após filtro anti-próprio-número', JSON.stringify({
-        fromMe: !!body.fromMe,
-        phone: body.phone || null,
-        senderPhone: body.senderPhone || null,
-        connectedPhone: body.connectedPhone || null,
-        to: body.to || null,
-        from: body.from || null,
-        chatId: body.chatId || null,
-        remoteJid: body.remoteJid || null
+      console.log('[DIAG2] BARRADO: telefone não identificado após filtro anti-próprio-número | payload: ' + JSON.stringify({
+        fromMe: !!body.fromMe, phone: body.phone || null, senderPhone: body.senderPhone || null,
+        connectedPhone: body.connectedPhone || null, to: body.to || null, from: body.from || null,
+        chatId: body.chatId || null, remoteJid: body.remoteJid || null
       }));
       return;
     }
+    console.log('[DIAG2] PASSOU todos os filtros, telefone=' + telefone + ' fromMe=' + !!body.fromMe);
 
     // ===== MENSAGEM ENVIADA PELO VENDEDOR / PRÓPRIO WHATSAPP (fromMe) =====
     if (body.fromMe) {
