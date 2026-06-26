@@ -5137,7 +5137,9 @@ async function excluirAgendamento(id) {
 // Abre a conversa do lead a partir de um item da agenda.
 function abrirLeadDaAgenda(leadId) {
   fecharAgendaFunil();
-  if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId);
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId)) || {};
+  const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId, nomeAbrev);
 }
 
 async function salvarAgendamentoFunil() {
