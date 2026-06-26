@@ -5485,8 +5485,9 @@ function renderFunilAtendimento() {
       ? '<span class="funil-sync ok" title="Sincronizado com o WhatsApp">✓ Zap</span>'
       : '<span class="funil-sync pendente" title="Não sincronizado com o WhatsApp">Sem zap</span>';
     // ^ trocado de "WhatsApp OK"/"Sem sync" pra caber dentro da coluna sem cortar
-    const ehSistema = SLUGS_SISTEMA.includes(col.etapa_sistema);
-    const btnExcluir = ehSistema ? '' : `<button onclick="excluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
+    // Admin pode excluir qualquer coluna REAL do kanban (inclusive padrão). Colunas de
+    // vendedor são renderizadas em outro fluxo e não passam por aqui, então não ganham botão.
+    const btnExcluir = `<button onclick="abrirModalExcluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
             style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--red);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;margin-left:6px">🗑</button>`;
     return `<div class="funil-col" data-coluna="${col.id}" data-col-index="${col.__idx}"
               style="border-top:3px solid ${cor}"
@@ -5999,21 +6000,65 @@ async function atribuirSetorColuna(colunaId, setorId) {
   }
 }
 
-async function excluirColuna(colunaId, nome) {
+// Modal de risco para excluir uma coluna real do kanban. Mostra a quantidade de
+// leads, exige escolher coluna de destino (não pode ser a própria nem de vendedor)
+// e só então excluir. Soft delete no backend — leads e conversas são preservados.
+function abrirModalExcluirColuna(colunaId, nome) {
   const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
   const qtdLeads = col && col.leads ? col.leads.length : 0;
-  const aviso = qtdLeads
-    ? `Excluir a etapa "${nome}"?\n\nOs ${qtdLeads} lead(s) desta etapa voltarão para "Novo contato". Esta ação não pode ser desfeita.`
-    : `Excluir a etapa "${nome}"?\n\nEsta ação não pode ser desfeita.`;
-  if (!confirm(aviso)) return;
-  const status = document.getElementById('funil-status');
-  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Excluindo etapa...'; }
+  // Destinos válidos: outras colunas reais ativas do funil (exclui a própria).
+  const destinos = (funilState.colunas || []).filter(c => Number(c.id) !== Number(colunaId));
+  const opcoesDestino = destinos.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+
+  let modal = document.getElementById('modal-excluir-coluna');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-excluir-coluna';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal" style="max-width:460px">
+      <h3 style="color:var(--red)">Excluir coluna do kanban</h3>
+      <p style="font-size:13px;color:var(--text2);line-height:1.5;margin:10px 0 14px">
+        Você está prestes a excluir a coluna <strong>"${escapeHtml(nome)}"</strong>.
+        ${qtdLeads ? `Ela tem <strong>${qtdLeads} lead(s)</strong>, que serão movidos para a coluna escolhida abaixo.` : 'Ela não tem leads no momento.'}
+        A coluna será ocultada do funil, mas os leads e conversas serão preservados.
+        Colunas de vendedores não podem ser excluídas aqui — para isso, desative o vendedor no menu de vendedores.
+      </p>
+      <label class="fu-label">Mover os leads para:</label>
+      <select id="excluir-col-destino" class="fu-textarea" style="min-height:auto;padding:10px 12px">
+        ${opcoesDestino || '<option value="">Nenhuma outra coluna disponível</option>'}
+      </select>
+      <div id="excluir-col-erro" class="fu-hint" style="color:var(--red);margin-top:8px"></div>
+      <div class="modal-btns" style="margin-top:16px">
+        <button class="btn-cancel" onclick="fecharModalExcluirColuna()">Cancelar</button>
+        <button class="btn-save" style="background:var(--red)" onclick="confirmarExcluirColuna(${colunaId})">Entendo os riscos e desejo excluir</button>
+      </div>
+    </div>`;
+  modal.classList.add('open');
+}
+
+function fecharModalExcluirColuna() {
+  const modal = document.getElementById('modal-excluir-coluna');
+  if (modal) modal.classList.remove('open');
+}
+
+async function confirmarExcluirColuna(colunaId) {
+  const destinoSel = document.getElementById('excluir-col-destino');
+  const erro = document.getElementById('excluir-col-erro');
+  const destino = destinoSel ? destinoSel.value : '';
+  if (!destino) { if (erro) erro.textContent = 'Escolha uma coluna de destino.'; return; }
   try {
-    await api('/movatak/admin/funil/colunas/' + colunaId, { method: 'DELETE' });
-    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Etapa excluída.'; }
+    const resp = await api('/movatak/admin/funil/colunas/' + colunaId, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmar: true, destino_coluna_id: parseInt(destino, 10) })
+    });
+    fecharModalExcluirColuna();
+    mostrarToast(`Coluna excluída. ${resp.leads_realocados ? resp.leads_realocados + ' lead(s) realocado(s).' : ''}`, 'sucesso');
     await carregarFunilAtendimento();
   } catch (e) {
-    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao excluir: ' + e.message; }
+    if (erro) erro.textContent = 'Erro: ' + e.message;
   }
 }
 
