@@ -5,9 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Movatak — Painel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
+  /* Tema Escuro */
   --bg:      #080810;
   --bg2:     #0f0f1c;
   --bg3:     #16162a;
@@ -21,8 +22,24 @@
   --green:   #00d084;
   --amber:   #f5a623;
   --red:     #ff5a5a;
-  --mono:    'DM Mono', monospace;
-  --sans:    'Syne', sans-serif;
+  --mono:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+html.light-mode {
+  --bg:      #f8f8fa;
+  --bg2:     #ffffff;
+  --bg3:     #f0f0f5;
+  --bg4:     #e8e8f0;
+  --border:  rgba(0,0,0,0.07);
+  --border2: rgba(0,0,0,0.12);
+  --text:    #1a1a2e;
+  --text2:   #6b6b8a;
+  --text3:   #a0a0b8;
+  --accent:  #5b7fff;
+  --green:   #00b873;
+  --amber:   #d97706;
+  --red:     #dc2626;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
@@ -80,6 +97,23 @@ header{
 .header-title{font-size:16px;font-weight:800}
 .header-sub{font-size:11px;color:var(--text2);margin-top:0}
 .header-right{display:flex;align-items:center;gap:16px}
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all .2s;
+  font-size: 16px;
+}
+.theme-toggle:hover {
+  border-color: var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+}
 .btn-sair{
   background:transparent;border:1px solid var(--border2);border-radius:8px;
   padding:6px 14px;color:var(--text2);font-size:12px;font-family:var(--sans);
@@ -311,6 +345,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
       <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
       <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+      <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -523,6 +558,34 @@ let periodoAtual = 0;
 let tokenGerado  = '';
 let templatesFollowupCache = [];
 
+// Tema claro/escuro
+function initTheme() {
+  const saved = localStorage.getItem('movatak-theme') || 'dark';
+  setTheme(saved);
+}
+
+function setTheme(mode) {
+  if (mode === 'light') {
+    document.documentElement.classList.add('light-mode');
+    localStorage.setItem('movatak-theme', 'light');
+    document.getElementById('theme-toggle').textContent = '☀️';
+  } else {
+    document.documentElement.classList.remove('light-mode');
+    localStorage.setItem('movatak-theme', 'dark');
+    document.getElementById('theme-toggle').textContent = '🌙';
+  }
+}
+
+function toggleTheme() {
+  const current = localStorage.getItem('movatak-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  setTheme(next);
+}
+
+// Inicializar tema ao carregar
+document.addEventListener('DOMContentLoaded', initTheme);
+window.addEventListener('load', initTheme);
+
 function getPermissoesPortal() {
   const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
   return {
@@ -625,6 +688,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+        <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
         <button class="btn-sair" onclick="sair()">Sair</button>
       </div>
     </header>
