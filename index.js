@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.9-whatsapp-inbox-exato';
+const MOVATAK_VERSION = 'v2.7.11-zapi-recon-cirurgico';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -547,7 +547,50 @@ async function zapiModificarChat(instance, token, clientToken, telefone, action)
 }
 
 async function zapiListarChats(instance, token, clientToken) {
-  return zapiGet(instance, token, clientToken, 'chats');
+  if (!instance || !token || !clientToken) {
+    const e = new Error('Z-API incompleta: instance/token/client-token ausente.');
+    e.movatakZapi = { status: 0, endpoint: 'chats', body: null, code: 'ZAPI_CONFIG_INCOMPLETA' };
+    throw e;
+  }
+  try {
+    return await zapiGet(instance, token, clientToken, 'chats');
+  } catch (e) {
+    const body = e.response && e.response.data ? e.response.data : null;
+    e.movatakZapi = {
+      status: e.response ? e.response.status : 0,
+      endpoint: 'chats',
+      body,
+      message: e.message
+    };
+    throw e;
+  }
+}
+
+function mascararTokenDebug(v) {
+  const s = String(v || '');
+  if (!s) return '';
+  if (s.length <= 8) return '***';
+  return s.slice(0, 4) + '…' + s.slice(-4);
+}
+
+function limitarTextoDebug(v, max = 420) {
+  const s = typeof v === 'string' ? v : JSON.stringify(v || {});
+  return s.length > max ? s.slice(0, max) + '…' : s;
+}
+
+function erroZapiDetalhado(e, contexto = {}) {
+  const status = e?.response?.status || e?.movatakZapi?.status || 0;
+  const body = e?.response?.data || e?.movatakZapi?.body || null;
+  const msgBody = body && (body.message || body.error || body.msg || body.description);
+  const partes = [
+    contexto.clienteId ? `cliente=${contexto.clienteId}` : null,
+    contexto.endpoint ? `endpoint=${contexto.endpoint}` : (e?.movatakZapi?.endpoint ? `endpoint=${e.movatakZapi.endpoint}` : null),
+    status ? `status=${status}` : null,
+    msgBody ? `zapi=${limitarTextoDebug(msgBody, 220)}` : null,
+    !msgBody && body ? `body=${limitarTextoDebug(body, 300)}` : null,
+    e?.message ? `erro=${limitarTextoDebug(e.message, 180)}` : null
+  ].filter(Boolean);
+  return partes.join(' | ');
 }
 
 const ZAPI_ADVANCED_ENDPOINTS = {
@@ -1420,7 +1463,7 @@ cron.schedule('*/1 * * * *', async () => {
         const r = await sincronizarChatsCliente(row.id, { max: parseInt(process.env.MOVATAK_RECONCILIAR_CHATS_MAX || '200', 10) || 200 });
         console.log('[reconciliacao-chats]', row.id, JSON.stringify(r));
       } catch (e) {
-        console.error('[reconciliacao-chats][cliente ' + row.id + ']', e.message);
+        console.error('[reconciliacao-chats][cliente ' + row.id + ']', erroZapiDetalhado(e, { clienteId: row.id, endpoint: 'chats' }) || e.message);
       }
     }
   } catch (e) {
@@ -5382,15 +5425,75 @@ function chatZapiEhGrupo(ch) {
   return !!(ch.isGroup || ch.group || id.includes('@g.us') || id.includes('@newsletter'));
 }
 
+function extrairValoresProfundos(obj, maxDepth = 4, prefixo = '', out = []) {
+  if (!obj || typeof obj !== 'object' || maxDepth < 0) return out;
+  if (Array.isArray(obj)) {
+    for (let i = 0; i < Math.min(obj.length, 8); i++) extrairValoresProfundos(obj[i], maxDepth - 1, prefixo + '[' + i + ']', out);
+    return out;
+  }
+  for (const [k, v] of Object.entries(obj)) {
+    const caminho = prefixo ? prefixo + '.' + k : k;
+    if (v == null) continue;
+    if (typeof v === 'string' || typeof v === 'number') out.push({ caminho, valor: String(v) });
+    else if (typeof v === 'object') extrairValoresProfundos(v, maxDepth - 1, caminho, out);
+  }
+  return out;
+}
+
+function chavePareceTelefoneOuChat(caminho) {
+  const k = String(caminho || '').toLowerCase();
+  return /(^|\.)(phone|phonenumber|number|waid|wa_id|jid|id|chatid|chat_id|remotejid|remote_jid|participant|sender|from|to|owner|user|contact)/i.test(k);
+}
+
+function normalizarCandidatoChatTelefone(valor) {
+  if (valor == null) return null;
+  let s = String(valor).trim();
+  if (!s) return null;
+  if (s.includes('@g.us') || s.includes('@newsletter')) return null;
+  // WhatsApp costuma vir como 5581999999999@c.us, 5581999999999@s.whatsapp.net ou em campos nested.
+  s = s.replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, '').replace(/@lid$/i, '');
+  return s;
+}
+
 function extrairTelefoneChatZapi(ch, cliente = null) {
-  const candidatos = [
-    ch.phone, ch.phoneNumber, ch.contactPhone, ch.id, ch.chatId, ch.remoteJid,
-    ch.jid, ch.waId, ch.participantPhone, ch.senderPhone,
+  if (!ch) return null;
+  const candidatosDiretos = [
+    ch.phone, ch.phoneNumber, ch.contactPhone, ch.contact && ch.contact.phone, ch.contact && ch.contact.number,
+    ch.id, ch.chatId, ch.chat_id, ch.remoteJid, ch.remote_jid, ch.jid, ch.waId, ch.wa_id,
+    ch.participantPhone, ch.senderPhone, ch.from, ch.to, ch.number,
     ch.lastMessage && ch.lastMessage.phone,
     ch.lastMessage && ch.lastMessage.senderPhone,
-    ch.lastMessage && ch.lastMessage.remoteJid
-  ];
-  return primeiroTelefoneValido(candidatos, cliente);
+    ch.lastMessage && ch.lastMessage.remoteJid,
+    ch.lastMessage && ch.lastMessage.chatId,
+    ch.lastMessage && ch.lastMessage.from,
+    ch.lastMessage && ch.lastMessage.to,
+    ch.lastMessageData && ch.lastMessageData.phone,
+    ch.lastMessageData && ch.lastMessageData.senderPhone,
+    ch.lastMessageData && ch.lastMessageData.remoteJid
+  ].map(normalizarCandidatoChatTelefone).filter(Boolean);
+
+  const profundos = extrairValoresProfundos(ch, 4)
+    .filter(x => chavePareceTelefoneOuChat(x.caminho))
+    .map(x => normalizarCandidatoChatTelefone(x.valor))
+    .filter(Boolean);
+
+  // Primeiro tenta campos explícitos. Depois tenta qualquer campo nested com cara de jid/telefone.
+  return primeiroTelefoneValido([...candidatosDiretos, ...profundos], cliente);
+}
+
+function resumirChatSemTelefone(ch) {
+  const vals = extrairValoresProfundos(ch, 3);
+  const camposChave = vals
+    .filter(x => chavePareceTelefoneOuChat(x.caminho))
+    .slice(0, 18)
+    .map(x => ({ campo: x.caminho, valor: limitarTextoDebug(String(x.valor || ''), 80) }));
+  return {
+    keys: Object.keys(ch || {}).slice(0, 30),
+    isGroup: !!(ch && (ch.isGroup || ch.group)),
+    id: limitarTextoDebug(ch && (ch.id || ch.chatId || ch.remoteJid || ch.jid || ''), 120),
+    name: limitarTextoDebug(ch && (ch.name || ch.pushName || ch.contactName || ch.shortName || ''), 120),
+    camposChave
+  };
 }
 
 function extrairNomeChatZapi(ch, telefone) {
@@ -5539,16 +5642,39 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
     throw new Error('Z-API não configurada para este cliente.');
   }
 
-  const data = await zapiListarChats(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token);
-  const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : []));
+  let data;
+  try {
+    data = await zapiListarChats(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token);
+  } catch (e) {
+    const detalhe = erroZapiDetalhado(e, { clienteId: cliente.id, endpoint: 'chats' });
+    await registrarErroZapi(cliente.id, detalhe, { endpoint: 'chats', status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null }).catch(() => null);
+    logEstruturado('error', 'zapi_chats_falha', {
+      cliente_id: cliente.id,
+      cliente_nome: cliente.nome,
+      endpoint: 'chats',
+      status: e?.response?.status || e?.movatakZapi?.status || null,
+      erro: detalhe,
+      tem_instance: !!cliente.zapi_instance,
+      tem_token: !!cliente.zapi_token,
+      tem_client_token: !!cliente.zapi_client_token,
+      instance_hint: mascararTokenDebug(cliente.zapi_instance)
+    });
+    throw new Error(detalhe || e.message);
+  }
+  const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : (Array.isArray(data.result) ? data.result : [])));
   const max = Math.max(1, Math.min(parseInt(opts.max || opts.limit || 300, 10) || 300, 1000));
   const chats = chatsRaw.slice(0, max);
 
   let criados = 0, atualizados = 0, mensagensCriadas = 0, marcadosNaoLidos = 0, ignorados = 0, semTelefone = 0;
+  const amostrasSemTelefone = [];
   for (const ch of chats) {
     if (!ch || chatZapiEhGrupo(ch)) { ignorados++; continue; }
     const telefone = extrairTelefoneChatZapi(ch, cliente);
-    if (!telefone) { semTelefone++; continue; }
+    if (!telefone) {
+      semTelefone++;
+      if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch));
+      continue;
+    }
 
     const { lead, criado } = await garantirLeadParaChatWhatsapp(cliente, ch, telefone);
     if (criado) criados++; else atualizados++;
@@ -5607,34 +5733,105 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
     mensagensCriadas,
     marcadosNaoLidos,
     ignorados,
-    semTelefone
+    semTelefone,
+    amostrasSemTelefone
   }).catch(() => null);
 
-  return { ok: true, total: chats.length, criados, atualizados, mensagensCriadas, marcadosNaoLidos, ignorados, semTelefone };
+  if (semTelefone > 0) {
+    logEstruturado('warn', 'zapi_chats_sem_telefone', {
+      cliente_id: cliente.id,
+      cliente_nome: cliente.nome,
+      total: chats.length,
+      semTelefone,
+      amostras: amostrasSemTelefone
+    });
+  }
+
+  return { ok: true, total: chats.length, criados, atualizados, mensagensCriadas, marcadosNaoLidos, ignorados, semTelefone, amostrasSemTelefone };
 }
 
 app.get('/movatak/admin/clientes/:id/zapi/chats', authMovatak, async (req, res) => {
   try {
-    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    const c = await query('SELECT id, nome, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
     if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
     const cli = c.rows[0];
     const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
     res.json(data);
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+  } catch(e) {
+    const detalhe = erroZapiDetalhado(e, { clienteId: req.params.id, endpoint: 'chats' });
+    res.status(500).json({ error: detalhe || e.message, status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null });
+  }
+});
+
+app.get('/movatak/admin/clientes/:id/zapi/diagnostico', authMovatak, async (req, res) => {
+  try {
+    const c = await query('SELECT id, nome, zapi_instance, zapi_token, zapi_client_token, whatsapp FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const cli = c.rows[0];
+    const base = {
+      cliente_id: cli.id,
+      cliente_nome: cli.nome,
+      configuracao: {
+        tem_instance: !!cli.zapi_instance,
+        tem_token: !!cli.zapi_token,
+        tem_client_token: !!cli.zapi_client_token,
+        instance_hint: mascararTokenDebug(cli.zapi_instance),
+        whatsapp_hint: mascararTokenDebug(cli.whatsapp)
+      }
+    };
+    if (!cli.zapi_instance || !cli.zapi_token || !cli.zapi_client_token) {
+      return res.json({ ok: false, ...base, erro: 'Z-API incompleta para este cliente.' });
+    }
+    let data;
+    try {
+      data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
+    } catch (e) {
+      return res.json({
+        ok: false,
+        ...base,
+        zapi: { endpoint: 'chats', status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null },
+        erro: erroZapiDetalhado(e, { clienteId: cli.id, endpoint: 'chats' }) || e.message
+      });
+    }
+    const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : (Array.isArray(data.result) ? data.result : [])));
+    const amostrasSemTelefone = [];
+    let grupos = 0, comTelefone = 0, semTelefone = 0, comEstadoUnread = 0, naoLidos = 0;
+    for (const ch of chatsRaw.slice(0, Math.min(chatsRaw.length, 1000))) {
+      if (chatZapiEhGrupo(ch)) { grupos++; continue; }
+      const tel = extrairTelefoneChatZapi(ch, cli);
+      if (tel) comTelefone++; else { semTelefone++; if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch)); }
+      if (chatZapiTemEstadoUnreadConhecido(ch)) comEstadoUnread++;
+      if (chatZapiTemNaoLida(ch)) naoLidos++;
+    }
+    res.json({
+      ok: true,
+      ...base,
+      total_recebido: chatsRaw.length,
+      analisado: Math.min(chatsRaw.length, 1000),
+      comTelefone,
+      semTelefone,
+      grupos,
+      comEstadoUnread,
+      naoLidos,
+      amostrasSemTelefone
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.post('/movatak/admin/clientes/:id/zapi/sincronizar-chats', authMovatak, async (req, res) => {
   try {
     const r = await sincronizarChatsCliente(req.params.id, req.body || {});
     res.json(r);
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+  } catch(e) { res.status(500).json({ error: erroZapiDetalhado(e, { clienteId: req.params.id, endpoint: 'chats' }) || e.message }); }
 });
 
 app.post('/movatak/vendedor/zapi/sincronizar-chats', authVendedor, async (req, res) => {
   try {
     const r = await sincronizarChatsCliente(req.vendedor.cliente_id, req.body || {});
     res.json(r);
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+  } catch(e) { res.status(500).json({ error: erroZapiDetalhado(e, { clienteId: req.vendedor.cliente_id, endpoint: 'chats' }) || e.message }); }
 });
 
 // Webhook opcional da Z-API para status de mensagem: enviado/entregue/lido/falha.
