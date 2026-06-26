@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.8-senhas-scrypt';
+const MOVATAK_VERSION = 'v2.7.9-grupos-inbox';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -3165,8 +3165,57 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       keys: Object.keys(body).slice(0, 30)
     }));
 
-    if (body.isGroup || body.isNewsletter) {
-      logDebug('[zapi][ignorado] grupo ou newsletter');
+    if (body.isNewsletter) {
+      logDebug('[zapi][ignorado] newsletter');
+      return;
+    }
+
+    // ===== GRUPOS =====
+    // Antes todo grupo era descartado. Agora a conversa de grupo entra na inbox
+    // (marcada como is_grupo), mas NÃO passa pela maquinaria de funil/follow-up/
+    // questionário/comandos — que pressupõem um contato individual. O usuário decide
+    // depois o que fazer com cada grupo. Fluxo isolado e curto, com retorno próprio.
+    if (body.isGroup) {
+      try {
+        if (!instanceId) return;
+        const rcg = await query('SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
+        if (!rcg.rows.length) return;
+        const clienteG = rcg.rows[0];
+        // Identificador estável do grupo: o id @g.us (phone/chatId do payload).
+        const grupoId = String(body.phone || body.chatId || body.remoteJid || '').trim();
+        if (!grupoId) { logDebug('[zapi][grupo][ignorado] sem grupo_id'); return; }
+        const nomeGrupo = body.chatName || body.senderName || body.notifyName || ('Grupo ' + grupoId.slice(0, 8));
+        const ehSaida = !!body.fromMe;
+        // Localiza o lead-grupo existente ou cria um novo.
+        let leadG = await query(
+          'SELECT id, nome FROM movatak_leads WHERE cliente_id=$1 AND grupo_id=$2 LIMIT 1',
+          [clienteG.id, grupoId]
+        );
+        let leadGId;
+        if (leadG.rows.length) {
+          leadGId = leadG.rows[0].id;
+          await query(
+            'UPDATE movatak_leads SET atualizado_em=NOW(), nao_lida=$2 WHERE id=$1',
+            [leadGId, ehSaida ? false : true]
+          ).catch(() => null);
+        } else {
+          const novo = await query(
+            `INSERT INTO movatak_leads (cliente_id, nome, etapa, is_grupo, grupo_id, origem, nao_lida, criado_em, atualizado_em)
+             VALUES ($1, $2, 'lead', true, $3, 'grupo', $4, NOW(), NOW())
+             RETURNING id`,
+            [clienteG.id, nomeGrupo, grupoId, ehSaida ? false : true]
+          );
+          leadGId = novo.rows[0].id;
+        }
+        // Registra a mensagem do grupo. Em grupo, prefixamos o remetente no conteúdo
+        // pra você saber quem falou (vários participantes no mesmo chat).
+        const midiaG = extrairMidiaPayloadZapi(body);
+        const remetente = ehSaida ? '' : (body.senderName ? body.senderName + ': ' : '');
+        const conteudoG = remetente + (texto || '');
+        await registrarConversa(leadGId, clienteG.id, ehSaida ? 'saida' : 'entrada', conteudoG, midiaG.url, midiaG.tipo, body.messageId || body.id || null, null).catch(() => null);
+      } catch (e) {
+        logEstruturado('error', 'webhook_grupo_falha', { msg: e.message });
+      }
       return;
     }
 
@@ -5856,6 +5905,10 @@ async function garantirEstruturaQuestionario() {
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS nao_lida BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
+  // Suporte a conversas de grupo na inbox (entram, mas sem disparar automação).
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS is_grupo BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS grupo_id TEXT`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_grupo ON movatak_leads(cliente_id, is_grupo)`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -8174,6 +8227,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
                   COALESCE(l.nao_lida,false) AS lead_nao_lida, COALESCE(l.arquivado,false) AS arquivado,
+                  COALESCE(l.is_grupo,false) AS is_grupo,
                   s.nome AS setor_nome, s.cor AS setor_cor,
                   l.criado_em, l.atualizado_em, l.convertido_em,
                   v.nome AS vendedor_nome,
@@ -8202,8 +8256,10 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
     );
 
     // Leads ativos (não arquivados) — vão para o kanban central.
+    // Grupos NÃO entram no kanban (não têm funil/setor/vendedor); só aparecem na inbox.
     const leadsAtivos = leads.rows.filter(l => !l.arquivado);
     for (const lead of leadsAtivos) {
+      if (lead.is_grupo) continue;
       let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
       if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
       if (!coluna) coluna = colunas[0];
