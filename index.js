@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.7-indices-performance';
+const MOVATAK_VERSION = 'v2.7.8-senhas-scrypt';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -208,9 +208,46 @@ function normalizarPermissoes(permissoes) {
   return { ...DEFAULT_CLIENTE_PERMISSOES, ...(permissoes || {}) };
 }
 
-function hashSenha(senha) {
+// ============================================================
+// Senhas (Bloco 2): scrypt nativo com salt aleatório por senha.
+// Formato do hash novo: "scrypt$<salt_hex>$<derivado_hex>".
+// Hashes antigos (SHA-256 com salt fixo) continuam sendo aceitos no login e são
+// convertidos para scrypt automaticamente no primeiro acesso bem-sucedido —
+// ninguém é derrubado pela migração.
+// ============================================================
+function hashSenhaSHA256Legado(senha) {
+  // Mantido SÓ para validar senhas antigas já gravadas. Não usar para novas senhas.
   if (!senha) return null;
   return crypto.createHash('sha256').update(String(senha) + ':' + (process.env.MOVATAK_SECRET || 'movatak')).digest('hex');
+}
+
+// Gera hash scrypt novo. Usado em toda criação/troca de senha.
+function hashSenha(senha) {
+  if (!senha) return null;
+  const salt = crypto.randomBytes(16);
+  const derivado = crypto.scryptSync(String(senha), salt, 64);
+  return 'scrypt$' + salt.toString('hex') + '$' + derivado.toString('hex');
+}
+
+// Verifica uma senha contra o hash salvo, seja ele scrypt (novo) ou SHA-256 (antigo).
+// Retorna { ok, precisaMigrar } — precisaMigrar=true quando o hash antigo bateu e
+// deve ser regravado em scrypt.
+function verificarSenha(senha, hashSalvo) {
+  if (!senha || !hashSalvo) return { ok: false, precisaMigrar: false };
+  if (String(hashSalvo).startsWith('scrypt$')) {
+    const [, saltHex, derivadoHex] = String(hashSalvo).split('$');
+    if (!saltHex || !derivadoHex) return { ok: false, precisaMigrar: false };
+    try {
+      const salt = Buffer.from(saltHex, 'hex');
+      const derivado = crypto.scryptSync(String(senha), salt, 64);
+      const esperado = Buffer.from(derivadoHex, 'hex');
+      const ok = derivado.length === esperado.length && crypto.timingSafeEqual(derivado, esperado);
+      return { ok, precisaMigrar: false };
+    } catch (e) { return { ok: false, precisaMigrar: false }; }
+  }
+  // Hash antigo (SHA-256): compara e sinaliza migração se bater.
+  const ok = hashSenhaSHA256Legado(senha) === String(hashSalvo);
+  return { ok, precisaMigrar: ok };
 }
 
 function gerarToken(prefixo) {
@@ -3882,18 +3919,24 @@ app.post('/movatak/vendedor/login', rateLimit({ janelaMs: 60000, max: 5, chave: 
     const { email, senha } = req.body || {};
     if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
     const r = await query(
-      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, v.acesso_token, c.nome AS cliente_nome
+      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, v.acesso_token, v.senha_hash, c.nome AS cliente_nome
          FROM movatak_vendedores v
          JOIN movatak_clientes c ON c.id = v.cliente_id
-        WHERE LOWER(v.email_acesso) = LOWER($1) AND v.senha_hash = $2 AND v.ativo = true AND c.ativo = true
+        WHERE LOWER(v.email_acesso) = LOWER($1) AND v.ativo = true AND c.ativo = true
         LIMIT 1`,
-      [String(email).trim().toLowerCase(), hashSenha(senha)]
+      [String(email).trim().toLowerCase()]
     );
-    if (!r.rows.length) {
+    const cand = r.rows[0];
+    const verif = cand ? verificarSenha(senha, cand.senha_hash) : { ok: false, precisaMigrar: false };
+    if (!cand || !verif.ok) {
       logEstruturado('warn', 'login_vendedor_falha', { req_id: req.id, email: String(email).trim().toLowerCase(), ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim() });
       return res.status(401).json({ error: 'Acesso inválido.' });
     }
-    const vend = r.rows[0];
+    // Migração transparente: senha antiga (SHA-256) que bateu é regravada em scrypt.
+    if (verif.precisaMigrar) {
+      await query('UPDATE movatak_vendedores SET senha_hash = $1 WHERE id = $2', [hashSenha(senha), cand.id]).catch(() => null);
+    }
+    const vend = cand;
     logEstruturado('info', 'login_vendedor_ok', { req_id: req.id, vendedor_id: vend.id, cliente_id: vend.cliente_id });
     // Setores que este vendedor acessa — definem o que ele vê no kanban.
     const setoresR = await query(
