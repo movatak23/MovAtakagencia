@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.17-inbox-outgoing-chat-fix';
+const MOVATAK_VERSION = 'v2.7.19-inbound-link-validated';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -3100,12 +3100,44 @@ async function buscarLeadPorTelefone(clienteId, telefone, extraWhere = '', extra
 }
 
 function extrairTextoPayloadZapi(body) {
-  return (body.text && body.text.message) ? String(body.text.message)
-    : (typeof body.text === 'string') ? String(body.text)
-    : (body.image && body.image.caption) ? String(body.image.caption || '')
-    : (body.video && body.video.caption) ? String(body.video.caption || '')
-    : (body.document && body.document.caption) ? String(body.document.caption || '')
-    : (body.caption ? String(body.caption) : '');
+  // Z-API pode entregar texto em formatos diferentes para mensagens recebidas
+  // e enviadas. A versão anterior lia quase só body.text.message; quando o lead
+  // respondia com payload em body.message/body.body/conversation, a mensagem era
+  // tratada como vazia e não entrava no CRM.
+  if (!body || typeof body !== 'object') return '';
+  const valores = [
+    body.text && body.text.message,
+    typeof body.text === 'string' ? body.text : null,
+    body.messageText,
+    body.msg,
+    body.body,
+    body.content,
+    body.conversation,
+    body.message && typeof body.message === 'string' ? body.message : null,
+    body.message && body.message.text,
+    body.message && body.message.conversation,
+    body.message && body.message.extendedTextMessage && body.message.extendedTextMessage.text,
+    body.message && body.message.imageMessage && body.message.imageMessage.caption,
+    body.message && body.message.videoMessage && body.message.videoMessage.caption,
+    body.message && body.message.documentMessage && (body.message.documentMessage.caption || body.message.documentMessage.title || body.message.documentMessage.fileName),
+    body.image && body.image.caption,
+    body.video && body.video.caption,
+    body.document && body.document.caption,
+    body.caption
+  ];
+  for (const v of valores) {
+    if (v === undefined || v === null) continue;
+    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+      const txt = String(v).trim();
+      if (txt) return txt;
+    }
+  }
+  const tipo = String(body.type || body.messageType || '').toLowerCase();
+  if (body.audio || tipo.includes('audio') || tipo.includes('ptt')) return 'Áudio';
+  if (body.image || tipo.includes('image')) return 'Imagem';
+  if (body.video || tipo.includes('video')) return 'Vídeo';
+  if (body.document || tipo.includes('document') || tipo.includes('file')) return 'Documento';
+  return '';
 }
 
 function extrairMidiaPayloadZapi(body) {
@@ -3337,8 +3369,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // Identificador do chat: telefone para privado; JID @g.us para grupo.
     let telefone     = extrairIdentificadorChatPayload(body);
     if (isGrupoWhatsapp) chatLid = extrairGrupoIdPayload(body) || chatLid || telefone;
-    const texto      = (body.text && body.text.message) ? body.text.message
-                       : (typeof body.text === 'string' ? body.text : '');
+    const texto      = extrairTextoPayloadZapi(body);
     const replyPayload = extrairReplyPayloadZapi(body);
 
 
@@ -3410,7 +3441,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
     if (eventoStatusZapi) {
-      const chatIdStatus = normalizarChatIdWhatsapp(isGrupoWhatsapp ? (extrairGrupoIdPayload(body) || chatLid) : (extrairChatIdBrutoPayload(body) || telefone));
+      const chatIdStatus = normalizarChatIdWhatsapp(isGrupoWhatsapp ? (extrairGrupoIdPayload(body) || chatLid) : (telefone || chatLid || extrairChatIdBrutoPayload(body)));
       const leadStatus = chatIdStatus ? await localizarLeadPorPayload(cliente.id, chatIdStatus, chatLid || chatIdStatus, false).catch(() => null) : null;
       const tipoStatus = String(body.type || '').toLowerCase();
       const unreadConhecidoStatus = tipoStatus === 'read' || body.unread === true || body.isUnread === true || body.messagesUnread != null || body.unreadCount != null;
@@ -3435,7 +3466,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     const chatIdWebhook = normalizarChatIdWhatsapp(
       isGrupoWhatsapp
         ? (extrairGrupoIdPayload(body) || chatLid || extrairChatIdBrutoPayload(body))
-        : (extrairChatIdBrutoPayload(body) || chatLid || telefone)
+        // Para chat privado, o identificador correto é o telefone filtrado do outro lado.
+        // Usar extrairChatIdBrutoPayload primeiro podia pegar o número da própria instância
+        // e atualizar o Inbox no chat errado, fazendo respostas dos leads sumirem.
+        : (telefone || chatLid || extrairChatIdBrutoPayload(body))
     );
     const midiaSnapshot = extrairMidiaPayloadZapi(body);
     if (chatIdWebhook) {
@@ -3559,7 +3593,14 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
             );
             throw e;
           });
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload).catch(() => null);
+          const msgIdNovoFromMe = body.messageId || body.id || null;
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdNovoFromMe, replyPayload).catch(() => null);
+          await vincularWhatsappChatAoLead(cliente, { id: novoLeadFromMe.rows[0].id, telefone, nome: isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)), chat_lid: chatIdFromMe || chatLid }, {
+            chatId: chatIdFromMe || chatLid || telefone, telefone, isGroup: isGrupoWhatsapp,
+            nome: isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)),
+            fromMe: true, lastMessageText: texto || (midiaFromMe.tipo || ''), midiaTipo: midiaFromMe.tipo,
+            lastMessageAt: new Date().toISOString(), msgId: msgIdNovoFromMe, rawPayload: body
+          }).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
         return;
@@ -3596,6 +3637,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         } else {
           logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
         }
+        await vincularWhatsappChatAoLead(cliente, leadFromMe, {
+          chatId: chatIdFromMe || chatLid || telefone, telefone, isGroup: isGrupoWhatsapp,
+          nome: isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)),
+          fromMe: true, lastMessageText: texto || (midiaFromMe.tipo || ''), midiaTipo: midiaFromMe.tipo,
+          lastMessageAt: new Date().toISOString(), msgId: msgIdFromMe, rawPayload: body
+        }).catch(() => null);
       }
 
       if (isGrupoWhatsapp) {
@@ -3774,7 +3821,13 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && (texto || midiaRecebida.url)) {
       const msgIdEntrada = body.messageId || body.id || null;
       const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
+      await registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
+      await vincularWhatsappChatAoLead(cliente, lead, {
+        chatId: chatIdWebhook || chatLid || telefone, telefone, isGroup: isGrupoWhatsapp,
+        nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
+        fromMe: false, lastMessageText: texto || (midiaRecebida.tipo || ''), midiaTipo: midiaRecebida.tipo,
+        lastMessageAt: new Date().toISOString(), msgId: msgIdEntrada, rawPayload: body
+      }).catch(() => null);
     }
 
     // Grupos devem espelhar o WhatsApp no Inbox/histórico, mas não devem acionar
@@ -3801,6 +3854,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       });
       const msgIdGrupo = body.messageId || body.id || null;
       await registrarConversa(novoGrupo.rows[0].id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdGrupo, replyPayload).catch(() => null);
+      await vincularWhatsappChatAoLead(cliente, { id: novoGrupo.rows[0].id, telefone, nome: nomeGrupoOuContatoPayload(body, telefone), chat_lid: chatLid || telefone }, {
+        chatId: chatLid || telefone, telefone, isGroup: true, nome: nomeGrupoOuContatoPayload(body, telefone),
+        fromMe: false, lastMessageText: texto || (midiaRecebida.tipo || ''), midiaTipo: midiaRecebida.tipo,
+        lastMessageAt: new Date().toISOString(), msgId: msgIdGrupo, rawPayload: body
+      }).catch(() => null);
       await registrarEventoLead(novoGrupo.rows[0].id, cliente.id, 'grupo_criado_whatsapp', 'Grupo criado no Inbox a partir do WhatsApp', { chat_lid: chatLid || telefone }).catch(() => null);
       return;
     }
@@ -3977,6 +4035,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
       const msgIdNovoLead = body.messageId || body.id || null;
       await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload).catch(() => null);
+      await vincularWhatsappChatAoLead(cliente, { id: novoLead.rows[0].id, telefone, nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone), chat_lid: chatIdWebhook || chatLid }, {
+        chatId: chatIdWebhook || chatLid || telefone, telefone, isGroup: false,
+        nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
+        fromMe: false, lastMessageText: texto || (midiaNovoLead.tipo || ''), midiaTipo: midiaNovoLead.tipo,
+        lastMessageAt: new Date().toISOString(), msgId: msgIdNovoLead, rawPayload: body
+      }).catch(() => null);
 
       // Decide se inicia o questionário:
       // - Campanha com template de questionário vinculado → usa o questionário do template.
@@ -4019,6 +4083,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
       await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload).catch(() => null);
+      await vincularWhatsappChatAoLead(cliente, { id: novoContato.rows[0].id, telefone, nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone), chat_lid: chatIdWebhook || chatLid }, {
+        chatId: chatIdWebhook || chatLid || telefone, telefone, isGroup: false,
+        nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
+        fromMe: false, lastMessageText: texto || (midiaNovoContato.tipo || ''), midiaTipo: midiaNovoContato.tipo,
+        lastMessageAt: new Date().toISOString(), msgId: msgIdNovoContato, rawPayload: body
+      }).catch(() => null);
       await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
       console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
     }
@@ -6022,6 +6092,60 @@ async function upsertWhatsappChat(cliente, info = {}) {
     ]
   ).catch(e => { console.error('[whatsapp_chats][upsert]', e.message); return { rows: [] }; });
   return r.rows[0] || null;
+}
+
+
+async function vincularWhatsappChatAoLead(cliente, lead, opts = {}) {
+  if (!cliente || !cliente.id || !lead || !lead.id) return null;
+  const chatId = normalizarChatIdWhatsapp(opts.chatId || opts.chat_id || lead.chat_lid || opts.telefone || lead.telefone);
+  if (!chatId) return null;
+  const fromMe = !!opts.fromMe;
+  const unreadCount = fromMe ? 0 : Math.max(1, parseInt(opts.unreadCount ?? 1, 10) || 1);
+  const lastMessageAt = opts.lastMessageAt || new Date().toISOString();
+  const lastMessageText = opts.lastMessageText != null ? String(opts.lastMessageText) : (opts.midiaTipo || '');
+
+  await upsertWhatsappChat(cliente, {
+    chatId,
+    telefone: opts.isGroup ? null : (opts.telefone || lead.telefone || extrairDigitosTelefone(chatId)),
+    nome: opts.nome || lead.nome || chatId,
+    isGroup: !!opts.isGroup,
+    unreadKnown: true,
+    unreadCount,
+    lastMessageText,
+    lastMessageAt,
+    lastMessageFromMe: fromMe,
+    lastMessageMsgId: opts.msgId || null,
+    leadId: lead.id,
+    rawPayload: opts.rawPayload || {}
+  }).catch(e => { console.error('[whatsapp_chats][vincular-lead]', e.message); return null; });
+
+  // Mantém o modelo legado consistente para a UI atual e para o fallback do Inbox.
+  // Antes a mensagem podia ser salva em movatak_conversas, mas o chat novo ficava
+  // sem lead_id em movatak_whatsapp_chats e/ou o lead não recebia nao_lida=true.
+  if (fromMe) {
+    await query(
+      `UPDATE movatak_leads
+          SET chat_lid = COALESCE($2, chat_lid),
+              whatsapp_last_msg_em = COALESCE($3::timestamptz, whatsapp_last_msg_em),
+              whatsapp_unread_count = 0,
+              nao_lida = false,
+              atualizado_em = NOW()
+        WHERE id = $1`,
+      [lead.id, chatId, lastMessageAt]
+    ).catch(() => null);
+  } else {
+    await query(
+      `UPDATE movatak_leads
+          SET chat_lid = COALESCE($2, chat_lid),
+              whatsapp_last_msg_em = COALESCE($3::timestamptz, NOW()),
+              whatsapp_unread_count = GREATEST(COALESCE(whatsapp_unread_count,0), $4),
+              nao_lida = true,
+              atualizado_em = NOW()
+        WHERE id = $1`,
+      [lead.id, chatId, lastMessageAt, unreadCount]
+    ).catch(() => null);
+  }
+  return true;
 }
 
 async function atualizarWhatsappChatPorLead(leadId, patch = {}) {
