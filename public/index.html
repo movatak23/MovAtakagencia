@@ -511,7 +511,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.1-agenda-status-delete-colunas';
+const PAINEL_VERSION = 'v2.7.0-nicho-agenda-inicial';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -4613,11 +4613,11 @@ function garantirModalAgendaFunil() {
   modal.className = 'modal-overlay';
   modal.id = 'modal-agenda-funil';
   modal.innerHTML = `
-    <div class="modal" style="max-width:1080px;position:relative;max-height:90vh;overflow-y:auto">
+    <div class="modal" style="max-width:920px;position:relative;max-height:90vh;overflow-y:auto">
       <button class="modal-x" onclick="fecharAgendaFunil()" title="Fechar">✕</button>
       <h3>Agenda</h3>
       <div class="fu-hint" id="agenda-funil-sub" style="margin-bottom:14px">Agendamentos integrados ao lead e ao kanban.</div>
-      <div style="display:grid;grid-template-columns:390px minmax(420px,1fr);gap:16px">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
         <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px">
           <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;margin-bottom:10px">Novo agendamento</div>
           <label class="fu-label">Lead</label>
@@ -4629,7 +4629,7 @@ function garantirModalAgendaFunil() {
             <div><label class="fu-label">Hora</label><input type="time" id="agenda-hora" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></div>
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-            <div><label class="fu-label">Tipo</label><select id="agenda-tipo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="atendimento">Atendimento</option><option value="consulta">Consulta</option><option value="avaliacao">Avaliação</option><option value="instalacao">Instalação</option><option value="suporte">Suporte</option><option value="retorno">Retorno</option><option value="reuniao">Reunião</option><option value="corte">Corte</option><option value="barba">Barba</option><option value="orcamento">Orçamento</option><option value="visita_tecnica">Visita técnica</option></select></div>
+            <div><label class="fu-label">Tipo</label><select id="agenda-tipo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="atendimento">Atendimento</option><option value="consulta">Consulta</option><option value="avaliacao">Avaliação</option><option value="instalacao">Instalação</option><option value="suporte">Suporte</option><option value="retorno">Retorno</option><option value="reuniao">Reunião</option></select></div>
             <div><label class="fu-label">Coluna ao agendar</label><select id="agenda-coluna" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="">Automática</option></select></div>
           </div>
           <label class="fu-label">Observação</label>
@@ -4639,15 +4639,9 @@ function garantirModalAgendaFunil() {
           <div id="agenda-status" class="fu-hint" style="margin-top:8px"></div>
         </div>
         <div>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
             <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase">Próximos agendamentos</div>
-            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <select id="agenda-filtro-status" class="funil-toolbar-select" style="min-width:150px;padding:6px 10px" onchange="carregarAgendaFunil()">
-                <option value="">Todos</option><option value="agendado">Agendado</option><option value="confirmado">Confirmado</option><option value="compareceu">Compareceu</option><option value="faltou">Faltou</option><option value="reagendar">Reagendar</option><option value="concluido">Concluído</option><option value="cancelado">Cancelado</option>
-              </select>
-              <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="agenda-status-mover" checked> mover no kanban ao mudar status</label>
-              <button class="btn-cancel" style="padding:6px 10px;font-size:12px" onclick="carregarAgendaFunil()">Atualizar</button>
-            </div>
+            <button class="btn-cancel" style="padding:6px 10px;font-size:12px" onclick="carregarAgendaFunil()">Atualizar</button>
           </div>
           <div id="agenda-lista"><div class="fu-hint">Carregando...</div></div>
         </div>
@@ -4695,78 +4689,19 @@ async function carregarAgendaFunil() {
   if (!lista || !funilState.clienteId) return;
   lista.innerHTML = '<div class="fu-hint">Carregando...</div>';
   try {
-    const filtroStatus = document.getElementById('agenda-filtro-status')?.value || '';
-    const qs = '?dias=45' + (filtroStatus ? '&status=' + encodeURIComponent(filtroStatus) : '');
-    const itens = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos' + qs);
+    const itens = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=45');
     if (!itens.length) { lista.innerHTML = '<div class="fu-hint">Nenhum agendamento próximo.</div>'; return; }
-    const statusOptions = ['agendado','confirmado','compareceu','faltou','reagendar','concluido','cancelado'];
     lista.innerHTML = itens.map(a => {
       const data = new Date(a.inicio).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-      const leadNome = a.lead_nome || a.lead_telefone || 'Sem lead';
-      const statusAtual = a.status || 'agendado';
-      return `<div class="agenda-item-card" data-agendamento-id="${a.id}">
+      return `<div class="agenda-item-card">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-          <div style="min-width:0">
-            <strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(leadNome)} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div>
-          </div>
+          <div><strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong><div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div></div>
           <span style="font-size:11px;color:var(--accent);font-family:var(--mono);white-space:nowrap">${data}</span>
         </div>
         ${a.observacao ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">${escapeHtml(a.observacao)}</div>` : ''}
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:10px">
-          <select onchange="atualizarStatusAgendamento(${a.id}, this.value)" title="Status do agendamento" style="background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-size:11px;padding:6px 8px">
-            ${statusOptions.map(s => `<option value="${s}" ${s === statusAtual ? 'selected' : ''}>${rotuloStatusAgenda(s)}</option>`).join('')}
-          </select>
-          ${a.lead_id ? `<button class="btn-cancel" style="padding:6px 9px;font-size:11px" onclick="abrirPainelLead(${a.lead_id}, '${escapeHtml(leadNome).replace(/'/g, "\\'")}')">Abrir lead</button>` : ''}
-          <button class="btn-cancel" style="padding:6px 9px;font-size:11px" onclick="carregarAgendamentoNoFormulario(${a.id})">Duplicar horário</button>
-          <button class="btn-remove" style="border:1px solid var(--border2);border-radius:7px;padding:4px 8px" onclick="excluirAgendamentoFunil(${a.id})" title="Excluir agendamento">🗑</button>
-        </div>
       </div>`;
     }).join('');
-    window._agendaCache = itens;
   } catch (e) { lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>'; }
-}
-
-function rotuloStatusAgenda(status) {
-  const mapa = { agendado:'Agendado', confirmado:'Confirmado', compareceu:'Compareceu', faltou:'Faltou', reagendar:'Reagendar', concluido:'Concluído', cancelado:'Cancelado' };
-  return mapa[status] || status;
-}
-
-function carregarAgendamentoNoFormulario(id) {
-  const a = (window._agendaCache || []).find(x => Number(x.id) === Number(id));
-  if (!a) return;
-  const d = new Date(a.inicio);
-  const pad = n => String(n).padStart(2, '0');
-  const leadSel = document.getElementById('agenda-lead-id'); if (leadSel && a.lead_id) leadSel.value = String(a.lead_id);
-  const titulo = document.getElementById('agenda-titulo'); if (titulo) titulo.value = a.titulo || 'Atendimento agendado';
-  const data = document.getElementById('agenda-data'); if (data) data.value = d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
-  const hora = document.getElementById('agenda-hora'); if (hora) hora.value = pad(d.getHours()) + ':' + pad(d.getMinutes());
-  const tipo = document.getElementById('agenda-tipo'); if (tipo) tipo.value = a.tipo || 'atendimento';
-  const obs = document.getElementById('agenda-obs'); if (obs) obs.value = a.observacao || '';
-  const st = document.getElementById('agenda-status'); if (st) { st.style.color='var(--accent)'; st.textContent='Dados carregados no formulário. Ajuste e salve como novo agendamento.'; }
-}
-
-async function atualizarStatusAgendamento(id, status) {
-  const mover_kanban = !!document.getElementById('agenda-status-mover')?.checked;
-  const st = document.getElementById('agenda-status');
-  if (st) { st.style.color='var(--text2)'; st.textContent='Atualizando status...'; }
-  try {
-    await api('/movatak/admin/agendamentos/' + id, { method: 'PATCH', body: JSON.stringify({ status, mover_kanban }) });
-    if (st) { st.style.color='var(--green)'; st.textContent='✓ Status atualizado.'; }
-    await carregarAgendaFunil();
-    if (mover_kanban) await carregarFunilAtendimento();
-  } catch (e) { if (st) { st.style.color='var(--red)'; st.textContent='Erro: ' + e.message; } }
-}
-
-async function excluirAgendamentoFunil(id) {
-  if (!confirm('Excluir este agendamento? Esta ação não remove o lead, apenas o compromisso da agenda.')) return;
-  const st = document.getElementById('agenda-status');
-  if (st) { st.style.color='var(--text2)'; st.textContent='Excluindo agendamento...'; }
-  try {
-    await api('/movatak/admin/agendamentos/' + id, { method: 'DELETE' });
-    if (st) { st.style.color='var(--green)'; st.textContent='✓ Agendamento excluído.'; }
-    await carregarAgendaFunil();
-  } catch (e) { if (st) { st.style.color='var(--red)'; st.textContent='Erro: ' + e.message; } }
 }
 
 async function salvarAgendamentoFunil() {
@@ -5551,9 +5486,7 @@ function renderFunilAtendimento() {
       : '<span class="funil-sync pendente" title="Não sincronizado com o WhatsApp">Sem zap</span>';
     // ^ trocado de "WhatsApp OK"/"Sem sync" pra caber dentro da coluna sem cortar
     const ehSistema = SLUGS_SISTEMA.includes(col.etapa_sistema);
-    // Admin pode excluir qualquer coluna real do kanban. As colunas de vendedor não são renderizadas aqui
-    // e continuam sendo removidas apenas pela exclusão/desativação do vendedor.
-    const btnExcluir = `<button onclick="excluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
+    const btnExcluir = ehSistema ? '' : `<button onclick="excluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
             style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--red);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;margin-left:6px">🗑</button>`;
     return `<div class="funil-col" data-coluna="${col.id}" data-col-index="${col.__idx}"
               style="border-top:3px solid ${cor}"
@@ -6066,94 +5999,21 @@ async function atribuirSetorColuna(colunaId, setorId) {
   }
 }
 
-let _colunaExclusaoPendente = null;
-
-function garantirModalExcluirColuna() {
-  let modal = document.getElementById('modal-excluir-coluna-kanban');
-  if (modal) return modal;
-  modal = document.createElement('div');
-  modal.className = 'modal-overlay';
-  modal.id = 'modal-excluir-coluna-kanban';
-  modal.innerHTML = `
-    <div class="modal" style="max-width:560px;position:relative;border:1px solid var(--red)">
-      <button class="modal-x" onclick="fecharModalExcluirColuna()" title="Fechar">✕</button>
-      <h3 style="color:var(--red);margin-bottom:6px">Excluir coluna do kanban</h3>
-      <div id="excluir-coluna-resumo" class="fu-hint" style="margin-bottom:12px"></div>
-      <div style="background:rgba(239,68,68,.10);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:12px;margin-bottom:12px">
-        <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:6px">Riscos antes de prosseguir</div>
-        <ul style="margin:0 0 0 18px;padding:0;color:var(--text2);font-size:12px;line-height:1.55">
-          <li>A coluna será ocultada do kanban e não aparecerá mais para atendimento.</li>
-          <li>Leads dentro dela serão realocados para outra coluna ativa.</li>
-          <li>Comandos, cor, setor, ausência e vínculo de agenda dessa coluna deixam de ser usados.</li>
-          <li>A ação não remove colunas de vendedores. Essas só saem ao excluir/desativar o vendedor no menu de vendedores.</li>
-        </ul>
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text2);cursor:pointer;margin-bottom:12px">
-        <input type="checkbox" id="excluir-coluna-confirmacao" onchange="atualizarBotaoConfirmarExclusaoColuna()">
-        Entendo os riscos e desejo prosseguir.
-      </label>
-      <div id="excluir-coluna-status" style="font-size:12px;margin-bottom:8px"></div>
-      <div class="modal-btns">
-        <button class="btn-cancel" onclick="fecharModalExcluirColuna()">Cancelar</button>
-        <button class="btn-save" id="btn-confirmar-excluir-coluna" onclick="confirmarExclusaoColunaKanban()" disabled style="background:var(--red);border-color:var(--red)">Excluir coluna</button>
-      </div>
-    </div>`;
-  document.body.appendChild(modal);
-  return modal;
-}
-
-function atualizarBotaoConfirmarExclusaoColuna() {
-  const chk = document.getElementById('excluir-coluna-confirmacao');
-  const btn = document.getElementById('btn-confirmar-excluir-coluna');
-  if (btn) btn.disabled = !(chk && chk.checked);
-}
-
-function fecharModalExcluirColuna() {
-  const modal = document.getElementById('modal-excluir-coluna-kanban');
-  if (modal) modal.classList.remove('open');
-  _colunaExclusaoPendente = null;
-}
-
-function excluirColuna(colunaId, nome) {
+async function excluirColuna(colunaId, nome) {
   const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
-  if (!col) return;
   const qtdLeads = col && col.leads ? col.leads.length : 0;
-  const modal = garantirModalExcluirColuna();
-  _colunaExclusaoPendente = { id: Number(colunaId), nome: nome || col.nome || 'esta coluna', qtdLeads };
-  const resumo = document.getElementById('excluir-coluna-resumo');
-  const chk = document.getElementById('excluir-coluna-confirmacao');
-  const st = document.getElementById('excluir-coluna-status');
-  if (chk) chk.checked = false;
-  if (st) st.textContent = '';
-  atualizarBotaoConfirmarExclusaoColuna();
-  if (resumo) {
-    resumo.innerHTML = `Você está prestes a excluir a coluna <strong style="color:var(--text)">${escapeHtml(_colunaExclusaoPendente.nome)}</strong>.<br>` +
-      (qtdLeads ? `Ela contém <strong style="color:var(--amber)">${qtdLeads}</strong> lead(s), que serão realocados automaticamente.` : 'Ela não possui leads no momento.');
-  }
-  modal.classList.add('open');
-}
-
-async function confirmarExclusaoColunaKanban() {
-  if (!_colunaExclusaoPendente) return;
-  const chk = document.getElementById('excluir-coluna-confirmacao');
-  if (!chk || !chk.checked) return;
-  const btn = document.getElementById('btn-confirmar-excluir-coluna');
-  const stModal = document.getElementById('excluir-coluna-status');
+  const aviso = qtdLeads
+    ? `Excluir a etapa "${nome}"?\n\nOs ${qtdLeads} lead(s) desta etapa voltarão para "Novo contato". Esta ação não pode ser desfeita.`
+    : `Excluir a etapa "${nome}"?\n\nEsta ação não pode ser desfeita.`;
+  if (!confirm(aviso)) return;
   const status = document.getElementById('funil-status');
-  if (btn) { btn.disabled = true; btn.textContent = 'Excluindo...'; }
-  if (stModal) { stModal.style.color = 'var(--text2)'; stModal.textContent = 'Excluindo coluna e realocando leads...'; }
   if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Excluindo etapa...'; }
   try {
-    const resp = await api('/movatak/admin/funil/colunas/' + _colunaExclusaoPendente.id, { method: 'DELETE' });
-    fecharModalExcluirColuna();
-    const msg = resp && resp.destino_nome ? `Etapa excluída. Leads realocados para "${resp.destino_nome}".` : 'Etapa excluída.';
-    if (status) { status.style.color = 'var(--green)'; status.textContent = msg; }
+    await api('/movatak/admin/funil/colunas/' + colunaId, { method: 'DELETE' });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Etapa excluída.'; }
     await carregarFunilAtendimento();
   } catch (e) {
-    if (stModal) { stModal.style.color = 'var(--red)'; stModal.textContent = 'Erro: ' + e.message; }
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao excluir: ' + e.message; }
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Excluir coluna'; }
   }
 }
 
@@ -6606,8 +6466,6 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-toolbar-select{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);padding:9px 12px;font-family:var(--sans);font-size:12px;min-width:190px}
 .funil-toolbar-select:focus{outline:none;border-color:var(--accent)}
 .agenda-item-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
-.agenda-item-card select:focus{outline:none;border-color:var(--accent)}
-#modal-excluir-coluna-kanban .btn-save:disabled{opacity:.45;cursor:not-allowed}
 .funil-chat-col{background:#1c2030;border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
 .funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
 
