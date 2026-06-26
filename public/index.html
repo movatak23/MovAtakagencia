@@ -1843,12 +1843,12 @@ function painelTab(tab) {
   if (tab === 'conversa') {
     conv.style.display = ''; hist.style.display = 'none';
     tConv.style.borderBottomColor = 'var(--accent)'; tConv.style.color = 'var(--text)';
-    tHist.style.borderBottomColor = 'transparent'; tHist.style.color = '#a0aec0';
+    tHist.style.borderBottomColor = 'transparent'; tHist.style.color = 'var(--text2)';
     rolarConversaParaFim();
   } else {
     conv.style.display = 'none'; hist.style.display = '';
     tHist.style.borderBottomColor = 'var(--accent)'; tHist.style.color = 'var(--text)';
-    tConv.style.borderBottomColor = 'transparent'; tConv.style.color = '#a0aec0';
+    tConv.style.borderBottomColor = 'transparent'; tConv.style.color = 'var(--text2)';
   }
 }
 
@@ -1955,10 +1955,10 @@ function renderBolhaMensagemPainel(m) {
     ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:rgba(255,255,255,.70);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
     : '';
   const btnLidaZap = (!saida && m.id && m.msg_id)
-    ? `<button onclick="marcarMensagemZapComoLida(${Number(m.id)})" title="Marcar esta mensagem como lida no WhatsApp" style="background:none;border:none;color:#b8c0d9;cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✓</button>`
+    ? `<button onclick="marcarMensagemZapComoLida(${Number(m.id)})" title="Marcar esta mensagem como lida no WhatsApp" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✓</button>`
     : '';
   const btnApagar = podeApagar
-    ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : '#888'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
+    ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : 'var(--msg-time-in)'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
     : '';
   const statusTxt = saida && m.msg_status ? `<span class="zap-msg-status" title="Status WhatsApp: ${escapeHtml(m.msg_status)}"> · ${escapeHtml(formatarStatusZap(m.msg_status))}</span>` : '';
   return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
@@ -1967,7 +1967,7 @@ function renderBolhaMensagemPainel(m) {
       ${midiaHtml}
       ${texto ? `<div style="font-size:13px;line-height:1.4;color:var(--msg-text-out);white-space:pre-wrap">${texto}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
-        <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : '#888'}">${hora}</span>
+        <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : 'var(--msg-time-in)'}">${hora}</span>
         ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnEditar}${btnLidaZap}${btnApagar}
       </div>
     </div>
@@ -2041,6 +2041,23 @@ function renderConversaPainel(msgs) {
   if (box) box.innerHTML = painelConversasCache.map(renderBolhaMensagemPainel).join('');
   // Scroll robusto até a última mensagem (espera mídia carregar).
   rolarConversaParaFim();
+  // [DIAG-TEMA] Loga a cor de fundo computada da cadeia de elementos do chat.
+  try {
+    const ids = ['funil-painel','funil-chat-conteudo','painel-body-conversa','painel-conversa'];
+    ids.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) console.log('[DIAG-TEMA]', id, '→ bg:', getComputedStyle(el).backgroundColor);
+    });
+    let el = document.getElementById('painel-conversa');
+    let chain = [];
+    while (el && chain.length < 12) {
+      const bg = getComputedStyle(el).backgroundColor;
+      chain.push((el.id || el.className || el.tagName) + '=' + bg);
+      el = el.parentElement;
+    }
+    console.log('[DIAG-TEMA] cadeia pai→raiz:', chain.join(' | '));
+    console.log('[DIAG-TEMA] html.classList:', document.documentElement.className);
+  } catch(e) { console.log('[DIAG-TEMA] erro', e); }
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
@@ -6969,7 +6986,7 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-toolbar-select{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);padding:9px 12px;font-family:var(--sans);font-size:12px;min-width:190px}
 .funil-toolbar-select:focus{outline:none;border-color:var(--accent)}
 .agenda-item-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
-.funil-chat-col{background:#1c2030;border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
+.funil-chat-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
 .funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
 
 /* Métricas do rodapé */
