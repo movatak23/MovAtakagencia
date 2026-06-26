@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.0-nicho-agenda-inicial';
+const MOVATAK_VERSION = 'v2.7.1-agenda-status-delete-colunas';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -6695,365 +6695,68 @@ async function garantirEstruturaAgenda() {
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_lead ON movatak_agendamentos(lead_id)`).catch(() => null);
 }
 
-async function buscarColunaAgenda(clienteId, tipo, colunaId) {
-  if (colunaId) {
-    const r = await query('SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND id=$2 AND ativo=true LIMIT 1', [clienteId, colunaId]).catch(() => ({ rows: [] }));
-    if (r.rows[0]) return r.rows[0].id;
+async function buscarColunaAgenda(clienteId, tipo, colunaManualId) {
+  if (colunaManualId) {
+    const id = parseInt(colunaManualId, 10);
+    if (Number.isFinite(id)) {
+      const ok = await query('SELECT id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true LIMIT 1', [id, clienteId]).catch(() => ({ rows: [] }));
+      if (ok.rows.length) return id;
+    }
   }
   const tipoNorm = String(tipo || '').trim().toLowerCase();
   if (tipoNorm) {
     const r = await query('SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND ativo=true AND agenda_tipo=$2 ORDER BY ordem ASC, id ASC LIMIT 1', [clienteId, tipoNorm]).catch(() => ({ rows: [] }));
-    if (r.rows[0]) return r.rows[0].id;
+    if (r.rows.length) return r.rows[0].id;
   }
   const fallback = await query(
     `SELECT id FROM movatak_funil_colunas
-      WHERE cliente_id=$1 AND ativo=true AND (slug LIKE '%agend%' OR LOWER(nome) LIKE '%agend%')
-      ORDER BY ordem ASC, id ASC LIMIT 1`,
+      WHERE cliente_id=$1 AND ativo=true
+      ORDER BY CASE WHEN etapa_sistema='negociacao' THEN 0 WHEN slug LIKE '%agend%' THEN 1 ELSE 2 END, ordem ASC, id ASC LIMIT 1`,
     [clienteId]
   ).catch(() => ({ rows: [] }));
   return fallback.rows[0] ? fallback.rows[0].id : null;
 }
 
-async function garantirFunilPadraoCliente(clienteId) {
-  await garantirEstruturaFunil();
-  const cliNichoR = await query('SELECT nicho FROM movatak_clientes WHERE id=$1', [clienteId]).catch(() => ({ rows: [] }));
-  const nichoCliente = normalizarNichoCliente((cliNichoR.rows[0] || {}).nicho);
-  if (nichoCliente) {
-    await aplicarTemplateNichoCliente(clienteId, nichoCliente, { sincronizar: false }).catch(e => console.error('[nicho][garantir-funil]', e.message));
-    return;
-  }
-  const padrao = [
-    { nome: 'Novo contato', slug: 'novo_contato', ordem: 1, etapa: 'lead' },
-    { nome: 'Auto Atendimento', slug: 'auto_atendimento', ordem: 2, etapa: 'auto_atendimento' },
-    { nome: 'Aguardando resposta', slug: 'aguardando_resposta', ordem: 3, etapa: 'followup' },
-    { nome: 'Em negociação', slug: 'em_negociacao', ordem: 4, etapa: 'negociacao' },
-    { nome: 'Cliente fechado', slug: 'cliente_fechado', ordem: 5, etapa: 'cliente' },
-    { nome: 'Perdido', slug: 'perdido', ordem: 6, etapa: 'descartado' }
-  ];
-  for (const c of padrao) {
-    await query(
-      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp)
-       VALUES ($1, $2, $3, $4, $5, true)
-       ON CONFLICT (cliente_id, slug) DO NOTHING`,
-      [clienteId, c.nome, c.slug, c.ordem, c.etapa]
-    ).catch(() => null);
-  }
-}
-
-async function sincronizarColunaComWhatsapp(colunaId) {
-  await garantirEstruturaFunil();
-  const r = await query(
-    `SELECT fc.*, c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_funil_colunas fc
-       JOIN movatak_clientes c ON c.id = fc.cliente_id
-      WHERE fc.id = $1`,
-    [colunaId]
-  );
-  if (!r.rows.length) throw new Error('Coluna não encontrada.');
-  const col = r.rows[0];
-  if (col.zapi_tag_id) return col.zapi_tag_id;
-  if (!col.zapi_instance || !col.zapi_token || !col.zapi_client_token) {
-    throw new Error('Z-API não configurada para este cliente.');
-  }
-  const payload = await zapiCriarEtiqueta(col.zapi_instance, col.zapi_token, col.zapi_client_token, col.nome);
-  const tagId = extrairZapiTagId(payload);
-  if (!tagId) throw new Error('A Z-API não retornou o ID da lista/tag criada.');
-  await query(`UPDATE movatak_funil_colunas SET zapi_tag_id=$1, zapi_sync_erro=NULL, atualizado_em=NOW() WHERE id=$2`, [String(tagId), colunaId]);
-  return String(tagId);
-}
-
-async function moverLeadParaFunilSlug(clienteId, leadId, slug) {
-  await garantirFunilPadraoCliente(clienteId);
-  const col = await query(
-    `SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND slug=$2 AND ativo=true LIMIT 1`,
-    [clienteId, slug]
-  );
-  if (!col.rows.length) return;
-  await moverLeadParaColunaFunil(leadId, col.rows[0].id, false);
-}
-
-async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
-  await garantirEstruturaFunil();
-  const r = await query(
-    `SELECT l.id, l.cliente_id, l.telefone, l.nome, l.funil_coluna_id AS coluna_anterior_id,
-            fc.id AS coluna_id, fc.nome AS coluna_nome, fc.slug, fc.etapa_sistema, fc.sincronizar_whatsapp, fc.zapi_tag_id,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_leads l
-       JOIN movatak_funil_colunas fc ON fc.id = $2 AND fc.cliente_id = l.cliente_id AND fc.ativo = true
-       JOIN movatak_clientes c ON c.id = l.cliente_id
-      WHERE l.id = $1`,
-    [leadId, colunaId]
-  );
-  if (!r.rows.length) throw new Error('Lead ou coluna não encontrados.');
-  const row = r.rows[0];
-  let tagId = row.zapi_tag_id;
-
-  if (row.sincronizar_whatsapp && !tagId) {
-    try {
-      tagId = await sincronizarColunaComWhatsapp(colunaId);
-    } catch (e) {
-      await query(`UPDATE movatak_funil_colunas SET zapi_sync_erro=$1, atualizado_em=NOW() WHERE id=$2`, [String(e.message || e).slice(0, 500), colunaId]).catch(() => null);
+async function buscarColunaAgendaStatus(clienteId, status, tipo, colunaManualId) {
+  if (colunaManualId) {
+    const id = parseInt(colunaManualId, 10);
+    if (Number.isFinite(id)) {
+      const ok = await query('SELECT id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true LIMIT 1', [id, clienteId]).catch(() => ({ rows: [] }));
+      if (ok.rows.length) return id;
     }
   }
-
-  const etapa = row.etapa_sistema || etapaSistemaPorSlug(row.slug);
-  if (etapa === 'cliente') {
-    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, convertido_em=COALESCE(convertido_em, NOW()), atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
-    // Distribuição balanceada: só atribui se ainda não tem vendedor
-    const lr = await query(`SELECT vendedor_id FROM movatak_leads WHERE id=$1`, [leadId]);
-    if (lr.rows[0] && !lr.rows[0].vendedor_id) {
-      await atribuirVendedorBalanceado(row.cliente_id, leadId).catch(() => null);
-    }
-  } else if (etapa === 'descartado') {
-    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
-  } else {
-    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
-  }
-
-  if (row.sincronizar_whatsapp && tagId && row.zapi_instance && row.zapi_token && row.zapi_client_token && row.telefone) {
-    const tagsAntigas = await query(
-      `SELECT zapi_tag_id FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true AND zapi_tag_id IS NOT NULL AND id <> $2`,
-      [row.cliente_id, colunaId]
+  const st = String(status || '').trim().toLowerCase();
+  if (st) {
+    const direto = await query(
+      `SELECT id FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND agenda_status=$2
+        ORDER BY ordem ASC, id ASC LIMIT 1`,
+      [clienteId, st]
     ).catch(() => ({ rows: [] }));
-    for (const t of tagsAntigas.rows) {
-      await zapiRemoverEtiqueta(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, t.zapi_tag_id);
-    }
-    await zapiAtribuirEtiqueta(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, tagId);
-  }
-
-  if (registrar) {
-    await registrarEventoLead(leadId, row.cliente_id, 'funil_movido', `Lead movido para ${row.coluna_nome}`, { coluna_id: colunaId, coluna_nome: row.coluna_nome, etapa });
-  }
-  return { ok: true, coluna: { id: colunaId, nome: row.coluna_nome, etapa_sistema: etapa } };
-}
-
-app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const telefoneRaw = String(req.query.telefone || '').trim();
-    if (!telefoneRaw) return res.status(400).json({ error: 'Informe o telefone.' });
-    const variantes = variantesTelefone(telefoneRaw);
-    if (!variantes.length) return res.status(400).json({ error: 'Telefone inválido.' });
-
-    const ph = variantes.map((_, i) => '$' + (i + 2)).join(',');
-    const rl = await query(
-      `SELECT l.*, camp.nome AS campanha_nome, camp.template_id AS camp_template_id,
-              camp.questionario_ativo AS camp_quest_ativo, camp.questionario_template_id AS camp_quest_template_id,
-              ft.nome AS template_followup_nome, qt.nome AS template_quest_nome
-         FROM movatak_leads l
-         LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
-         LEFT JOIN movatak_followup_templates ft ON ft.id = COALESCE(camp.template_id, l.template_id_origem)
-         LEFT JOIN movatak_questionario_templates qt ON qt.id = camp.questionario_template_id
-        WHERE l.cliente_id = $1 AND l.telefone IN (${ph})
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC LIMIT 1`,
-      [clienteId, ...variantes]
-    );
-    if (!rl.rows.length) return res.json({ encontrado: false, variantes_buscadas: variantes });
-    const lead = rl.rows[0];
-
-    const [estado, eventos, followups] = await Promise.all([
-      query(`SELECT id, passo_idx, tentativas_invalidas, status, atualizado_em FROM movatak_questionario_estado WHERE lead_id = $1 ORDER BY id DESC LIMIT 3`, [lead.id]).catch(() => ({ rows: [] })),
-      query(`SELECT tipo, descricao, criado_em FROM movatak_lead_eventos WHERE lead_id = $1 ORDER BY id DESC LIMIT 15`, [lead.id]).catch(() => ({ rows: [] })),
-      query(`SELECT sequencia_fu, etapa_seq, status, proximo_envio FROM movatak_followup WHERE lead_id = $1 ORDER BY COALESCE(sequencia_fu,1), etapa_seq`, [lead.id]).catch(() => ({ rows: [] }))
-    ]);
-
-    // Qual fonte de questionário este lead usa?
-    let fonteQuest = 'Questionário do cliente (padrão)';
-    if (lead.camp_quest_ativo === false) fonteQuest = 'Sem autoatendimento (vai direto ao follow-up)';
-    else if (lead.camp_quest_template_id) fonteQuest = 'Modelo: ' + (lead.template_quest_nome || ('#' + lead.camp_quest_template_id));
-
-    res.json({
-      encontrado: true,
-      variantes_buscadas: variantes,
-      lead: {
-        id: lead.id, nome: lead.nome, telefone: lead.telefone, etapa: lead.etapa,
-        automacao_pausada: lead.automacao_pausada,
-        campanha: lead.campanha_nome || null,
-        gatilho_detectado: lead.gatilho_detectado || null,
-        template_followup: lead.template_followup_nome || 'Padrão do cliente',
-        fonte_questionario: fonteQuest,
-        criado_em: lead.criado_em, atualizado_em: lead.atualizado_em
-      },
-      questionario_estado: estado.rows,
-      eventos: eventos.rows,
-      followups: followups.rows
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
-    await garantirFunilPadraoCliente(clienteId);
-
-    // "Todos" mostra todas as colunas. Um setor específico mostra só as colunas
-    // atribuídas a ele (configurado pelo seletor de setor no cabeçalho da coluna).
-    const colunasParams = [clienteId];
-    let filtroColunaSetorSql = '';
-    if (setorFiltro) {
-      colunasParams.push(setorFiltro);
-      filtroColunaSetorSql = ' AND setor_id = $2';
-    }
-    const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, nicho_template, agenda_tipo, agenda_status
-         FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
-        ORDER BY ordem ASC, id ASC`,
-      colunasParams
-    );
-    const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
-    const colById = new Map(colunas.map(c => [Number(c.id), c]));
-    const colBySlug = new Map(colunas.map(c => [c.slug, c]));
-
-    const params = [clienteId];
-    let filtroSetorSql = '';
-    if (setorFiltro) {
-      params.push(setorFiltro);
-      filtroSetorSql = ' AND l.setor_id = $2';
-    }
-    const leads = await query(
-      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
-         FROM (
-           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  l.nao_lida, l.arquivado,
-                  s.nome AS setor_nome, s.cor AS setor_cor,
-                  l.criado_em, l.atualizado_em, l.convertido_em,
-                  v.nome AS vendedor_nome,
-                  p.nome AS plano_nome, p.valor AS plano_valor,
-                  COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
-                  MIN(COALESCE(f.sequencia_fu,1)) FILTER (WHERE f.status='pendente')::int AS fu_sequencia_ativa
-             FROM movatak_leads l
-             LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-             LEFT JOIN movatak_planos p ON p.id = l.plano_id
-             LEFT JOIN movatak_setores s ON s.id = l.setor_id
-             LEFT JOIN movatak_followup f ON f.lead_id = l.id
-            WHERE l.cliente_id=$1${filtroSetorSql}
-            GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
-         ) lb
-         LEFT JOIN LATERAL (
-           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
-            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
-         ) ult ON true
-        ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
-        LIMIT 500`,
+    if (direto.rows.length) return direto.rows[0].id;
+    const statusSlug = slugifyFunil(st);
+    const sinonimos = {
+      agendado: ['agendado','consulta_agendada','avaliacao_agendada','instalacao_agendada','servico_agendado','retorno_agendado'],
+      confirmado: ['confirmado','confirmar_presenca'],
+      compareceu: ['compareceu','atendido'],
+      faltou: ['reagendar','perdido'],
+      reagendar: ['reagendar','retorno_agendado','retorno'],
+      concluido: ['cliente_fechado','atendido','instalado','entregue','pedido_concluido','procedimento_realizado'],
+      cancelado: ['perdido','cancelado']
+    };
+    const alvos = sinonimos[statusSlug] || [statusSlug];
+    const params = [clienteId, ...alvos];
+    const ph = alvos.map((_, i) => '$' + (i + 2)).join(',');
+    const r = await query(
+      `SELECT id FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND slug IN (${ph})
+        ORDER BY ordem ASC, id ASC LIMIT 1`,
       params
-    );
-
-    // Leads ativos (não arquivados) — vão para o kanban central.
-    const leadsAtivos = leads.rows.filter(l => !l.arquivado);
-    for (const lead of leadsAtivos) {
-      let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
-      if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
-      if (!coluna) coluna = colunas[0];
-      if (coluna) coluna.leads.push(lead);
-    }
-
-    // Colunas de vendedores (sempre as últimas — leads atribuídos de qualquer etapa)
-    const vRes = await query(
-      `SELECT id, nome FROM movatak_vendedores WHERE cliente_id=$1 AND COALESCE(ativo,true)=true ORDER BY nome ASC`,
-      [clienteId]
-    );
-    const colunasVendedores = vRes.rows.map(v => ({
-      id: `vendedor_${v.id}`,
-      vendedor_id: v.id,
-      nome: v.nome,
-      leads: leadsAtivos.filter(l => l.vendedor_id === v.id)
-    }));
-
-    // Setores do cliente + contagem ao vivo (independente do filtro atual,
-    // pra mostrar "Financeiro 5 / Negociação 4" nas abas mesmo trocando de aba).
-    const clienteInfoRes = await query(
-      `SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1`,
-      [clienteId]
     ).catch(() => ({ rows: [] }));
-    const clienteInfo = clienteInfoRes.rows[0] || {};
-
-    const setoresRes = await query(
-      `SELECT id, nome, cor FROM movatak_setores
-        WHERE cliente_id=$1 AND COALESCE(ativo,true)=true
-        ORDER BY ordem_bot ASC, nome ASC`,
-      [clienteId]
-    );
-    const contagemSetoresRes = await query(
-      `SELECT setor_id, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE nao_lida = true)::int AS nao_lidas
-         FROM movatak_leads
-        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false
-        GROUP BY setor_id`,
-      [clienteId]
-    );
-    const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.cnt]));
-    const naoLidasPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.nao_lidas]));
-    const setores = setoresRes.rows.map(s => ({
-      ...s,
-      leads_count: contagemPorSetor.get(s.id) || 0,
-      nao_lidas: naoLidasPorSetor.get(s.id) || 0
-    }));
-    const totalGeral = contagemSetoresRes.rows.reduce((acc, r) => acc + r.cnt, 0);
-    const totalNaoLidas = contagemSetoresRes.rows.reduce((acc, r) => acc + r.nao_lidas, 0);
-
-    res.json({
-      colunas, colunasVendedores,
-      setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
-      nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Métricas do rodapé do Funil de Atendimento (Total de leads, Novas mensagens,
-// Em negociação, Conversão do mês). Aceita o mesmo filtro ?setor= do board.
-app.get('/movatak/admin/clientes/:id/funil/metricas', authMovatak, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
-    const params = [clienteId];
-    let filtroSetorSql = '';
-    if (setorFiltro) { params.push(setorFiltro); filtroSetorSql = ' AND l.setor_id = $2'; }
-
-    const totaisR = await query(
-      `SELECT
-         COUNT(*)::int AS total_leads,
-         COUNT(*) FILTER (WHERE l.nao_lida = true)::int AS novas_mensagens,
-         COUNT(*) FILTER (WHERE l.criado_em >= date_trunc('month', now()))::int AS criados_mes,
-         COUNT(*) FILTER (WHERE l.convertido_em >= date_trunc('month', now()))::int AS convertidos_mes
-       FROM movatak_leads l
-       WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false${filtroSetorSql}`,
-      params
-    );
-    const negociacaoR = await query(
-      `SELECT COUNT(*)::int AS n
-         FROM movatak_leads l
-         LEFT JOIN movatak_funil_colunas c ON c.id = l.funil_coluna_id
-        WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false${filtroSetorSql}
-          AND COALESCE(c.etapa_sistema, l.etapa) = 'negociacao'`,
-      params
-    );
-    const t = totaisR.rows[0] || {};
-    const conversaoMes = t.criados_mes > 0 ? Math.round((t.convertidos_mes / t.criados_mes) * 100) : 0;
-    res.json({
-      totalLeads: t.total_leads || 0,
-      novasMensagens: t.novas_mensagens || 0,
-      emNegociacao: (negociacaoR.rows[0] || {}).n || 0,
-      conversaoMes
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-app.get('/movatak/admin/nichos-templates', authMovatak, async (req, res) => {
-  try {
-    res.json(Object.entries(NICHO_TEMPLATES).map(([key, tpl]) => ({
-      key,
-      label: tpl.label,
-      agendaTipos: tpl.agendaTipos || [],
-      colunas: (tpl.colunas || []).map(c => ({ nome: c[0], slug: c[1], etapa: c[2], agenda_tipo: c[3] || null }))
-    })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+    if (r.rows.length) return r.rows[0].id;
+  }
+  return buscarColunaAgenda(clienteId, tipo, null);
+}
 
 app.post('/movatak/admin/clientes/:id/funil/aplicar-nicho', authMovatak, async (req, res) => {
   try {
@@ -7070,6 +6773,10 @@ app.get('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, res
     await garantirEstruturaAgenda();
     const clienteId = parseInt(req.params.id, 10);
     const dias = Math.max(1, Math.min(parseInt(req.query.dias || '30', 10), 120));
+    const statusFiltro = String(req.query.status || '').trim().toLowerCase();
+    const params = [clienteId, dias];
+    let statusSql = '';
+    if (statusFiltro) { params.push(statusFiltro); statusSql = ' AND a.status = $3'; }
     const r = await query(
       `SELECT a.*, l.nome AS lead_nome, l.telefone AS lead_telefone, c.nome AS coluna_nome
          FROM movatak_agendamentos a
@@ -7077,10 +6784,10 @@ app.get('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, res
          LEFT JOIN movatak_funil_colunas c ON c.id = a.funil_coluna_id
         WHERE a.cliente_id=$1
           AND a.inicio >= NOW() - INTERVAL '1 day'
-          AND a.inicio <= NOW() + ($2 || ' days')::INTERVAL
+          AND a.inicio <= NOW() + ($2 || ' days')::INTERVAL${statusSql}
         ORDER BY a.inicio ASC
         LIMIT 200`,
-      [clienteId, dias]
+      params
     );
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -7111,7 +6818,7 @@ app.post('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, re
 app.patch('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaAgenda();
-    const { status, observacao, inicio, fim, funil_coluna_id } = req.body || {};
+    const { status, observacao, inicio, fim, funil_coluna_id, mover_kanban } = req.body || {};
     const r = await query(
       `UPDATE movatak_agendamentos SET
          status = COALESCE($1, status),
@@ -7124,7 +6831,31 @@ app.patch('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
       [status || null, observacao !== undefined ? observacao : null, inicio || null, fim || null, funil_coluna_id || null, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.json({ ok: true, agendamento: r.rows[0] });
+    let agendamento = r.rows[0];
+    if (mover_kanban && agendamento.lead_id) {
+      const colunaDestino = await buscarColunaAgendaStatus(agendamento.cliente_id, agendamento.status, agendamento.tipo, funil_coluna_id || null);
+      if (colunaDestino) {
+        await moverLeadParaColunaFunil(agendamento.lead_id, colunaDestino, true).catch(e => console.error('[agenda][status-mover-kanban]', e.message));
+        await query('UPDATE movatak_agendamentos SET funil_coluna_id=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *', [colunaDestino, agendamento.id])
+          .then(rr => { if (rr.rows.length) agendamento = rr.rows[0]; })
+          .catch(() => null);
+        await registrarEventoLead(agendamento.lead_id, agendamento.cliente_id, 'agendamento_status', 'Status do agendamento atualizado', { agendamento_id: agendamento.id, status: agendamento.status, coluna_id: colunaDestino }).catch(() => null);
+      }
+    }
+    res.json({ ok: true, agendamento });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaAgenda();
+    const r = await query('UPDATE movatak_agendamentos SET status=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *', ['cancelado', req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    await query('DELETE FROM movatak_agendamentos WHERE id=$1', [req.params.id]).catch(() => null);
+    if (r.rows[0].lead_id) {
+      await registrarEventoLead(r.rows[0].lead_id, r.rows[0].cliente_id, 'agendamento_excluido', 'Agendamento excluído da agenda', { agendamento_id: r.rows[0].id }).catch(() => null);
+    }
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -7212,35 +6943,35 @@ app.delete('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => 
     const colId = parseInt(req.params.id, 10);
     if (!Number.isFinite(colId)) return res.status(400).json({ error: 'ID inválido.' });
 
-    const cr = await query('SELECT id, cliente_id, nome, etapa_sistema FROM movatak_funil_colunas WHERE id=$1', [colId]);
+    const cr = await query('SELECT id, cliente_id, nome, slug, etapa_sistema FROM movatak_funil_colunas WHERE id=$1', [colId]);
     if (!cr.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     const col = cr.rows[0];
 
-    // Colunas de sistema não podem ser excluídas (são usadas pelo motor do funil).
-    const slugsSistema = ['lead', 'auto_atendimento', 'followup', 'negociacao', 'cliente', 'descartado'];
-    if (col.etapa_sistema && slugsSistema.includes(col.etapa_sistema)) {
-      return res.status(400).json({ error: 'Esta é uma etapa padrão do sistema e não pode ser excluída.' });
-    }
-
-    // Realoca os leads desta coluna para a etapa "Novo contato" do cliente.
+    // Esta rota só apaga colunas reais do kanban. Colunas de vendedores são derivadas
+    // de movatak_vendedores e devem ser removidas exclusivamente ao excluir/desativar o vendedor.
     const destino = await query(
-      `SELECT id FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true AND slug='novo_contato' LIMIT 1`,
-      [col.cliente_id]
+      `SELECT id, nome, slug, etapa_sistema FROM movatak_funil_colunas
+        WHERE cliente_id=$1 AND ativo=true AND id <> $2
+        ORDER BY CASE WHEN slug='novo_contato' THEN 0 ELSE 1 END, ordem ASC, id ASC
+        LIMIT 1`,
+      [col.cliente_id, colId]
     );
-    const destinoId = destino.rows[0] ? destino.rows[0].id : null;
+    const destinoRow = destino.rows[0] || null;
+    const destinoId = destinoRow ? destinoRow.id : null;
+    const etapaDestino = destinoRow ? (destinoRow.etapa_sistema || etapaSistemaPorSlug(destinoRow.slug)) : 'lead';
+
     if (destinoId) {
       await query(
-        `UPDATE movatak_leads SET funil_coluna_id=$1, etapa='lead', atualizado_em=NOW()
-          WHERE funil_coluna_id=$2`,
-        [destinoId, colId]
+        `UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW()
+          WHERE funil_coluna_id=$3`,
+        [destinoId, etapaDestino, colId]
       ).catch(() => null);
     } else {
-      await query(`UPDATE movatak_leads SET funil_coluna_id=NULL, atualizado_em=NOW() WHERE funil_coluna_id=$1`, [colId]).catch(() => null);
+      await query(`UPDATE movatak_leads SET funil_coluna_id=NULL, etapa='lead', atualizado_em=NOW() WHERE funil_coluna_id=$1`, [colId]).catch(() => null);
     }
 
     await query('UPDATE movatak_funil_colunas SET ativo=false, atualizado_em=NOW() WHERE id=$1', [colId]);
-    res.json({ ok: true, leads_realocados: destinoId ? true : false });
+    res.json({ ok: true, leads_realocados: !!destinoId, destino_id: destinoId, destino_nome: destinoRow ? destinoRow.nome : null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
