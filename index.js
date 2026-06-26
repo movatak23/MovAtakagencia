@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.12-zapi-invalid-instance-guard';
+const MOVATAK_VERSION = 'v2.7.13-origem-schema-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -5689,18 +5689,38 @@ async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
     ).catch(() => null);
     return { lead, criado: false };
   }
-  const novo = await query(
-    `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, chat_lid, nao_lida, criado_em, atualizado_em)
-     VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,false,NOW(),NOW())
-     RETURNING *`,
-    [cliente.id, nome || telefone, telefone, chatLid]
-  );
+  let novo;
+  try {
+    novo = await query(
+      `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, chat_lid, nao_lida, criado_em, atualizado_em)
+       VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,false,NOW(),NOW())
+       RETURNING *`,
+      [cliente.id, nome || telefone, telefone, chatLid]
+    );
+  } catch (e) {
+    // Fallback cirúrgico para bancos que ainda não receberam a coluna origem.
+    // Evita derrubar toda a reconciliação por um campo não crítico.
+    if (String(e.message || '').includes('column "origem"') || String(e.message || '').includes('origem')) {
+      novo = await query(
+        `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, chat_lid, nao_lida, criado_em, atualizado_em)
+         VALUES ($1,$2,$3,'lead',$4,false,NOW(),NOW())
+         RETURNING *`,
+        [cliente.id, nome || telefone, telefone, chatLid]
+      );
+    } else {
+      throw e;
+    }
+  }
   return { lead: novo.rows[0], criado: true };
 }
 
 async function sincronizarChatsCliente(clienteId, opts = {}) {
   await garantirEstruturaQuestionario().catch(() => null);
   await garantirEstruturaConversas().catch(() => null);
+  // Compatibilidade com bancos antigos: a reconciliação de WhatsApp não pode falhar
+  // se a coluna origem ainda não existir em movatak_leads. Esta DDL é idempotente,
+  // leve e fica aqui como guarda cirúrgica porque a rotina de sync cria leads novos.
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS origem TEXT`).catch(() => null);
   const c = await query('SELECT * FROM movatak_clientes WHERE id=$1 AND ativo=true', [clienteId]);
   if (!c.rows.length) throw new Error('Cliente não encontrado ou inativo.');
   const cliente = c.rows[0];
@@ -6124,7 +6144,8 @@ async function garantirEstruturaCampanhasTemplates() {
     ADD COLUMN IF NOT EXISTS campanha_id INTEGER,
     ADD COLUMN IF NOT EXISTS campanha_id_ultimo_toque INTEGER,
     ADD COLUMN IF NOT EXISTS template_id_origem INTEGER,
-    ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT`).catch(() => null);
+    ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT,
+    ADD COLUMN IF NOT EXISTS origem TEXT`).catch(() => null);
 
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_cliente_ativo ON movatak_campanhas(cliente_id, ativo)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_template ON movatak_campanhas(template_id)`).catch(() => null);
