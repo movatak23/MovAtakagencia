@@ -3410,11 +3410,13 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && lead.funil_coluna_id) {
       try {
         const av = avaliarAusencia(cliente);
+        console.log('[DIAG-AUS] webhook | lead=' + lead.id + ' coluna=' + lead.funil_coluna_id + ' av.ausente=' + av.ausente + ' temMsg=' + !!av.mensagem);
         if (av.ausente && av.mensagem) {
           const col = await query(
             'SELECT ausencia_ativa FROM movatak_funil_colunas WHERE id = $1',
             [lead.funil_coluna_id]
           ).catch(() => ({ rows: [] }));
+          console.log('[DIAG-AUS] webhook | coluna ausencia_ativa=' + (col.rows.length ? col.rows[0].ausencia_ativa : 'COLUNA NAO ENCONTRADA'));
           if (col.rows.length && col.rows[0].ausencia_ativa) {
             // Tenta registrar que avisou neste período; índice único garante "uma vez por período".
             const reg = await query(
@@ -3424,9 +3426,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
                RETURNING id`,
               [lead.id, cliente.id, av.periodoChave]
             ).catch(() => ({ rows: [] }));
+            console.log('[DIAG-AUS] webhook | dedup insert criou linha=' + (reg.rows.length > 0) + ' periodoChave=' + av.periodoChave);
             // Só envia se o INSERT criou a linha (ou seja, ainda não tinha avisado neste período).
             if (reg.rows.length) {
               const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, av.mensagem).catch(() => null);
+              console.log('[DIAG-AUS] webhook | ENVIADO! msgId=' + msgId);
               await registrarConversa(lead.id, cliente.id, 'saida', av.mensagem, null, null, msgId).catch(() => null);
             }
           }
@@ -5635,6 +5639,10 @@ function avaliarAusencia(cliente) {
     const diaSemana = agora.getUTCDay(); // 0=domingo
     const minutosAgora = agora.getUTCHours() * 60 + agora.getUTCMinutes();
 
+    // [DIAG-AUS] Mostra o que a função recebeu e o momento avaliado.
+    console.log('[DIAG-AUS] avaliando | dataHoje=' + dataHoje + ' diaSemana=' + diaSemana + ' minutosAgora=' + minutosAgora + ' (' + agora.getUTCHours() + ':' + String(agora.getUTCMinutes()).padStart(2,'0') + ' BRT)');
+    console.log('[DIAG-AUS] config | msg_padrao=' + JSON.stringify(cliente.ausencia_msg_padrao || null) + ' horarios=' + JSON.stringify(cliente.ausencia_horarios) + ' datas=' + JSON.stringify(cliente.ausencia_datas));
+
     const paraMin = (hhmm) => {
       const [h, m] = String(hhmm || '').split(':').map(n => parseInt(n, 10));
       if (isNaN(h)) return null;
@@ -5680,6 +5688,7 @@ function avaliarAusencia(cliente) {
       }
     }
 
+    console.log('[DIAG-AUS] resultado=NAO AUSENTE (nenhuma faixa/data bateu)');
     return vazio;
   } catch (e) {
     console.error('[ausencia] erro ao avaliar:', e.message);
