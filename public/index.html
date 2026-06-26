@@ -308,6 +308,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     <div class="header-right">
       <span id="header-status" style="font-size:12px;color:var(--text2)"></span>
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
+      <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
   </header>
@@ -393,6 +394,20 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <div class="form-field full">
         <label>NOME DA EMPRESA</label>
         <input type="text" id="f-nome" placeholder="Ex: Auto Center Silva">
+      </div>
+      <div class="form-field">
+        <label>NICHO DO CLIENTE</label>
+        <select id="f-nicho" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none">
+          <option value="">— selecione —</option>
+          <option value="estetica">Clínica de estética</option>
+          <option value="barbearia">Barbearia</option>
+          <option value="salao">Salão de beleza</option>
+          <option value="odontologia">Clínica odontológica</option>
+          <option value="provedor">Provedor de internet</option>
+          <option value="assistencia">Assistência técnica</option>
+          <option value="grafica_dtf">DTF / Gráfica</option>
+          <option value="generico">Comercial genérico</option>
+        </select>
       </div>
       <div class="form-field">
         <label>WHATSAPP BUSINESS</label>
@@ -496,7 +511,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.6.2-kanban-lead-aceso';
+const PAINEL_VERSION = 'v2.7.0-nicho-agenda-inicial';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -1155,7 +1170,7 @@ function abrirModal() {
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Cadastrar';
   btn.onclick = salvarCliente;
-  ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos'].forEach(id => {
+  ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos','nicho'].forEach(id => {
     document.getElementById('f-' + id).value = '';
   });
   setPermissoesPortal();
@@ -1190,6 +1205,7 @@ async function abrirEdicao(id) {
     document.getElementById('f-trigger').value  = c.trigger_msg || '';
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
+    const nichoEl = document.getElementById('f-nicho'); if (nichoEl) nichoEl.value = c.nicho || '';
     setPermissoesPortal(c.permissoes_portal || {});
     const bvm1 = document.getElementById('f-boasvindas-msg1');
     const bvm2 = document.getElementById('f-boasvindas-msg2');
@@ -1212,6 +1228,7 @@ async function salvarEdicao() {
   const zapi_token    = document.getElementById('f-token').value.trim();
   const zapi_ct       = document.getElementById('f-client-token').value.trim();
   const cpl           = document.getElementById('f-cpl').value.trim();
+  const nicho         = (document.getElementById('f-nicho')?.value || '').trim();
 
   if (!nome || !whatsapp || !zapi_instance) {
     document.getElementById('modal-err').textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.';
@@ -1225,7 +1242,7 @@ async function salvarEdicao() {
     await api('/movatak/admin/clientes/' + editandoClienteId + '/dados', {
       method: 'PATCH',
       body: JSON.stringify({
-        nome, whatsapp, zapi_instance, trigger_msg,
+        nome, whatsapp, zapi_instance, trigger_msg, nicho, agenda_ativa: !!nicho,
         zapi_token, zapi_client_token: zapi_ct,
         teto_cpl: cpl ? parseFloat(cpl) : null,
         permissoes_portal: getPermissoesPortal(),
@@ -2903,6 +2920,7 @@ async function salvarCliente() {
   const zapi_token   = document.getElementById('f-token').value.trim();
   const zapi_ct      = document.getElementById('f-client-token').value.trim();
   const cpl          = document.getElementById('f-cpl').value.trim();
+  const nicho        = (document.getElementById('f-nicho')?.value || '').trim();
   const planosTxt    = document.getElementById('f-planos').value.trim();
 
   if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_ct) {
@@ -2922,7 +2940,7 @@ async function salvarCliente() {
       method: 'POST',
       body: JSON.stringify({
         nome, whatsapp, zapi_instance, zapi_token,
-        zapi_client_token: zapi_ct, trigger_msg,
+        zapi_client_token: zapi_ct, trigger_msg, nicho,
         teto_cpl: cpl ? parseFloat(cpl) : null,
         planos,
         permissoes_portal: getPermissoesPortal()
@@ -4567,6 +4585,149 @@ window.addEventListener('resize', posicionarQuickMenuPainel);
 window.addEventListener('scroll', posicionarQuickMenuPainel, true);
 
 
+
+async function aplicarModeloNichoFunil() {
+  if (!funilState.clienteId) return;
+  const sel = document.getElementById('funil-modelo-nicho');
+  const nicho = sel ? sel.value : '';
+  const status = document.getElementById('funil-status');
+  if (!nicho) { if (status) { status.style.color='var(--amber)'; status.textContent='Selecione um modelo de nicho.'; } return; }
+  const ok = confirm('Aplicar o modelo de nicho no kanban? As colunas existentes serão preservadas; novas colunas serão criadas ou reativadas.');
+  if (!ok) return;
+  if (status) { status.style.color='var(--text2)'; status.textContent='Aplicando modelo de nicho...'; }
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/aplicar-nicho', {
+      method: 'POST', body: JSON.stringify({ nicho, sincronizar_whatsapp: false })
+    });
+    if (status) { status.style.color='var(--green)'; status.textContent='✓ Modelo aplicado ao kanban.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color='var(--red)'; status.textContent='Erro ao aplicar modelo: ' + e.message; }
+  }
+}
+
+function garantirModalAgendaFunil() {
+  let modal = document.getElementById('modal-agenda-funil');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'modal-agenda-funil';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:920px;position:relative;max-height:90vh;overflow-y:auto">
+      <button class="modal-x" onclick="fecharAgendaFunil()" title="Fechar">✕</button>
+      <h3>Agenda</h3>
+      <div class="fu-hint" id="agenda-funil-sub" style="margin-bottom:14px">Agendamentos integrados ao lead e ao kanban.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;margin-bottom:10px">Novo agendamento</div>
+          <label class="fu-label">Lead</label>
+          <select id="agenda-lead-id" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></select>
+          <label class="fu-label">Título</label>
+          <input id="agenda-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none" placeholder="Ex: Consulta de avaliação">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div><label class="fu-label">Data</label><input type="date" id="agenda-data" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></div>
+            <div><label class="fu-label">Hora</label><input type="time" id="agenda-hora" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div><label class="fu-label">Tipo</label><select id="agenda-tipo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="atendimento">Atendimento</option><option value="consulta">Consulta</option><option value="avaliacao">Avaliação</option><option value="instalacao">Instalação</option><option value="suporte">Suporte</option><option value="retorno">Retorno</option><option value="reuniao">Reunião</option></select></div>
+            <div><label class="fu-label">Coluna ao agendar</label><select id="agenda-coluna" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="">Automática</option></select></div>
+          </div>
+          <label class="fu-label">Observação</label>
+          <textarea id="agenda-obs" class="fu-textarea" style="min-height:64px" placeholder="Observações internas..."></textarea>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="agenda-mover" checked> mover lead para a coluna do agendamento</label>
+          <div class="modal-btns" style="margin-top:12px"><button class="btn-save" onclick="salvarAgendamentoFunil()">Salvar agendamento</button></div>
+          <div id="agenda-status" class="fu-hint" style="margin-top:8px"></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase">Próximos agendamentos</div>
+            <button class="btn-cancel" style="padding:6px 10px;font-size:12px" onclick="carregarAgendaFunil()">Atualizar</button>
+          </div>
+          <div id="agenda-lista"><div class="fu-hint">Carregando...</div></div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+async function abrirAgendaFunil() {
+  if (!funilState.clienteId) return;
+  const modal = garantirModalAgendaFunil();
+  modal.classList.add('open');
+  preencherAgendaForm();
+  await carregarAgendaFunil();
+}
+
+function fecharAgendaFunil() {
+  const modal = document.getElementById('modal-agenda-funil');
+  if (modal) modal.classList.remove('open');
+}
+
+function preencherAgendaForm() {
+  const leadSel = document.getElementById('agenda-lead-id');
+  const colSel = document.getElementById('agenda-coluna');
+  if (leadSel) {
+    const leads = (funilState.leads || []).filter(l => !l.arquivado);
+    leadSel.innerHTML = '<option value="">— sem lead vinculado —</option>' + leads.map(l => `<option value="${l.id}">${escapeHtml(l.nome || l.telefone || ('Lead #' + l.id))}</option>`).join('');
+    if (window._painelLeadId) leadSel.value = String(window._painelLeadId);
+  }
+  if (colSel) {
+    colSel.innerHTML = '<option value="">Automática pelo tipo</option>' + (funilState.colunas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+  }
+  const d = new Date();
+  const dataEl = document.getElementById('agenda-data');
+  const horaEl = document.getElementById('agenda-hora');
+  if (dataEl && !dataEl.value) dataEl.value = d.toISOString().slice(0,10);
+  if (horaEl && !horaEl.value) horaEl.value = String(d.getHours()).padStart(2,'0') + ':00';
+  const tituloEl = document.getElementById('agenda-titulo');
+  if (tituloEl && !tituloEl.value) tituloEl.value = 'Atendimento agendado';
+}
+
+async function carregarAgendaFunil() {
+  const lista = document.getElementById('agenda-lista');
+  if (!lista || !funilState.clienteId) return;
+  lista.innerHTML = '<div class="fu-hint">Carregando...</div>';
+  try {
+    const itens = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=45');
+    if (!itens.length) { lista.innerHTML = '<div class="fu-hint">Nenhum agendamento próximo.</div>'; return; }
+    lista.innerHTML = itens.map(a => {
+      const data = new Date(a.inicio).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+      return `<div class="agenda-item-card">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+          <div><strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong><div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div></div>
+          <span style="font-size:11px;color:var(--accent);font-family:var(--mono);white-space:nowrap">${data}</span>
+        </div>
+        ${a.observacao ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">${escapeHtml(a.observacao)}</div>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) { lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function salvarAgendamentoFunil() {
+  const st = document.getElementById('agenda-status');
+  const lead_id = document.getElementById('agenda-lead-id')?.value || '';
+  const titulo = (document.getElementById('agenda-titulo')?.value || '').trim();
+  const data = document.getElementById('agenda-data')?.value || '';
+  const hora = document.getElementById('agenda-hora')?.value || '';
+  const tipo = document.getElementById('agenda-tipo')?.value || 'atendimento';
+  const coluna_id = document.getElementById('agenda-coluna')?.value || '';
+  const observacao = (document.getElementById('agenda-obs')?.value || '').trim();
+  const mover_kanban = !!document.getElementById('agenda-mover')?.checked;
+  if (!titulo || !data || !hora) { if (st) { st.style.color='var(--red)'; st.textContent='Preencha título, data e horário.'; } return; }
+  if (st) { st.style.color='var(--text2)'; st.textContent='Salvando agendamento...'; }
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos', {
+      method: 'POST',
+      body: JSON.stringify({ lead_id: lead_id || null, titulo, tipo, inicio: new Date(data + 'T' + hora + ':00').toISOString(), observacao, coluna_id: coluna_id || null, mover_kanban })
+    });
+    if (st) { st.style.color='var(--green)'; st.textContent='✓ Agendamento salvo.'; }
+    document.getElementById('agenda-obs').value = '';
+    await carregarAgendaFunil();
+    if (mover_kanban) await carregarFunilAtendimento();
+  } catch (e) { if (st) { st.style.color='var(--red)'; st.textContent='Erro: ' + e.message; } }
+}
+
 async function iniciarPaginaFunilAtendimento() {
   const params = new URLSearchParams(window.location.search);
   const id = Number(params.get('clienteId'));
@@ -4576,6 +4737,8 @@ async function iniciarPaginaFunilAtendimento() {
   funilState = { clienteId: id, clienteNome: nome, colunas: [], setores: [], setorAtivo: null, leads: [], totalGeral: 0, filtroInbox: 'todos', buscaInbox: '' };
   const btnMsgs = document.getElementById('btn-msgs-rapidas');
   if (btnMsgs) btnMsgs.style.display = '';
+  const btnAgenda = document.getElementById('btn-agenda');
+  if (btnAgenda) btnAgenda.style.display = '';
   const headerTitle = document.querySelector('.header-title');
   const headerSub = document.querySelector('.header-sub');
   if (headerTitle) headerTitle.textContent = 'Funil de Atendimento';
@@ -4609,6 +4772,18 @@ async function iniciarPaginaFunilAtendimento() {
           <div class="funil-kanban-col">
             <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
             <div class="funil-toolbar">
+              <select id="funil-modelo-nicho" class="funil-toolbar-select" title="Modelo de funil por nicho">
+                <option value="">Modelo por nicho...</option>
+                <option value="estetica">Clínica de estética</option>
+                <option value="barbearia">Barbearia</option>
+                <option value="salao">Salão de beleza</option>
+                <option value="odontologia">Clínica odontológica</option>
+                <option value="provedor">Provedor de internet</option>
+                <option value="assistencia">Assistência técnica</option>
+                <option value="grafica_dtf">DTF / Gráfica</option>
+                <option value="generico">Comercial genérico</option>
+              </select>
+              <button class="btn-cancel" style="padding:9px 14px" onclick="aplicarModeloNichoFunil()">Aplicar modelo</button>
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
               <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
               <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
@@ -4949,6 +5124,10 @@ async function carregarFunilAtendimento() {
     funilState.leads = data.leads || [];
     funilState.totalGeral = data.totalGeral || 0;
     funilState.totalNaoLidas = data.totalNaoLidas || 0;
+    funilState.nicho = data.nicho || '';
+    funilState.agendaAtiva = !!data.agenda_ativa;
+    const modeloNichoSel = document.getElementById('funil-modelo-nicho');
+    if (modeloNichoSel && funilState.nicho) modeloNichoSel.value = funilState.nicho;
     renderBarraSetores();
     renderFunilAtendimento();
     renderInboxFunil();
@@ -6284,6 +6463,9 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-col.drag-over{border-color:var(--accent)!important;box-shadow:0 0 0 1px rgba(91,127,255,.35) inset}
 
 /* Coluna 3: chat fixo */
+.funil-toolbar-select{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);padding:9px 12px;font-family:var(--sans);font-size:12px;min-width:190px}
+.funil-toolbar-select:focus{outline:none;border-color:var(--accent)}
+.agenda-item-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
 .funil-chat-col{background:#1c2030;border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
 .funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
 
