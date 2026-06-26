@@ -550,6 +550,40 @@ async function zapiListarChats(instance, token, clientToken) {
   return zapiGet(instance, token, clientToken, 'chats');
 }
 
+// Diagnóstico temporário: lista clientes e testa a conexão Z-API de cada um.
+// Ajuda a descobrir qual cliente está com credencial errada (causa de mensagens
+// não chegarem no webhook). NÃO expõe tokens — só mostra os últimos 4 caracteres.
+app.get('/movatak/admin/diagnostico-zapi', authMovatak, async (req, res) => {
+  try {
+    const cs = await query('SELECT id, nome, zapi_instance, zapi_token, zapi_client_token, ativo FROM movatak_clientes ORDER BY id ASC');
+    const resultado = [];
+    for (const c of cs.rows) {
+      const item = {
+        id: c.id,
+        nome: c.nome,
+        ativo: c.ativo,
+        instance_cadastrada: c.zapi_instance || '(vazio)',
+        token_final: c.zapi_token ? '...' + String(c.zapi_token).slice(-4) : '(vazio)',
+        client_token_final: c.zapi_client_token ? '...' + String(c.zapi_client_token).slice(-4) : '(vazio)',
+        zapi_status: 'não testado'
+      };
+      if (c.zapi_instance && c.zapi_token && c.zapi_client_token) {
+        try {
+          await zapiListarChats(c.zapi_instance, c.zapi_token, c.zapi_client_token);
+          item.zapi_status = 'OK (credenciais válidas)';
+        } catch (e) {
+          const code = e.response ? e.response.status : '?';
+          item.zapi_status = `FALHOU (HTTP ${code}) — credenciais provavelmente erradas`;
+        }
+      } else {
+        item.zapi_status = 'credenciais incompletas';
+      }
+      resultado.push(item);
+    }
+    res.json({ clientes: resultado });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 const ZAPI_ADVANCED_ENDPOINTS = {
   sticker: 'send-sticker',
   gif: 'send-gif',
