@@ -72,7 +72,14 @@ io.on('connection', (socket) => {
   // na sala do próprio cliente, mesmo se tentarem informar outro ID no front.
   socket.on('entrar-cliente', (clienteId) => {
     if (!clienteId) return;
-    if (socket.data.role === 'vendedor' && Number(clienteId) !== Number(socket.data.clienteId)) return;
+    // Fail-closed: apenas o admin (superadmin do Movatak) pode entrar na sala de
+    // qualquer cliente. Qualquer outro papel (vendedor, e futuros papéis) fica
+    // restrito à sala do próprio cliente — mesmo que informe outro ID no front.
+    if (socket.data.role === 'admin') {
+      socket.join(`cliente-${clienteId}`);
+      return;
+    }
+    if (Number(clienteId) !== Number(socket.data.clienteId)) return;
     socket.join(`cliente-${clienteId}`);
   });
 });
