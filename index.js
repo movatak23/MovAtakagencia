@@ -188,6 +188,7 @@ async function authCliente(req, res, next) {
 
 async function authVendedor(req, res, next) {
   const token = req.headers['x-vendedor-token'];
+  console.log('[DIAG-VEND] authVendedor: token presente?', !!token, '| rota:', req.method, req.path);
   if (!token) return res.status(401).json({ error: 'Token do vendedor ausente.' });
   try {
     const r = await query(
@@ -197,6 +198,7 @@ async function authVendedor(req, res, next) {
         WHERE v.acesso_token = $1 AND v.ativo = true AND c.ativo = true`,
       [token]
     );
+    console.log('[DIAG-VEND] vendedor encontrado?', r.rows.length);
     if (!r.rows.length) return res.status(401).json({ error: 'Token do vendedor invalido.' });
     req.vendedor = r.rows[0];
     // Carrega os setores que este vendedor pode acessar. Tudo que o vendedor vê/edita
@@ -207,11 +209,12 @@ async function authVendedor(req, res, next) {
         WHERE sv.vendedor_id = $1
         ORDER BY s.ordem_bot NULLS LAST, s.nome`,
       [req.vendedor.id]
-    ).catch(() => ({ rows: [] }));
+    ).catch(e => { console.error('[DIAG-VEND] erro query setores:', e.message); return { rows: [] }; });
     req.vendedor.setores = setoresR.rows;
     req.vendedor.setorIds = setoresR.rows.map(s => Number(s.id));
+    console.log('[DIAG-VEND] setores do vendedor:', req.vendedor.setorIds);
     next();
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error('[DIAG-VEND] erro authVendedor:', e.message); res.status(500).json({ error: e.message }); }
 }
 
 // Garante que um setor pertence ao escopo do vendedor logado. Use em todo endpoint
@@ -3789,9 +3792,11 @@ app.get('/movatak/vendedor/resumo', authVendedor, async (req, res) => {
 // ============================================================
 app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
   try {
+    console.log('[DIAG-VEND] /funil iniciado | cliente:', req.vendedor.cliente_id, '| setores:', req.vendedor.setorIds);
     const clienteId = req.vendedor.cliente_id;
     const setorIds = req.vendedor.setorIds || [];
     if (!setorIds.length) {
+      console.log('[DIAG-VEND] /funil: vendedor sem setor, retornando vazio');
       // Vendedor sem setor não vê nada — retorna vazio em vez de erro, pra tela mostrar aviso.
       return res.json({ colunas: [], leads: [], setores: [], totalGeral: 0, totalNaoLidas: 0, semSetor: true });
     }
@@ -3845,6 +3850,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       if (coluna) coluna.leads.push(lead);
     }
 
+    console.log('[DIAG-VEND] /funil OK | colunas:', colunas.length, '| leads:', leadsAtivos.length);
     res.json({
       colunas,
       leads: leadsAtivos,
@@ -3852,7 +3858,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       totalGeral: leadsAtivos.length,
       totalNaoLidas: leadsAtivos.filter(l => l.nao_lida && !l.arquivado).length
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { console.error('[DIAG-VEND] erro /funil:', e.message); res.status(500).json({ error: e.message }); }
 });
 
 // Conversa de um lead — só se o lead estiver num setor do vendedor.
