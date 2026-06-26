@@ -383,7 +383,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.2-vendedor-funil-loading-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-vendedor-definitivo</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -513,7 +513,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.0-nicho-agenda-inicial';
+const PAINEL_VERSION = 'v2.7.3-vendedor-definitivo';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -1043,14 +1043,29 @@ async function api(path, opts = {}, raw = false) {
     ? { 'x-vendedor-token': _vendedorToken }
     : { 'x-movatak-secret': secret };
   const pathFinal = adaptarPathVendedor(path);
-  const res = await fetch(API_BASE + pathFinal, {
-    ...opts,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeaders,
-      ...(opts.headers || {})
+  const controller = new AbortController();
+  const metodo = String((opts && opts.method) || 'GET').toUpperCase();
+  const timeoutMs = Number(opts.timeoutMs || (metodo === 'GET' ? 20000 : 60000));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(API_BASE + pathFinal, {
+      ...opts,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...(opts.headers || {})
+      }
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      throw new Error('Tempo esgotado ao carregar dados. Verifique se o backend recebeu o index.js atualizado e tente novamente.');
     }
-  });
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   if (res.status === 401 && !raw) {
     if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
       const st = document.getElementById('funil-status');
