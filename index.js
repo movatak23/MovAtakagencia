@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.19-inbound-link-validated';
+const MOVATAK_VERSION = 'v2.7.8-senhas-scrypt';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -547,105 +547,7 @@ async function zapiModificarChat(instance, token, clientToken, telefone, action)
 }
 
 async function zapiListarChats(instance, token, clientToken) {
-  if (!instance || !token || !clientToken) {
-    const e = new Error('Z-API incompleta: instance/token/client-token ausente.');
-    e.movatakZapi = { status: 0, endpoint: 'chats', body: null, code: 'ZAPI_CONFIG_INCOMPLETA' };
-    throw e;
-  }
-  try {
-    return await zapiGet(instance, token, clientToken, 'chats');
-  } catch (e) {
-    const body = e.response && e.response.data ? e.response.data : null;
-    e.movatakZapi = {
-      status: e.response ? e.response.status : 0,
-      endpoint: 'chats',
-      body,
-      message: e.message
-    };
-    throw e;
-  }
-}
-
-function mascararTokenDebug(v) {
-  const s = String(v || '');
-  if (!s) return '';
-  if (s.length <= 8) return '***';
-  return s.slice(0, 4) + '…' + s.slice(-4);
-}
-
-function limitarTextoDebug(v, max = 420) {
-  const s = typeof v === 'string' ? v : JSON.stringify(v || {});
-  return s.length > max ? s.slice(0, max) + '…' : s;
-}
-
-function erroZapiDetalhado(e, contexto = {}) {
-  const status = e?.response?.status || e?.movatakZapi?.status || 0;
-  const body = e?.response?.data || e?.movatakZapi?.body || null;
-  const msgBody = body && (body.message || body.error || body.msg || body.description);
-  const partes = [
-    contexto.clienteId ? `cliente=${contexto.clienteId}` : null,
-    contexto.endpoint ? `endpoint=${contexto.endpoint}` : (e?.movatakZapi?.endpoint ? `endpoint=${e.movatakZapi.endpoint}` : null),
-    status ? `status=${status}` : null,
-    msgBody ? `zapi=${limitarTextoDebug(msgBody, 220)}` : null,
-    !msgBody && body ? `body=${limitarTextoDebug(body, 300)}` : null,
-    e?.message ? `erro=${limitarTextoDebug(e.message, 180)}` : null
-  ].filter(Boolean);
-  return partes.join(' | ');
-}
-
-
-// Guarda cirúrgica da reconciliação Z-API.
-// Quando a Z-API responde "Instance not found", o problema não é o CRM nem o
-// banco: é credencial/instância inválida daquele cliente. Sem essa guarda, o cron
-// tenta a cada minuto e polui os logs, além de passar a impressão de falha geral.
-// A suspensão é em memória, por combinação cliente+instance; se a instância for
-// corrigida no cadastro, a chave muda e a reconciliação volta automaticamente.
-const _zapiReconSuspensos = new Map();
-
-function erroZapiEhInstanciaInvalida(e) {
-  const status = e?.response?.status || e?.movatakZapi?.status || 0;
-  const body = e?.response?.data || e?.movatakZapi?.body || null;
-  const texto = [
-    e?.message,
-    typeof body === 'string' ? body : '',
-    body && typeof body === 'object' ? (body.message || body.error || body.msg || body.description || JSON.stringify(body)) : ''
-  ].filter(Boolean).join(' ').toLowerCase();
-  return (status === 400 || status === 404) && (
-    texto.includes('instance not found') ||
-    texto.includes('instance_not_found') ||
-    texto.includes('instancia nao encontrada') ||
-    texto.includes('instância não encontrada') ||
-    texto.includes('instance notfound')
-  );
-}
-
-function chaveReconZapiCliente(cliente) {
-  return String(cliente?.id || '') + ':' + String(cliente?.zapi_instance || '');
-}
-
-function reconZapiSuspensaoAtiva(cliente) {
-  const item = _zapiReconSuspensos.get(chaveReconZapiCliente(cliente));
-  if (!item) return null;
-  if (Date.now() >= item.ate) {
-    _zapiReconSuspensos.delete(chaveReconZapiCliente(cliente));
-    return null;
-  }
-  return item;
-}
-
-function suspenderReconZapiCliente(cliente, motivo, horas = null) {
-  const ttlHoras = Math.max(1, Math.min(parseInt(horas || process.env.MOVATAK_ZAPI_INSTANCE_INVALID_TTL_HORAS || '6', 10) || 6, 24));
-  const item = { ate: Date.now() + ttlHoras * 60 * 60 * 1000, motivo: String(motivo || 'Instance not found').slice(0, 500) };
-  _zapiReconSuspensos.set(chaveReconZapiCliente(cliente), item);
-  logEstruturado('warn', 'zapi_recon_suspensa_instance_invalida', {
-    cliente_id: cliente?.id,
-    cliente_nome: cliente?.nome,
-    instance_hint: mascararTokenDebug(cliente?.zapi_instance),
-    ttl_horas: ttlHoras,
-    proxima_tentativa_em: new Date(item.ate).toISOString(),
-    motivo: item.motivo
-  });
-  return item;
+  return zapiGet(instance, token, clientToken, 'chats');
 }
 
 const ZAPI_ADVANCED_ENDPOINTS = {
@@ -1507,29 +1409,17 @@ cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/
 
 // Reconciliação opcional WhatsApp → CRM. Para ativar no Railway:
 // MOVATAK_RECONCILIAR_CHATS_CRON=true
-// Para sincronismo próximo ao WhatsApp Web, roda a cada 1 minuto quando ativado.
-// Se a Z-API impor limite, reduza MOVATAK_RECONCILIAR_CHATS_MAX.
-cron.schedule('*/1 * * * *', async () => {
+// Mantém desligado por padrão para não aumentar consumo/limite da Z-API sem decisão operacional.
+cron.schedule('*/10 * * * *', async () => {
   if (String(process.env.MOVATAK_RECONCILIAR_CHATS_CRON || '').toLowerCase() !== 'true') return;
   try {
-    const clientes = await query(`SELECT id, nome, zapi_instance FROM movatak_clientes WHERE ativo=true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL AND zapi_client_token IS NOT NULL ORDER BY id ASC LIMIT 50`, []);
+    const clientes = await query(`SELECT id FROM movatak_clientes WHERE ativo=true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL AND zapi_client_token IS NOT NULL ORDER BY id ASC LIMIT 50`, []);
     for (const row of clientes.rows) {
-      const suspenso = reconZapiSuspensaoAtiva(row);
-      if (suspenso) {
-        console.log('[reconciliacao-chats]', row.id, JSON.stringify({ ok:false, suspenso:true, motivo:suspenso.motivo, proxima_tentativa_em:new Date(suspenso.ate).toISOString() }));
-        continue;
-      }
       try {
-        const r = await sincronizarChatsCliente(row.id, { max: parseInt(process.env.MOVATAK_RECONCILIAR_CHATS_MAX || '200', 10) || 200, origem: 'cron', automatico: true });
+        const r = await sincronizarChatsCliente(row.id, { max: parseInt(process.env.MOVATAK_RECONCILIAR_CHATS_MAX || '200', 10) || 200 });
         console.log('[reconciliacao-chats]', row.id, JSON.stringify(r));
       } catch (e) {
-        const detalhe = erroZapiDetalhado(e, { clienteId: row.id, endpoint: 'chats' }) || e.message;
-        if (erroZapiEhInstanciaInvalida(e)) {
-          suspenderReconZapiCliente(row, detalhe);
-          console.warn('[reconciliacao-chats][cliente ' + row.id + '] suspenso por instância inválida:', detalhe);
-          continue;
-        }
-        console.error('[reconciliacao-chats][cliente ' + row.id + ']', detalhe);
+        console.error('[reconciliacao-chats][cliente ' + row.id + ']', e.message);
       }
     }
   } catch (e) {
@@ -2295,13 +2185,24 @@ app.patch('/movatak/admin/leads/:id/marcar-lida', authMovatak, async (req, res) 
   try {
     await garantirEstruturaConversas();
     const naoLida = !!(req.body && req.body.nao_lida);
-    const lead = await obterLeadComZapi(req.params.id);
-    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const r = await aplicarEstadoLeituraLead(lead, naoLida, 'admin', { syncZap: true });
-    await registrarEventoLead(lead.id, lead.cliente_id, naoLida ? 'whatsapp_marcado_nao_lido' : 'whatsapp_marcado_lido', naoLida ? 'Chat marcado como não lido no CRM e WhatsApp' : 'Chat marcado como lido no CRM e WhatsApp', { origem: 'admin' }).catch(() => null);
-    res.json(r);
+    if (naoLida) {
+      // Marca como não lida de propósito: reabre a última mensagem de entrada.
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = NULL, lida_por = NULL
+                    WHERE id = (
+                      SELECT id FROM movatak_conversas
+                       WHERE lead_id = $1 AND direcao = 'entrada'
+                       ORDER BY criado_em DESC LIMIT 1
+                    )`, [req.params.id]).catch(() => null);
+    } else {
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = COALESCE(lida_em, NOW()), lida_por = COALESCE(lida_por, 'admin')
+                    WHERE lead_id = $1 AND direcao = 'entrada' AND lida_em IS NULL`, [req.params.id]).catch(() => null);
+    }
+    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, req.params.id]);
+    res.json({ ok: true, nao_lida: naoLida });
   } catch (e) {
-    res.status(500).json({ error: e.response?.data?.message || e.message });
+    res.status(500).json({ error: e.message });
   }
 });
 
@@ -2951,87 +2852,6 @@ function extrairTelefonePayload(body, cliente = null) {
   return primeiroTelefoneValido(candidatos, cliente);
 }
 
-// Identificador real do chat do WhatsApp. Para contatos privados retorna telefone normalizado;
-// para grupos retorna o JID do grupo (@g.us). Isso permite que o Inbox do CRM espelhe a
-// lista do WhatsApp, incluindo grupos, sem tentar tratar grupo como telefone de lead.
-function extrairChatIdBrutoPayload(body) {
-  // A ordem aqui é crítica. Em muitos payloads da Z-API, body.id é o ID da
-  // mensagem, NÃO o ID do chat. Usar body.id cedo faz o CRM criar conversas
-  // fantasma e perder mensagens enviadas pelo próprio WhatsApp Web. Priorize
-  // sempre chatId/remoteJid/key.remoteJid/phone/destinatário e deixe body.id
-  // como último fallback.
-  const candidatos = [
-    body && body.chatId,
-    body && body.remoteJid,
-    body && body.key && body.key.remoteJid,
-    body && body.message && body.message.key && body.message.key.remoteJid,
-    body && body.lastMessage && body.lastMessage.chatId,
-    body && body.lastMessage && body.lastMessage.remoteJid,
-    body && body.phone,
-    body && body.recipientPhone,
-    body && body.recipient,
-    body && body.to,
-    body && body.from,
-    body && body.senderPhone,
-    body && body.participantPhone,
-    body && body.id
-  ];
-  for (const v of candidatos) {
-    const s = String(v || '').trim();
-    if (s) return s;
-  }
-  return null;
-}
-
-function extrairGrupoIdPayload(body) {
-  const vals = extrairValoresProfundos(body || {}, 4)
-    .map(x => String(x.valor || '').trim())
-    .filter(Boolean);
-  const diretos = [
-    body && body.chatId,
-    body && body.remoteJid,
-    body && body.id,
-    body && body.phone,
-    body && body.from,
-    body && body.to,
-    body && body.key && body.key.remoteJid,
-    body && body.message && body.message.key && body.message.key.remoteJid
-  ].map(v => String(v || '').trim()).filter(Boolean);
-  for (const s of [...diretos, ...vals]) {
-    if (/@g\.us$/i.test(s) || s.includes('@g.us')) return s;
-  }
-  return null;
-}
-
-function payloadZapiEhGrupo(body) {
-  if (!body) return false;
-  if (body.isGroup || body.group) return true;
-  const id = extrairChatIdBrutoPayload(body) || '';
-  return /@g\.us/i.test(String(id)) || !!extrairGrupoIdPayload(body);
-}
-
-function nomeGrupoOuContatoPayload(body, telefoneOuChat) {
-  const nomes = [
-    body && body.chatName,
-    body && body.groupName,
-    body && body.name,
-    body && body.contactName,
-    body && body.pushName,
-    body && body.notifyName,
-    body && body.senderName
-  ];
-  for (const n of nomes) {
-    const s = String(n || '').trim();
-    if (s && s !== telefoneOuChat) return s;
-  }
-  return telefoneOuChat || 'Chat WhatsApp';
-}
-
-function extrairIdentificadorChatPayload(body, cliente = null) {
-  if (payloadZapiEhGrupo(body)) return extrairGrupoIdPayload(body) || extrairChatIdBrutoPayload(body);
-  return extrairTelefonePayload(body, cliente);
-}
-
 function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
   const nomes = body && body.fromMe
     ? [body.contactName, body.chatName, body.pushName, body.notifyName]
@@ -3100,44 +2920,12 @@ async function buscarLeadPorTelefone(clienteId, telefone, extraWhere = '', extra
 }
 
 function extrairTextoPayloadZapi(body) {
-  // Z-API pode entregar texto em formatos diferentes para mensagens recebidas
-  // e enviadas. A versão anterior lia quase só body.text.message; quando o lead
-  // respondia com payload em body.message/body.body/conversation, a mensagem era
-  // tratada como vazia e não entrava no CRM.
-  if (!body || typeof body !== 'object') return '';
-  const valores = [
-    body.text && body.text.message,
-    typeof body.text === 'string' ? body.text : null,
-    body.messageText,
-    body.msg,
-    body.body,
-    body.content,
-    body.conversation,
-    body.message && typeof body.message === 'string' ? body.message : null,
-    body.message && body.message.text,
-    body.message && body.message.conversation,
-    body.message && body.message.extendedTextMessage && body.message.extendedTextMessage.text,
-    body.message && body.message.imageMessage && body.message.imageMessage.caption,
-    body.message && body.message.videoMessage && body.message.videoMessage.caption,
-    body.message && body.message.documentMessage && (body.message.documentMessage.caption || body.message.documentMessage.title || body.message.documentMessage.fileName),
-    body.image && body.image.caption,
-    body.video && body.video.caption,
-    body.document && body.document.caption,
-    body.caption
-  ];
-  for (const v of valores) {
-    if (v === undefined || v === null) continue;
-    if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
-      const txt = String(v).trim();
-      if (txt) return txt;
-    }
-  }
-  const tipo = String(body.type || body.messageType || '').toLowerCase();
-  if (body.audio || tipo.includes('audio') || tipo.includes('ptt')) return 'Áudio';
-  if (body.image || tipo.includes('image')) return 'Imagem';
-  if (body.video || tipo.includes('video')) return 'Vídeo';
-  if (body.document || tipo.includes('document') || tipo.includes('file')) return 'Documento';
-  return '';
+  return (body.text && body.text.message) ? String(body.text.message)
+    : (typeof body.text === 'string') ? String(body.text)
+    : (body.image && body.image.caption) ? String(body.image.caption || '')
+    : (body.video && body.video.caption) ? String(body.video.caption || '')
+    : (body.document && body.document.caption) ? String(body.document.caption || '')
+    : (body.caption ? String(body.caption) : '');
 }
 
 function extrairMidiaPayloadZapi(body) {
@@ -3310,21 +3098,13 @@ async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFal
   }
 
   if ((!rl || !rl.rows.length) && telefone) {
-    // Busca tolerante ao 9º dígito do celular (com/sem o 9). Para grupos/@g.us,
-    // variantesTelefone retorna vazio; nesses casos busca por telefone/chat_lid exato.
+    // Busca tolerante ao 9º dígito do celular (com/sem o 9).
     const variantes = variantesTelefone(telefone);
-    if (variantes.length) {
-      const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
-      rl = await query(
-        `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${placeholders}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-        [clienteId, ...variantes]
-      );
-    } else {
-      rl = await query(
-        `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND (telefone = $2 OR chat_lid = $2) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-        [clienteId, telefone]
-      );
-    }
+    const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
+    rl = await query(
+      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${placeholders}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+      [clienteId, ...variantes]
+    );
   }
 
   if ((!rl || !rl.rows.length) && permitirFallbackRecente) {
@@ -3363,13 +3143,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
   // ---- Processamento Movatak ----
   try {
     const instanceId = body.instanceId || body.instance || '';
-    const isGrupoWhatsapp = payloadZapiEhGrupo(body);
-    let chatLid    = body.chatLid || null;
+    const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
-    // Identificador do chat: telefone para privado; JID @g.us para grupo.
-    let telefone     = extrairIdentificadorChatPayload(body);
-    if (isGrupoWhatsapp) chatLid = extrairGrupoIdPayload(body) || chatLid || telefone;
-    const texto      = extrairTextoPayloadZapi(body);
+    // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
+    let telefone     = extrairTelefonePayload(body);
+    const texto      = (body.text && body.text.message) ? body.text.message
+                       : (typeof body.text === 'string' ? body.text : '');
     const replyPayload = extrairReplyPayloadZapi(body);
 
 
@@ -3386,8 +3165,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       keys: Object.keys(body).slice(0, 30)
     }));
 
-    if (body.isNewsletter) {
-      logDebug('[zapi][ignorado] newsletter');
+    if (body.isGroup || body.isNewsletter) {
+      logDebug('[zapi][ignorado] grupo ou newsletter');
       return;
     }
 
@@ -3397,10 +3176,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Notificações de status (leitura, entrega, etc.) — não são mensagens reais.
-    // Não retornamos aqui: depois de identificar o cliente, eventos como READ precisam
-    // atualizar o espelho movatak_whatsapp_chats para o Inbox acompanhar o WhatsApp.
-    const eventoStatusZapi = !!(body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase()));
+    // Notificações de status (leitura, entrega, etc.) — não são mensagens reais
+    if (body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase())) {
+      logDebug('[zapi][ignorado] evento de status: ' + body.type);
+      return;
+    }
 
     if (!instanceId) {
       logDebug('[zapi][ignorado] payload sem instanceId/instance');
@@ -3423,10 +3203,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // "falando consigo mesmo" quando o webhook fromMe traz connectedPhone/phone
     // como número da conta conectada.
     const telefoneAntesFiltroEmpresa = telefone;
-    telefone = isGrupoWhatsapp ? (extrairGrupoIdPayload(body) || chatLid || telefone) : extrairTelefonePayload(body, cliente);
-    if (isGrupoWhatsapp) chatLid = chatLid || telefone;
+    telefone = extrairTelefonePayload(body, cliente);
     if (telefoneAntesFiltroEmpresa && !telefone) {
-      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe, isGrupoWhatsapp }));
+      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe }));
     }
 
     const comandos = cliente.comandos || {};
@@ -3440,101 +3219,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     });
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
-    if (eventoStatusZapi) {
-      const chatIdStatus = normalizarChatIdWhatsapp(isGrupoWhatsapp ? (extrairGrupoIdPayload(body) || chatLid) : (telefone || chatLid || extrairChatIdBrutoPayload(body)));
-      const leadStatus = chatIdStatus ? await localizarLeadPorPayload(cliente.id, chatIdStatus, chatLid || chatIdStatus, false).catch(() => null) : null;
-      const tipoStatus = String(body.type || '').toLowerCase();
-      const unreadConhecidoStatus = tipoStatus === 'read' || body.unread === true || body.isUnread === true || body.messagesUnread != null || body.unreadCount != null;
-      const unreadCountStatus = tipoStatus === 'read' ? 0 : (body.unread === true || body.isUnread === true ? 1 : (body.messagesUnread ?? body.unreadCount ?? null));
-      await upsertWhatsappChat(cliente, {
-        chatId: chatIdStatus || chatLid || telefone,
-        telefone: isGrupoWhatsapp ? null : telefone,
-        nome: nomeGrupoOuContatoPayload(body, chatIdStatus || telefone),
-        isGroup: isGrupoWhatsapp,
-        unreadKnown: unreadConhecidoStatus,
-        unreadCount: unreadCountStatus,
-        leadId: leadStatus && leadStatus.id,
-        rawPayload: body
-      }).catch(() => null);
-      if (leadStatus && unreadConhecidoStatus) {
-        await aplicarEstadoLeituraLead({ ...cliente, ...leadStatus, id: leadStatus.id, cliente_id: cliente.id }, Number(unreadCountStatus || 0) > 0, 'whatsapp_status', { syncZap:false }).catch(() => null);
-      }
-      logDebug('[zapi][status] atualizado no espelho de chats: ' + (body.type || 'status'));
-      return;
-    }
-
-    const chatIdWebhook = normalizarChatIdWhatsapp(
-      isGrupoWhatsapp
-        ? (extrairGrupoIdPayload(body) || chatLid || extrairChatIdBrutoPayload(body))
-        // Para chat privado, o identificador correto é o telefone filtrado do outro lado.
-        // Usar extrairChatIdBrutoPayload primeiro podia pegar o número da própria instância
-        // e atualizar o Inbox no chat errado, fazendo respostas dos leads sumirem.
-        : (telefone || chatLid || extrairChatIdBrutoPayload(body))
-    );
-    const midiaSnapshot = extrairMidiaPayloadZapi(body);
-    if (chatIdWebhook) {
-      await upsertWhatsappChat(cliente, {
-        chatId: chatIdWebhook,
-        telefone: isGrupoWhatsapp ? null : (telefone || extrairDigitosTelefone(chatIdWebhook)),
-        nome: nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
-        isGroup: isGrupoWhatsapp,
-        unreadKnown: true,
-        unreadCount: body.fromMe ? 0 : 1,
-        lastMessageText: texto || (midiaSnapshot.tipo || ''),
-        lastMessageAt: new Date().toISOString(),
-        lastMessageFromMe: !!body.fromMe,
-        lastMessageMsgId: body.messageId || body.id || null,
-        rawPayload: body
-      }).catch(() => null);
-    }
-
     if (!telefone) {
-      const chatIdFallback = chatIdWebhook || normalizarChatIdWhatsapp(extrairChatIdBrutoPayload(body) || chatLid);
-      let leadFallback = null;
-      if (chatIdFallback && ((texto && String(texto).trim()) || midiaSnapshot.url || body.fromMe)) {
-        leadFallback = await localizarLeadPorPayload(cliente.id, chatIdFallback, chatIdFallback, false).catch(() => null);
-        if (!leadFallback) {
-          const nomeFallback = nomeGrupoOuContatoPayload(body, chatIdFallback);
-          const origemFallback = isGrupoWhatsapp ? 'whatsapp_group' : 'whatsapp_chat';
-          const novoLeadFallback = await query(
-            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, origem, chat_lid, nao_lida, atualizado_em)
-             VALUES ($1, $2, $3, 'lead', $4, $5, $6, NOW())
-             RETURNING *`,
-            [cliente.id, chatIdFallback, nomeFallback, origemFallback, chatIdFallback, !body.fromMe]
-          ).catch(async (e) => {
-            if (String(e.message || '').includes('origem')) return await query(
-              `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-               VALUES ($1, $2, $3, 'lead', $4, $5, NOW()) RETURNING *`,
-              [cliente.id, chatIdFallback, nomeFallback, chatIdFallback, !body.fromMe]
-            );
-            throw e;
-          });
-          leadFallback = novoLeadFallback && novoLeadFallback.rows && novoLeadFallback.rows[0];
-          if (leadFallback) await registrarEventoLead(leadFallback.id, cliente.id, 'chat_criado_sem_telefone', 'Chat criado a partir de webhook sem telefone extraível', { chatId: chatIdFallback, fromMe: !!body.fromMe }).catch(() => null);
-        }
-        if (leadFallback) {
-          const msgIdFallback = body.messageId || body.id || null;
-          const replyFallback = await resolverReplyInfoLead(leadFallback.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload).catch(() => ({ info: replyPayload }));
-          await registrarConversa(leadFallback.id, cliente.id, body.fromMe ? 'saida' : 'entrada', texto || '', midiaSnapshot.url, midiaSnapshot.tipo, msgIdFallback, replyFallback.info || replyPayload).catch(() => null);
-          await upsertWhatsappChat(cliente, {
-            chatId: chatIdFallback,
-            telefone: isGrupoWhatsapp ? null : extrairDigitosTelefone(chatIdFallback),
-            nome: nomeGrupoOuContatoPayload(body, chatIdFallback),
-            isGroup: isGrupoWhatsapp,
-            unreadKnown: true,
-            unreadCount: body.fromMe ? 0 : 1,
-            lastMessageText: texto || (midiaSnapshot.tipo || ''),
-            lastMessageAt: new Date().toISOString(),
-            lastMessageFromMe: !!body.fromMe,
-            lastMessageMsgId: msgIdFallback,
-            leadId: leadFallback.id,
-            rawPayload: body
-          }).catch(() => null);
-        }
-      }
-      logDebug('[zapi][sem-telefone] chat salvo/criado para espelhar WhatsApp', JSON.stringify({
-        chatIdFallback,
-        leadId: leadFallback && leadFallback.id,
+      logDebug('[zapi][ignorado] telefone real do contato não identificado após filtro anti-próprio-número', JSON.stringify({
         fromMe: !!body.fromMe,
         phone: body.phone || null,
         senderPhone: body.senderPhone || null,
@@ -3568,8 +3254,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
       const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows, cliente.questionario_comando_parar, cliente.questionario_comando_ativar)
         || contemComando(texto, comandosColuna);
-      const chatIdFromMe = chatIdWebhook || normalizarChatIdWhatsapp(chatLid || telefone);
-      const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatIdFromMe || chatLid, ehComandoInterno);
+      const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatLid, ehComandoInterno);
 
       const midiaFromMe = extrairMidiaPayloadZapi(body);
 
@@ -3581,26 +3266,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         // automação nem marcar como não lido.
         if (!ehComandoInterno && telefone && ((texto && String(texto).trim()) || midiaFromMe.url)) {
           const novoLeadFromMe = await query(
-            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, origem, chat_lid, nao_lida, atualizado_em)
-             VALUES ($1, $2, $3, 'lead', $5, $4, false, NOW())
+            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+             VALUES ($1, $2, $3, 'lead', $4, false, NOW())
              RETURNING id`,
-            [cliente.id, telefone, isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)), chatIdFromMe || chatLid, isGrupoWhatsapp ? 'whatsapp_group' : 'whatsapp_web']
-          ).catch(async (e) => {
-            if (String(e.message || '').includes('origem')) return await query(
-              `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-               VALUES ($1, $2, $3, 'lead', $4, false, NOW()) RETURNING id`,
-              [cliente.id, telefone, isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)), chatIdFromMe || chatLid]
-            );
-            throw e;
-          });
-          const msgIdNovoFromMe = body.messageId || body.id || null;
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdNovoFromMe, replyPayload).catch(() => null);
-          await vincularWhatsappChatAoLead(cliente, { id: novoLeadFromMe.rows[0].id, telefone, nome: isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)), chat_lid: chatIdFromMe || chatLid }, {
-            chatId: chatIdFromMe || chatLid || telefone, telefone, isGroup: isGrupoWhatsapp,
-            nome: isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)),
-            fromMe: true, lastMessageText: texto || (midiaFromMe.tipo || ''), midiaTipo: midiaFromMe.tipo,
-            lastMessageAt: new Date().toISOString(), msgId: msgIdNovoFromMe, rawPayload: body
-          }).catch(() => null);
+            [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
+          );
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
         return;
@@ -3637,17 +3308,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         } else {
           logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
         }
-        await vincularWhatsappChatAoLead(cliente, leadFromMe, {
-          chatId: chatIdFromMe || chatLid || telefone, telefone, isGroup: isGrupoWhatsapp,
-          nome: isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone) : (extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdFromMe || telefone)),
-          fromMe: true, lastMessageText: texto || (midiaFromMe.tipo || ''), midiaTipo: midiaFromMe.tipo,
-          lastMessageAt: new Date().toISOString(), msgId: msgIdFromMe, rawPayload: body
-        }).catch(() => null);
-      }
-
-      if (isGrupoWhatsapp) {
-        logDebug('[zapi][fromMe][grupo] mensagem de grupo registrada no histórico/Inbox; automação ignorada');
-        return;
       }
 
       if (!ehComandoInterno) {
@@ -3795,25 +3455,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Buscar lead pelo identificador do chat. Privado: telefone tolerante ao 9º dígito.
-    // Grupo: chat_lid/telefone exato (@g.us), sem passar por variantes de telefone.
-    let rl;
-    if (isGrupoWhatsapp) {
-      rl = await query(
-        `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND (chat_lid = $2 OR telefone = $2) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-        [cliente.id, chatLid || telefone]
-      );
-    } else {
-      const _varMsg = variantesTelefone(telefone);
-      if (_varMsg.length) {
-        rl = await query(
-          `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-          [cliente.id, ..._varMsg]
-        );
-      } else {
-        rl = { rows: [] };
-      }
-    }
+    // Buscar lead pelo telefone (tolerante ao 9º dígito)
+    const _varMsg = variantesTelefone(telefone);
+    const rl = await query(
+      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+      [cliente.id, ..._varMsg]
+    );
     const lead = rl.rows[0] || null;
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
@@ -3821,46 +3468,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && (texto || midiaRecebida.url)) {
       const msgIdEntrada = body.messageId || body.id || null;
       const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-      await registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
-      await vincularWhatsappChatAoLead(cliente, lead, {
-        chatId: chatIdWebhook || chatLid || telefone, telefone, isGroup: isGrupoWhatsapp,
-        nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
-        fromMe: false, lastMessageText: texto || (midiaRecebida.tipo || ''), midiaTipo: midiaRecebida.tipo,
-        lastMessageAt: new Date().toISOString(), msgId: msgIdEntrada, rawPayload: body
-      }).catch(() => null);
-    }
-
-    // Grupos devem espelhar o WhatsApp no Inbox/histórico, mas não devem acionar
-    // automação comercial, questionário, follow-up ou comandos de funil.
-    if (isGrupoWhatsapp && lead) {
-      await query(`UPDATE movatak_leads SET origem=COALESCE(origem,'whatsapp_group'), chat_lid=COALESCE($2, chat_lid), atualizado_em=NOW() WHERE id=$1`, [lead.id, chatLid || telefone]).catch(() => null);
-      return;
-    }
-
-    // Grupo novo: cria chat no CRM e registra a primeira mensagem, sem automação.
-    // Fica ANTES do retorno de mídia sem texto para que áudio/foto em grupo também apareça no Inbox.
-    if (isGrupoWhatsapp && !lead) {
-      const novoGrupo = await query(
-        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, origem, chat_lid, nao_lida, atualizado_em)
-         VALUES ($1,$2,$3,'lead','whatsapp_group',$4,true,NOW()) RETURNING id`,
-        [cliente.id, telefone, nomeGrupoOuContatoPayload(body, telefone), chatLid || telefone]
-      ).catch(async (e) => {
-        if (String(e.message || '').includes('origem')) return await query(
-          `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-           VALUES ($1,$2,$3,'lead',$4,true,NOW()) RETURNING id`,
-          [cliente.id, telefone, nomeGrupoOuContatoPayload(body, telefone), chatLid || telefone]
-        );
-        throw e;
-      });
-      const msgIdGrupo = body.messageId || body.id || null;
-      await registrarConversa(novoGrupo.rows[0].id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdGrupo, replyPayload).catch(() => null);
-      await vincularWhatsappChatAoLead(cliente, { id: novoGrupo.rows[0].id, telefone, nome: nomeGrupoOuContatoPayload(body, telefone), chat_lid: chatLid || telefone }, {
-        chatId: chatLid || telefone, telefone, isGroup: true, nome: nomeGrupoOuContatoPayload(body, telefone),
-        fromMe: false, lastMessageText: texto || (midiaRecebida.tipo || ''), midiaTipo: midiaRecebida.tipo,
-        lastMessageAt: new Date().toISOString(), msgId: msgIdGrupo, rawPayload: body
-      }).catch(() => null);
-      await registrarEventoLead(novoGrupo.rows[0].id, cliente.id, 'grupo_criado_whatsapp', 'Grupo criado no Inbox a partir do WhatsApp', { chat_lid: chatLid || telefone }).catch(() => null);
-      return;
+      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
     }
 
     // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.
@@ -4027,7 +3635,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
            (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado)
          VALUES ($1, $2, $3, 'followup', $4, $5, $5, $6, $7)
          RETURNING id`,
-        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone), chatIdWebhook || chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
+        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
       );
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
       // Registra também a primeira mensagem do lead que criou o atendimento.
@@ -4035,12 +3643,6 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
       const msgIdNovoLead = body.messageId || body.id || null;
       await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload).catch(() => null);
-      await vincularWhatsappChatAoLead(cliente, { id: novoLead.rows[0].id, telefone, nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone), chat_lid: chatIdWebhook || chatLid }, {
-        chatId: chatIdWebhook || chatLid || telefone, telefone, isGroup: false,
-        nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
-        fromMe: false, lastMessageText: texto || (midiaNovoLead.tipo || ''), midiaTipo: midiaNovoLead.tipo,
-        lastMessageAt: new Date().toISOString(), msgId: msgIdNovoLead, rawPayload: body
-      }).catch(() => null);
 
       // Decide se inicia o questionário:
       // - Campanha com template de questionário vinculado → usa o questionário do template.
@@ -4078,17 +3680,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
          VALUES ($1, $2, $3, 'lead', $4, true, NOW())
          RETURNING id`,
-        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone), chatIdWebhook || chatLid]
+        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
       );
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
       await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload).catch(() => null);
-      await vincularWhatsappChatAoLead(cliente, { id: novoContato.rows[0].id, telefone, nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone), chat_lid: chatIdWebhook || chatLid }, {
-        chatId: chatIdWebhook || chatLid || telefone, telefone, isGroup: false,
-        nome: extrairNomeContatoPayloadZapi(body, cliente, telefone) || nomeGrupoOuContatoPayload(body, chatIdWebhook || telefone),
-        fromMe: false, lastMessageText: texto || (midiaNovoContato.tipo || ''), midiaTipo: midiaNovoContato.tipo,
-        lastMessageAt: new Date().toISOString(), msgId: msgIdNovoContato, rawPayload: body
-      }).catch(() => null);
       await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
       console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
     }
@@ -4543,8 +4139,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       totalNaoLidas,
       nicho: clienteInfo.nicho || null,
       agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leadsRes.rows,
-      inbox: await carregarInboxCliente(clienteId, { setorIds, limit: 2000 })
+      leads: leadsRes.rows
     });
   } catch (e) {
     console.error('[vendedor/funil]', e.message);
@@ -4731,15 +4326,25 @@ async function vendedorPodeColuna(req, colunaId) {
 app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, res) => {
   try {
     await garantirEstruturaConversas();
-    const leadBase = await vendedorPodeLead(req, req.params.id);
-    if (!leadBase) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const z = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [leadBase.cliente_id]);
-    const lead = { ...leadBase, ...(z.rows[0] || {}) };
+    const lead = await vendedorPodeLead(req, req.params.id);
+    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const naoLida = !!(req.body && req.body.nao_lida);
-    const r = await aplicarEstadoLeituraLead(lead, naoLida, 'vendedor', { syncZap: true });
-    await registrarEventoLead(lead.id, lead.cliente_id, naoLida ? 'whatsapp_marcado_nao_lido' : 'whatsapp_marcado_lido', naoLida ? 'Chat marcado como não lido pelo vendedor no CRM e WhatsApp' : 'Chat marcado como lido pelo vendedor no CRM e WhatsApp', { vendedor_id: req.vendedor.id }).catch(() => null);
-    res.json(r);
-  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+    if (naoLida) {
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = NULL, lida_por = NULL
+                    WHERE id = (
+                      SELECT id FROM movatak_conversas
+                       WHERE lead_id = $1 AND direcao = 'entrada'
+                       ORDER BY criado_em DESC LIMIT 1
+                    )`, [lead.id]).catch(() => null);
+    } else {
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = COALESCE(lida_em, NOW()), lida_por = COALESCE(lida_por, 'vendedor')
+                    WHERE lead_id = $1 AND direcao = 'entrada' AND lida_em IS NULL`, [lead.id]).catch(() => null);
+    }
+    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, lead.id]);
+    res.json({ ok: true, nao_lida: naoLida });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/movatak/vendedor/leads/:id/arquivar', authVendedor, async (req, res) => {
@@ -4884,12 +4489,9 @@ app.post('/movatak/vendedor/leads/:id/zapi/chat-action', authVendedor, async (re
       data = resp.data || {};
       await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
     } else {
-      const leadZap = { ...lead, ...c };
-      if (action === 'read') data = await zapiMarcarChatComoLido(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, await obterUltimaMensagemEntradaMsgId(lead.id));
-      else if (action === 'unread') data = await zapiMarcarChatComoNaoLido(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone);
-      else data = await zapiModificarChat(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, action);
-      if (action === 'read') await aplicarEstadoLeituraLead(leadZap, false, 'vendedor', { syncZap: false }).catch(() => null);
-      if (action === 'unread') await aplicarEstadoLeituraLead(leadZap, true, 'vendedor', { syncZap: false }).catch(() => null);
+      data = await zapiModificarChat(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, action);
+      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
+      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
     }
     await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação de chat executada pelo vendedor', { action, vendedor_id: req.vendedor.id });
     res.json({ ok: true, data });
@@ -5729,11 +5331,9 @@ app.post('/movatak/admin/leads/:id/zapi/chat-action', authMovatak, async (req, r
       data = resp.data || {};
       await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
     } else {
-      if (action === 'read') data = await zapiMarcarChatComoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, await obterUltimaMensagemEntradaMsgId(lead.id));
-      else if (action === 'unread') data = await zapiMarcarChatComoNaoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone);
-      else data = await zapiModificarChat(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, action);
-      if (action === 'read') await aplicarEstadoLeituraLead(lead, false, 'admin', { syncZap: false }).catch(() => null);
-      if (action === 'unread') await aplicarEstadoLeituraLead(lead, true, 'admin', { syncZap: false }).catch(() => null);
+      data = await zapiModificarChat(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, action);
+      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
+      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
     }
     await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação aplicada no chat do WhatsApp', { action });
     res.json({ ok: true, data });
@@ -5796,86 +5396,15 @@ function chatZapiEhGrupo(ch) {
   return !!(ch.isGroup || ch.group || id.includes('@g.us') || id.includes('@newsletter'));
 }
 
-function extrairGrupoIdChatZapi(ch) {
-  if (!ch) return null;
-  const diretos = [ch.id, ch.chatId, ch.chat_id, ch.remoteJid, ch.remote_jid, ch.jid, ch.phone, ch.from, ch.to]
-    .map(v => String(v || '').trim()).filter(Boolean);
-  const profundos = extrairValoresProfundos(ch, 4).map(x => String(x.valor || '').trim()).filter(Boolean);
-  for (const s of [...diretos, ...profundos]) {
-    if (/@g\.us$/i.test(s) || s.includes('@g.us')) return s;
-  }
-  return null;
-}
-
-function extrairValoresProfundos(obj, maxDepth = 4, prefixo = '', out = []) {
-  if (!obj || typeof obj !== 'object' || maxDepth < 0) return out;
-  if (Array.isArray(obj)) {
-    for (let i = 0; i < Math.min(obj.length, 8); i++) extrairValoresProfundos(obj[i], maxDepth - 1, prefixo + '[' + i + ']', out);
-    return out;
-  }
-  for (const [k, v] of Object.entries(obj)) {
-    const caminho = prefixo ? prefixo + '.' + k : k;
-    if (v == null) continue;
-    if (typeof v === 'string' || typeof v === 'number') out.push({ caminho, valor: String(v) });
-    else if (typeof v === 'object') extrairValoresProfundos(v, maxDepth - 1, caminho, out);
-  }
-  return out;
-}
-
-function chavePareceTelefoneOuChat(caminho) {
-  const k = String(caminho || '').toLowerCase();
-  return /(^|\.)(phone|phonenumber|number|waid|wa_id|jid|id|chatid|chat_id|remotejid|remote_jid|participant|sender|from|to|owner|user|contact)/i.test(k);
-}
-
-function normalizarCandidatoChatTelefone(valor) {
-  if (valor == null) return null;
-  let s = String(valor).trim();
-  if (!s) return null;
-  if (s.includes('@g.us') || s.includes('@newsletter')) return null;
-  // WhatsApp costuma vir como 5581999999999@c.us, 5581999999999@s.whatsapp.net ou em campos nested.
-  s = s.replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, '').replace(/@lid$/i, '');
-  return s;
-}
-
 function extrairTelefoneChatZapi(ch, cliente = null) {
-  if (!ch) return null;
-  const candidatosDiretos = [
-    ch.phone, ch.phoneNumber, ch.contactPhone, ch.contact && ch.contact.phone, ch.contact && ch.contact.number,
-    ch.id, ch.chatId, ch.chat_id, ch.remoteJid, ch.remote_jid, ch.jid, ch.waId, ch.wa_id,
-    ch.participantPhone, ch.senderPhone, ch.from, ch.to, ch.number,
+  const candidatos = [
+    ch.phone, ch.phoneNumber, ch.contactPhone, ch.id, ch.chatId, ch.remoteJid,
+    ch.jid, ch.waId, ch.participantPhone, ch.senderPhone,
     ch.lastMessage && ch.lastMessage.phone,
     ch.lastMessage && ch.lastMessage.senderPhone,
-    ch.lastMessage && ch.lastMessage.remoteJid,
-    ch.lastMessage && ch.lastMessage.chatId,
-    ch.lastMessage && ch.lastMessage.from,
-    ch.lastMessage && ch.lastMessage.to,
-    ch.lastMessageData && ch.lastMessageData.phone,
-    ch.lastMessageData && ch.lastMessageData.senderPhone,
-    ch.lastMessageData && ch.lastMessageData.remoteJid
-  ].map(normalizarCandidatoChatTelefone).filter(Boolean);
-
-  const profundos = extrairValoresProfundos(ch, 4)
-    .filter(x => chavePareceTelefoneOuChat(x.caminho))
-    .map(x => normalizarCandidatoChatTelefone(x.valor))
-    .filter(Boolean);
-
-  // Primeiro tenta campos explícitos. Depois tenta qualquer campo nested com cara de jid/telefone.
-  return primeiroTelefoneValido([...candidatosDiretos, ...profundos], cliente);
-}
-
-function resumirChatSemTelefone(ch) {
-  const vals = extrairValoresProfundos(ch, 3);
-  const camposChave = vals
-    .filter(x => chavePareceTelefoneOuChat(x.caminho))
-    .slice(0, 18)
-    .map(x => ({ campo: x.caminho, valor: limitarTextoDebug(String(x.valor || ''), 80) }));
-  return {
-    keys: Object.keys(ch || {}).slice(0, 30),
-    isGroup: !!(ch && (ch.isGroup || ch.group)),
-    id: limitarTextoDebug(ch && (ch.id || ch.chatId || ch.remoteJid || ch.jid || ''), 120),
-    name: limitarTextoDebug(ch && (ch.name || ch.pushName || ch.contactName || ch.shortName || ''), 120),
-    camposChave
-  };
+    ch.lastMessage && ch.lastMessage.remoteJid
+  ];
+  return primeiroTelefoneValido(candidatos, cliente);
 }
 
 function extrairNomeChatZapi(ch, telefone) {
@@ -5915,307 +5444,39 @@ function extrairUltimaMensagemChatZapi(ch) {
   };
 }
 
-function extrairUnreadCountChatZapi(ch) {
-  const vals = [ch.unreadCount, ch.unreadMessages, ch.pendingMessages, ch.unread];
-  for (const v of vals) {
-    if (v === true) return 1;
-    if (v === false || v === null || v === undefined || v === '') continue;
-    const n = Number(v);
-    if (Number.isFinite(n) && n >= 0) return n;
-  }
-  return null;
-}
-
-function chatZapiTemEstadoUnreadConhecido(ch) {
-  return ch && (
-    Object.prototype.hasOwnProperty.call(ch, 'unreadCount') ||
-    Object.prototype.hasOwnProperty.call(ch, 'unreadMessages') ||
-    Object.prototype.hasOwnProperty.call(ch, 'pendingMessages') ||
-    Object.prototype.hasOwnProperty.call(ch, 'unread') ||
-    Object.prototype.hasOwnProperty.call(ch, 'isUnread')
-  );
-}
-
 function chatZapiTemNaoLida(ch) {
-  const n = extrairUnreadCountChatZapi(ch);
-  return !!(ch.unread === true || ch.isUnread === true || (n != null && n > 0));
-}
-
-async function obterUltimaMensagemEntradaMsgId(leadId) {
-  const r = await query(
-    `SELECT msg_id FROM movatak_conversas
-      WHERE lead_id=$1 AND direcao='entrada' AND msg_id IS NOT NULL
-      ORDER BY criado_em DESC LIMIT 1`,
-    [leadId]
-  ).catch(() => ({ rows: [] }));
-  return r.rows[0] ? r.rows[0].msg_id : null;
-}
-
-async function zapiMarcarChatComoLido(instance, token, clientToken, telefone, msgId = null) {
-  try {
-    return await zapiModificarChat(instance, token, clientToken, telefone, 'read');
-  } catch (e) {
-    if (!msgId) throw e;
-    return await zapiLerMensagem(instance, token, clientToken, telefone, msgId);
-  }
-}
-
-async function zapiMarcarChatComoNaoLido(instance, token, clientToken, telefone) {
-  try {
-    return await zapiMarcarNaoLido(instance, token, clientToken, telefone);
-  } catch (e) {
-    return await zapiModificarChat(instance, token, clientToken, telefone, 'unread');
-  }
-}
-
-async function aplicarEstadoLeituraLead(lead, naoLida, origem = 'crm', opts = {}) {
-  if (!lead || !lead.id) throw new Error('Lead inválido para sincronizar leitura.');
-  const syncZap = opts.syncZap !== false;
-  let zapiData = null;
-  if (syncZap) {
-    if (!lead.zapi_instance || !lead.zapi_token || !lead.zapi_client_token || !lead.telefone) {
-      throw new Error('Lead sem configuração Z-API/telefone para sincronizar leitura com WhatsApp.');
-    }
-    if (naoLida) zapiData = await zapiMarcarChatComoNaoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone);
-    else zapiData = await zapiMarcarChatComoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, await obterUltimaMensagemEntradaMsgId(lead.id));
-  }
-  if (naoLida) {
-    await query(`UPDATE movatak_conversas SET lida_em=NULL, lida_por=NULL WHERE id=(SELECT id FROM movatak_conversas WHERE lead_id=$1 AND direcao='entrada' ORDER BY criado_em DESC LIMIT 1)`, [lead.id]).catch(() => null);
-    await query(`UPDATE movatak_leads SET nao_lida=true, whatsapp_unread_count=GREATEST(COALESCE(whatsapp_unread_count,0),1), whatsapp_unread_sync_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
-    await atualizarWhatsappChatPorLead(lead.id, { unreadCount: 1 });
-  } else {
-    await query(`UPDATE movatak_conversas SET lida_em=COALESCE(lida_em,NOW()), lida_por=COALESCE(lida_por,$2) WHERE lead_id=$1 AND direcao='entrada' AND lida_em IS NULL`, [lead.id, origem]).catch(() => null);
-    await query(`UPDATE movatak_leads SET nao_lida=false, whatsapp_unread_count=0, whatsapp_unread_sync_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
-    await atualizarWhatsappChatPorLead(lead.id, { unreadCount: 0 });
-  }
-  return { ok:true, nao_lida:!!naoLida, zapi:zapiData || null };
-}
-
-
-// ============================================================
-// Fonte real do Inbox: espelho de chats do WhatsApp
-// ============================================================
-function normalizarChatIdWhatsapp(valor, fallback = null) {
-  let s = String(valor || '').trim();
-  if (!s && fallback) s = String(fallback || '').trim();
-  if (!s) return null;
-  if (s.includes('@g.us') || s.includes('@newsletter') || s.includes('@lid')) return s;
-  s = s.replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, '');
-  const dig = s.replace(/\D/g, '');
-  return dig || s;
-}
-
-function extrairChatIdChatZapi(ch, cliente = null) {
-  if (!ch) return null;
-  const grupo = extrairGrupoIdChatZapi(ch);
-  if (grupo) return grupo;
-  const diretos = [
-    ch.id, ch.chatId, ch.chat_id, ch.remoteJid, ch.remote_jid, ch.jid, ch.lid, ch.chatLid,
-    ch.phone, ch.phoneNumber, ch.contactPhone, ch.waId, ch.wa_id, ch.number,
-    ch.contact && ch.contact.id, ch.contact && ch.contact.phone, ch.contact && ch.contact.number,
-    ch.lastMessage && (ch.lastMessage.chatId || ch.lastMessage.remoteJid || ch.lastMessage.phone || ch.lastMessage.from || ch.lastMessage.to),
-    ch.lastMessageData && (ch.lastMessageData.chatId || ch.lastMessageData.remoteJid || ch.lastMessageData.phone)
-  ].filter(Boolean);
-  const profundos = extrairValoresProfundos(ch, 4)
-    .filter(x => chavePareceTelefoneOuChat(x.caminho))
-    .map(x => x.valor)
-    .filter(Boolean);
-  for (const v of [...diretos, ...profundos]) {
-    const raw = String(v || '').trim();
-    if (!raw) continue;
-    if (raw.includes('@newsletter')) continue;
-    const id = normalizarChatIdWhatsapp(raw);
-    if (!id) continue;
-    // Evita usar o telefone da própria empresa como chat privado.
-    const dig = id.replace(/\D/g, '');
-    if (dig && telefoneEhDaEmpresa(dig, cliente)) continue;
-    return id;
-  }
-  const tel = extrairTelefoneChatZapi(ch, cliente);
-  return tel ? normalizarChatIdWhatsapp(tel) : null;
-}
-
-function extrairBoolChat(ch, campos) {
-  for (const c of campos) {
-    if (Object.prototype.hasOwnProperty.call(ch || {}, c)) return !!ch[c];
-  }
-  return false;
-}
-
-async function upsertWhatsappChat(cliente, info = {}) {
-  if (!cliente || !cliente.id) return null;
-  await garantirEstruturaConversas().catch(() => null);
-  const chatId = normalizarChatIdWhatsapp(info.chatId || info.chat_id || info.telefone || info.phone);
-  if (!chatId) return null;
-  const unreadKnown = info.unreadKnown === true || info.unreadCount != null;
-  const unreadCount = unreadKnown ? Math.max(0, parseInt(info.unreadCount || 0, 10) || 0) : null;
-  const rawPayload = info.rawPayload || info.raw || {};
-  let lastAt = info.lastMessageAt || info.last_message_at || null;
-  if (lastAt) {
-    const n = Number(lastAt);
-    if (Number.isFinite(n) && n > 0) lastAt = new Date(n < 10_000_000_000 ? n * 1000 : n).toISOString();
-    else {
-      const d = new Date(lastAt);
-      lastAt = isNaN(d.getTime()) ? null : d.toISOString();
-    }
-  }
-  const lastText = info.lastMessageText != null ? String(info.lastMessageText) : null;
-  const leadId = info.leadId || info.lead_id || null;
-  const telefone = info.telefone || info.phone || (/^\d{10,15}$/.test(chatId) ? chatId : null);
-  const nome = info.nome || info.name || chatId;
-  const r = await query(
-    `INSERT INTO movatak_whatsapp_chats
-       (cliente_id, chat_id, telefone, nome, is_group, is_archived, is_pinned, is_muted,
-        unread_count, last_message_text, last_message_at, last_message_from_me, last_message_msg_id,
-        lead_id, raw_payload, updated_at)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,0),$10,$11,$12,$13,$14,$15::jsonb,NOW())
-     ON CONFLICT (cliente_id, chat_id) DO UPDATE SET
-        telefone = COALESCE(EXCLUDED.telefone, movatak_whatsapp_chats.telefone),
-        nome = COALESCE(NULLIF(EXCLUDED.nome,''), movatak_whatsapp_chats.nome),
-        is_group = EXCLUDED.is_group,
-        is_archived = EXCLUDED.is_archived,
-        is_pinned = EXCLUDED.is_pinned,
-        is_muted = EXCLUDED.is_muted,
-        unread_count = CASE WHEN $16 THEN EXCLUDED.unread_count ELSE movatak_whatsapp_chats.unread_count END,
-        last_message_text = COALESCE(EXCLUDED.last_message_text, movatak_whatsapp_chats.last_message_text),
-        last_message_at = COALESCE(EXCLUDED.last_message_at, movatak_whatsapp_chats.last_message_at),
-        last_message_from_me = COALESCE(EXCLUDED.last_message_from_me, movatak_whatsapp_chats.last_message_from_me),
-        last_message_msg_id = COALESCE(EXCLUDED.last_message_msg_id, movatak_whatsapp_chats.last_message_msg_id),
-        lead_id = COALESCE(EXCLUDED.lead_id, movatak_whatsapp_chats.lead_id),
-        raw_payload = CASE WHEN EXCLUDED.raw_payload <> '{}'::jsonb THEN EXCLUDED.raw_payload ELSE movatak_whatsapp_chats.raw_payload END,
-        updated_at = NOW()
-     RETURNING *`,
-    [
-      cliente.id, chatId, telefone || null, nome || chatId, !!info.isGroup, !!info.isArchived, !!info.isPinned, !!info.isMuted,
-      unreadCount, lastText, lastAt, !!info.lastMessageFromMe, info.lastMessageMsgId || null, leadId,
-      JSON.stringify(rawPayload || {}), unreadKnown
-    ]
-  ).catch(e => { console.error('[whatsapp_chats][upsert]', e.message); return { rows: [] }; });
-  return r.rows[0] || null;
-}
-
-
-async function vincularWhatsappChatAoLead(cliente, lead, opts = {}) {
-  if (!cliente || !cliente.id || !lead || !lead.id) return null;
-  const chatId = normalizarChatIdWhatsapp(opts.chatId || opts.chat_id || lead.chat_lid || opts.telefone || lead.telefone);
-  if (!chatId) return null;
-  const fromMe = !!opts.fromMe;
-  const unreadCount = fromMe ? 0 : Math.max(1, parseInt(opts.unreadCount ?? 1, 10) || 1);
-  const lastMessageAt = opts.lastMessageAt || new Date().toISOString();
-  const lastMessageText = opts.lastMessageText != null ? String(opts.lastMessageText) : (opts.midiaTipo || '');
-
-  await upsertWhatsappChat(cliente, {
-    chatId,
-    telefone: opts.isGroup ? null : (opts.telefone || lead.telefone || extrairDigitosTelefone(chatId)),
-    nome: opts.nome || lead.nome || chatId,
-    isGroup: !!opts.isGroup,
-    unreadKnown: true,
-    unreadCount,
-    lastMessageText,
-    lastMessageAt,
-    lastMessageFromMe: fromMe,
-    lastMessageMsgId: opts.msgId || null,
-    leadId: lead.id,
-    rawPayload: opts.rawPayload || {}
-  }).catch(e => { console.error('[whatsapp_chats][vincular-lead]', e.message); return null; });
-
-  // Mantém o modelo legado consistente para a UI atual e para o fallback do Inbox.
-  // Antes a mensagem podia ser salva em movatak_conversas, mas o chat novo ficava
-  // sem lead_id em movatak_whatsapp_chats e/ou o lead não recebia nao_lida=true.
-  if (fromMe) {
-    await query(
-      `UPDATE movatak_leads
-          SET chat_lid = COALESCE($2, chat_lid),
-              whatsapp_last_msg_em = COALESCE($3::timestamptz, whatsapp_last_msg_em),
-              whatsapp_unread_count = 0,
-              nao_lida = false,
-              atualizado_em = NOW()
-        WHERE id = $1`,
-      [lead.id, chatId, lastMessageAt]
-    ).catch(() => null);
-  } else {
-    await query(
-      `UPDATE movatak_leads
-          SET chat_lid = COALESCE($2, chat_lid),
-              whatsapp_last_msg_em = COALESCE($3::timestamptz, NOW()),
-              whatsapp_unread_count = GREATEST(COALESCE(whatsapp_unread_count,0), $4),
-              nao_lida = true,
-              atualizado_em = NOW()
-        WHERE id = $1`,
-      [lead.id, chatId, lastMessageAt, unreadCount]
-    ).catch(() => null);
-  }
-  return true;
-}
-
-async function atualizarWhatsappChatPorLead(leadId, patch = {}) {
-  if (!leadId) return;
-  const sets = [];
-  const vals = [];
-  let i = 1;
-  const add = (sql, val) => { sets.push(sql.replace(/\?/g, '$' + i)); vals.push(val); i++; };
-  if (patch.unreadCount != null) add('unread_count=?', Math.max(0, parseInt(patch.unreadCount || 0, 10) || 0));
-  if (patch.lastMessageText !== undefined) add('last_message_text=?', patch.lastMessageText || null);
-  if (patch.lastMessageAt !== undefined) add('last_message_at=?', patch.lastMessageAt || null);
-  if (patch.lastMessageFromMe !== undefined) add('last_message_from_me=?', !!patch.lastMessageFromMe);
-  if (patch.lastMessageMsgId !== undefined) add('last_message_msg_id=?', patch.lastMessageMsgId || null);
-  if (!sets.length) return;
-  vals.push(leadId);
-  await query(`UPDATE movatak_whatsapp_chats SET ${sets.join(', ')}, updated_at=NOW() WHERE lead_id=$${i}`, vals).catch(() => null);
+  const n = Number(ch.unreadCount ?? ch.unreadMessages ?? ch.unread ?? ch.pendingMessages ?? 0);
+  return !!(ch.unread === true || ch.isUnread === true || n > 0);
 }
 
 async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
-  const ehGrupo = chatZapiEhGrupo(ch);
-  const grupoId = ehGrupo ? extrairGrupoIdChatZapi(ch) : null;
-  const chatLid = grupoId || ch.chatLid || ch.lid || (String(ch.id || '').includes('@lid') ? ch.id : null) || null;
-  const identificador = grupoId || telefone;
-  let lead = await localizarLeadPorPayload(cliente.id, identificador, chatLid, false);
-  const nome = extrairNomeChatZapi(ch, identificador);
+  const chatLid = ch.chatLid || ch.lid || (String(ch.id || '').includes('@lid') ? ch.id : null) || null;
+  let lead = await localizarLeadPorPayload(cliente.id, telefone, chatLid, false);
+  const nome = extrairNomeChatZapi(ch, telefone);
   if (lead) {
     await query(
       `UPDATE movatak_leads
           SET nome = COALESCE(NULLIF($1,''), nome),
               telefone = COALESCE(NULLIF($2,''), telefone),
               chat_lid = COALESCE($3, chat_lid),
-              origem = CASE WHEN $5 THEN COALESCE(origem, 'whatsapp_group') ELSE origem END,
               atualizado_em = NOW()
         WHERE id = $4`,
-      [nome || null, identificador || null, chatLid, lead.id, ehGrupo]
+      [nome || null, telefone || null, chatLid, lead.id]
     ).catch(() => null);
     return { lead, criado: false };
   }
-  let novo;
-  try {
-    novo = await query(
-      `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, chat_lid, nao_lida, criado_em, atualizado_em)
-       VALUES ($1,$2,$3,'lead',$5,$4,false,NOW(),NOW())
-       RETURNING *`,
-      [cliente.id, nome || identificador, identificador, chatLid, ehGrupo ? 'whatsapp_group' : 'whatsapp_sync']
-    );
-  } catch (e) {
-    // Fallback cirúrgico para bancos que ainda não receberam a coluna origem.
-    // Evita derrubar toda a reconciliação por um campo não crítico.
-    if (String(e.message || '').includes('column "origem"') || String(e.message || '').includes('origem')) {
-      novo = await query(
-        `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, chat_lid, nao_lida, criado_em, atualizado_em)
-         VALUES ($1,$2,$3,'lead',$4,false,NOW(),NOW())
-         RETURNING *`,
-        [cliente.id, nome || identificador, identificador, chatLid]
-      );
-    } else {
-      throw e;
-    }
-  }
+  const novo = await query(
+    `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, chat_lid, nao_lida, criado_em, atualizado_em)
+     VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,false,NOW(),NOW())
+     RETURNING *`,
+    [cliente.id, nome || telefone, telefone, chatLid]
+  );
   return { lead: novo.rows[0], criado: true };
 }
 
 async function sincronizarChatsCliente(clienteId, opts = {}) {
   await garantirEstruturaQuestionario().catch(() => null);
   await garantirEstruturaConversas().catch(() => null);
-  // Compatibilidade com bancos antigos: a reconciliação de WhatsApp não pode falhar
-  // se a coluna origem ainda não existir em movatak_leads. Esta DDL é idempotente,
-  // leve e fica aqui como guarda cirúrgica porque a rotina de sync cria leads novos.
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS origem TEXT`).catch(() => null);
   const c = await query('SELECT * FROM movatak_clientes WHERE id=$1 AND ativo=true', [clienteId]);
   if (!c.rows.length) throw new Error('Cliente não encontrado ou inativo.');
   const cliente = c.rows[0];
@@ -6223,100 +5484,22 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
     throw new Error('Z-API não configurada para este cliente.');
   }
 
-  const suspenso = reconZapiSuspensaoAtiva(cliente);
-  if (suspenso && (opts.automatico || opts.origem === 'cron')) {
-    return { ok:false, suspenso:true, motivo:suspenso.motivo, proxima_tentativa_em:new Date(suspenso.ate).toISOString(), total:0, criados:0, atualizados:0, mensagensCriadas:0, marcadosNaoLidos:0, ignorados:0, semTelefone:0 };
-  }
-
-  let data;
-  try {
-    data = await zapiListarChats(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token);
-  } catch (e) {
-    const detalhe = erroZapiDetalhado(e, { clienteId: cliente.id, endpoint: 'chats' });
-    await registrarErroZapi(cliente.id, detalhe, { endpoint: 'chats', status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null }).catch(() => null);
-
-    if (erroZapiEhInstanciaInvalida(e) && (opts.automatico || opts.origem === 'cron')) {
-      const item = suspenderReconZapiCliente(cliente, detalhe);
-      return { ok:false, suspenso:true, motivo:detalhe, proxima_tentativa_em:new Date(item.ate).toISOString(), total:0, criados:0, atualizados:0, mensagensCriadas:0, marcadosNaoLidos:0, ignorados:0, semTelefone:0 };
-    }
-
-    logEstruturado('error', 'zapi_chats_falha', {
-      cliente_id: cliente.id,
-      cliente_nome: cliente.nome,
-      endpoint: 'chats',
-      status: e?.response?.status || e?.movatakZapi?.status || null,
-      erro: detalhe,
-      tem_instance: !!cliente.zapi_instance,
-      tem_token: !!cliente.zapi_token,
-      tem_client_token: !!cliente.zapi_client_token,
-      instance_hint: mascararTokenDebug(cliente.zapi_instance)
-    });
-    throw new Error(detalhe || e.message);
-  }
-  const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : (Array.isArray(data.result) ? data.result : [])));
+  const data = await zapiListarChats(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token);
+  const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : []));
   const max = Math.max(1, Math.min(parseInt(opts.max || opts.limit || 300, 10) || 300, 1000));
   const chats = chatsRaw.slice(0, max);
 
   let criados = 0, atualizados = 0, mensagensCriadas = 0, marcadosNaoLidos = 0, ignorados = 0, semTelefone = 0;
-  const amostrasSemTelefone = [];
   for (const ch of chats) {
-    if (!ch) { ignorados++; continue; }
-    const ehGrupoChat = chatZapiEhGrupo(ch);
-    const telefoneExtraido = ehGrupoChat ? extrairGrupoIdChatZapi(ch) : extrairTelefoneChatZapi(ch, cliente);
-    const chatId = extrairChatIdChatZapi(ch, cliente) || telefoneExtraido;
-    if (!chatId) {
-      semTelefone++;
-      if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch));
-      continue;
-    }
-    if (!telefoneExtraido && !ehGrupoChat) {
-      semTelefone++;
-      if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch));
-    }
-    const telefone = telefoneExtraido || chatId;
+    if (!ch || chatZapiEhGrupo(ch)) { ignorados++; continue; }
+    const telefone = extrairTelefoneChatZapi(ch, cliente);
+    if (!telefone) { semTelefone++; continue; }
+
+    const { lead, criado } = await garantirLeadParaChatWhatsapp(cliente, ch, telefone);
+    if (criado) criados++; else atualizados++;
 
     const ultima = extrairUltimaMensagemChatZapi(ch);
-    const unreadConhecido = chatZapiTemEstadoUnreadConhecido(ch);
-    const unreadCount = extrairUnreadCountChatZapi(ch);
     const temNaoLida = chatZapiTemNaoLida(ch);
-
-    let lead = null, criado = false;
-    try {
-      const rLead = await garantirLeadParaChatWhatsapp(cliente, ch, telefone);
-      lead = rLead.lead;
-      criado = rLead.criado;
-      if (criado) criados++; else atualizados++;
-    } catch (e) {
-      ignorados++;
-      console.error('[reconciliacao-chats][lead]', e.message);
-    }
-
-    await upsertWhatsappChat(cliente, {
-      chatId,
-      telefone: ehGrupoChat ? null : telefoneExtraido,
-      nome: extrairNomeChatZapi(ch, chatId),
-      isGroup: ehGrupoChat,
-      isArchived: extrairBoolChat(ch, ['archived','isArchived']),
-      isPinned: extrairBoolChat(ch, ['pinned','isPinned']),
-      isMuted: extrairBoolChat(ch, ['isMuted','muted']),
-      unreadKnown: unreadConhecido,
-      unreadCount: unreadConhecido ? (unreadCount || 0) : null,
-      lastMessageText: ultima.texto || (ultima.midiaTipo ? ultima.midiaTipo : null),
-      lastMessageAt: ultima.criadoEm || ch.lastMessageTime || ch.updatedAt || null,
-      lastMessageFromMe: ultima.direcao === 'saida',
-      lastMessageMsgId: ultima.msgId || null,
-      leadId: lead && lead.id,
-      rawPayload: ch
-    }).catch(() => null);
-
-    if (!lead) continue;
-
-    await query(`UPDATE movatak_leads
-                    SET whatsapp_unread_count = COALESCE($2, whatsapp_unread_count),
-                        whatsapp_unread_sync_em = NOW(),
-                        whatsapp_last_chat = $3::jsonb,
-                        whatsapp_last_msg_em = COALESCE($4::timestamptz, whatsapp_last_msg_em)
-                  WHERE id=$1`, [lead.id, unreadConhecido ? (unreadCount || 0) : null, JSON.stringify(ch || {}), ultima.criadoEm || null]).catch(() => null);
 
     if (ultima.temMensagem) {
       const conversaId = await registrarConversa(
@@ -6337,18 +5520,17 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
       }
     }
 
-    // O WhatsApp/Z-API é usado como fonte de reconciliação do badge.
-    // Se o estado de leitura veio no payload, ele é soberano: lido no WhatsApp => lido no CRM;
-    // não lido no WhatsApp => não lido no CRM. Se a Z-API não enviar esse campo, preservamos
-    // o estado local para não apagar alerta por falta de informação.
-    if (unreadConhecido) {
-      await aplicarEstadoLeituraLead({ ...cliente, ...lead, id: lead.id, cliente_id: cliente.id }, !!temNaoLida, 'whatsapp_sync', { syncZap: false }).catch(() => null);
-      if (temNaoLida) {
-        if (!ultima.temMensagem) {
-          await registrarEventoLead(lead.id, cliente.id, 'whatsapp_sync_unread_sem_corpo', 'Chat marcado como não lido pela Z-API, sem corpo da mensagem na listagem', { telefone }).catch(() => null);
-        }
-        marcadosNaoLidos++;
+    // O WhatsApp/Z-API é usado como fonte de reconciliação para o badge: se a
+    // conversa está não lida lá, ela precisa aparecer no filtro "Não lidos" do CRM.
+    if (temNaoLida) {
+      await query(`UPDATE movatak_leads SET nao_lida=true, atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
+      // Se não veio a mensagem completa na listagem de chats, pelo menos deixa o
+      // lead visível como não lido. Quando o webhook/abrir conversa trouxer o corpo,
+      // o histórico fica completo.
+      if (!ultima.temMensagem) {
+        await registrarEventoLead(lead.id, cliente.id, 'whatsapp_sync_unread_sem_corpo', 'Chat marcado como não lido pela Z-API, sem corpo da mensagem na listagem', { telefone }).catch(() => null);
       }
+      marcadosNaoLidos++;
     }
   }
 
@@ -6360,105 +5542,34 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
     mensagensCriadas,
     marcadosNaoLidos,
     ignorados,
-    semTelefone,
-    amostrasSemTelefone
+    semTelefone
   }).catch(() => null);
 
-  if (semTelefone > 0) {
-    logEstruturado('warn', 'zapi_chats_sem_telefone', {
-      cliente_id: cliente.id,
-      cliente_nome: cliente.nome,
-      total: chats.length,
-      semTelefone,
-      amostras: amostrasSemTelefone
-    });
-  }
-
-  return { ok: true, total: chats.length, criados, atualizados, mensagensCriadas, marcadosNaoLidos, ignorados, semTelefone, amostrasSemTelefone };
+  return { ok: true, total: chats.length, criados, atualizados, mensagensCriadas, marcadosNaoLidos, ignorados, semTelefone };
 }
 
 app.get('/movatak/admin/clientes/:id/zapi/chats', authMovatak, async (req, res) => {
   try {
-    const c = await query('SELECT id, nome, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
     if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
     const cli = c.rows[0];
     const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
     res.json(data);
-  } catch(e) {
-    const detalhe = erroZapiDetalhado(e, { clienteId: req.params.id, endpoint: 'chats' });
-    res.status(500).json({ error: detalhe || e.message, status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null });
-  }
-});
-
-app.get('/movatak/admin/clientes/:id/zapi/diagnostico', authMovatak, async (req, res) => {
-  try {
-    const c = await query('SELECT id, nome, zapi_instance, zapi_token, zapi_client_token, whatsapp FROM movatak_clientes WHERE id=$1', [req.params.id]);
-    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const cli = c.rows[0];
-    const base = {
-      cliente_id: cli.id,
-      cliente_nome: cli.nome,
-      configuracao: {
-        tem_instance: !!cli.zapi_instance,
-        tem_token: !!cli.zapi_token,
-        tem_client_token: !!cli.zapi_client_token,
-        instance_hint: mascararTokenDebug(cli.zapi_instance),
-        whatsapp_hint: mascararTokenDebug(cli.whatsapp)
-      }
-    };
-    if (!cli.zapi_instance || !cli.zapi_token || !cli.zapi_client_token) {
-      return res.json({ ok: false, ...base, erro: 'Z-API incompleta para este cliente.' });
-    }
-    let data;
-    try {
-      data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
-    } catch (e) {
-      return res.json({
-        ok: false,
-        ...base,
-        zapi: { endpoint: 'chats', status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null },
-        erro: erroZapiDetalhado(e, { clienteId: cli.id, endpoint: 'chats' }) || e.message
-      });
-    }
-    const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : (Array.isArray(data.result) ? data.result : [])));
-    const amostrasSemTelefone = [];
-    let grupos = 0, comTelefone = 0, semTelefone = 0, comEstadoUnread = 0, naoLidos = 0;
-    for (const ch of chatsRaw.slice(0, Math.min(chatsRaw.length, 1000))) {
-      if (chatZapiEhGrupo(ch)) { grupos++; continue; }
-      const tel = extrairTelefoneChatZapi(ch, cli);
-      if (tel) comTelefone++; else { semTelefone++; if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch)); }
-      if (chatZapiTemEstadoUnreadConhecido(ch)) comEstadoUnread++;
-      if (chatZapiTemNaoLida(ch)) naoLidos++;
-    }
-    res.json({
-      ok: true,
-      ...base,
-      total_recebido: chatsRaw.length,
-      analisado: Math.min(chatsRaw.length, 1000),
-      comTelefone,
-      semTelefone,
-      grupos,
-      comEstadoUnread,
-      naoLidos,
-      amostrasSemTelefone
-    });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });
 
 app.post('/movatak/admin/clientes/:id/zapi/sincronizar-chats', authMovatak, async (req, res) => {
   try {
     const r = await sincronizarChatsCliente(req.params.id, req.body || {});
     res.json(r);
-  } catch(e) { res.status(500).json({ error: erroZapiDetalhado(e, { clienteId: req.params.id, endpoint: 'chats' }) || e.message }); }
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });
 
 app.post('/movatak/vendedor/zapi/sincronizar-chats', authVendedor, async (req, res) => {
   try {
     const r = await sincronizarChatsCliente(req.vendedor.cliente_id, req.body || {});
     res.json(r);
-  } catch(e) { res.status(500).json({ error: erroZapiDetalhado(e, { clienteId: req.vendedor.cliente_id, endpoint: 'chats' }) || e.message }); }
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });
 
 // Webhook opcional da Z-API para status de mensagem: enviado/entregue/lido/falha.
@@ -6674,8 +5785,7 @@ async function garantirEstruturaCampanhasTemplates() {
     ADD COLUMN IF NOT EXISTS campanha_id INTEGER,
     ADD COLUMN IF NOT EXISTS campanha_id_ultimo_toque INTEGER,
     ADD COLUMN IF NOT EXISTS template_id_origem INTEGER,
-    ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT,
-    ADD COLUMN IF NOT EXISTS origem TEXT`).catch(() => null);
+    ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT`).catch(() => null);
 
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_cliente_ativo ON movatak_campanhas(cliente_id, ativo)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_template ON movatak_campanhas(template_id)`).catch(() => null);
@@ -8205,34 +7315,6 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS zapi_status_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS lida_em TIMESTAMPTZ`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS lida_por TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_unread_count INTEGER DEFAULT 0`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_unread_sync_em TIMESTAMPTZ`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_last_chat JSONB DEFAULT '{}'::jsonb`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_last_msg_em TIMESTAMPTZ`).catch(() => null);
-  await query(`CREATE TABLE IF NOT EXISTS movatak_whatsapp_chats (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    chat_id TEXT NOT NULL,
-    telefone TEXT,
-    nome TEXT,
-    is_group BOOLEAN DEFAULT false,
-    is_archived BOOLEAN DEFAULT false,
-    is_pinned BOOLEAN DEFAULT false,
-    is_muted BOOLEAN DEFAULT false,
-    unread_count INTEGER DEFAULT 0,
-    last_message_text TEXT,
-    last_message_at TIMESTAMPTZ,
-    last_message_from_me BOOLEAN DEFAULT false,
-    last_message_msg_id TEXT,
-    lead_id INTEGER,
-    raw_payload JSONB DEFAULT '{}'::jsonb,
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW(),
-    UNIQUE(cliente_id, chat_id)
-  )`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_cliente_last ON movatak_whatsapp_chats(cliente_id, is_pinned DESC, last_message_at DESC NULLS LAST, updated_at DESC)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_unread ON movatak_whatsapp_chats(cliente_id, unread_count) WHERE unread_count > 0`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_lead ON movatak_whatsapp_chats(lead_id)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_unread ON movatak_conversas(lead_id, criado_em DESC) WHERE direcao='entrada' AND lida_em IS NULL`).catch(() => null);
   // Migração segura: ao criar lida_em em bancos antigos, não transforme todo
@@ -8315,43 +7397,11 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   // - entrada do cliente => fica não lida;
   // - saída do vendedor/painel/WhatsApp Web => limpa o não lido.
   // Isso evita que mensagens enviadas pelo próprio WhatsApp Web apareçam como novas.
-  const agoraIso = new Date().toISOString();
   if (direcao === 'entrada') {
     query(`UPDATE movatak_leads SET nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
-    atualizarWhatsappChatPorLead(leadId, { unreadCount: 1, lastMessageText: conteudo || midiaTipo || '', lastMessageAt: agoraIso, lastMessageFromMe: false, lastMessageMsgId: msgId || null }).catch(() => null);
   } else if (direcao === 'saida') {
     query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
-    atualizarWhatsappChatPorLead(leadId, { unreadCount: 0, lastMessageText: conteudo || midiaTipo || '', lastMessageAt: agoraIso, lastMessageFromMe: true, lastMessageMsgId: msgId || null }).catch(() => null);
   }
-
-  // Também faz UPSERT no espelho real do Inbox. Se o chat ainda não existia na
-  // movatak_whatsapp_chats (ex.: mensagem nova chegou antes da reconciliação), ele
-  // passa a aparecer imediatamente no Inbox, igual ao WhatsApp.
-  try {
-    const rLead = await query(`SELECT l.id, l.nome, l.telefone, l.chat_lid, l.origem, c.id AS cliente_id, c.nome AS cliente_nome
-           FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id
-          WHERE l.id=$1 LIMIT 1`, [leadId]);
-    const l = rLead.rows[0];
-    if (l) {
-      const chatId = normalizarChatIdWhatsapp(l.chat_lid || l.telefone);
-      if (chatId) {
-        await upsertWhatsappChat({ id: clienteId, nome: l.cliente_nome }, {
-          chatId,
-          telefone: String(chatId).includes('@g.us') ? null : l.telefone,
-          nome: l.nome || chatId,
-          isGroup: String(chatId).includes('@g.us') || String(l.origem || '').includes('whatsapp_group'),
-          unreadKnown: true,
-          unreadCount: direcao === 'entrada' ? 1 : 0,
-          lastMessageText: conteudo || midiaTipo || '',
-          lastMessageAt: agoraIso,
-          lastMessageFromMe: direcao === 'saida',
-          lastMessageMsgId: msgId || null,
-          leadId,
-          rawPayload: { origem: 'registrarConversa' }
-        });
-      }
-    }
-  } catch (_) {}
 
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
   // sem precisar dar reload na tela.
@@ -9082,164 +8132,6 @@ app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-
-async function carregarInboxCliente(clienteId, opts = {}) {
-  await garantirEstruturaConversas();
-  const limit = Math.max(50, Math.min(parseInt(opts.limit || 2000, 10) || 2000, 5000));
-  const params = [clienteId];
-  let filtroEscopo = '';
-  if (Array.isArray(opts.setorIds) && opts.setorIds.length) {
-    const ids = opts.setorIds.map(Number).filter(Number.isFinite);
-    if (ids.length) {
-      const ph = ids.map((_, i) => '$' + (i + 2)).join(',');
-      // Segurança para vendedor: chat sem lead ainda aparece se não estiver atribuído a outro setor.
-      filtroEscopo = ` AND (l.id IS NULL OR l.setor_id IN (${ph}) OR l.setor_id IS NULL)`;
-      params.push(...ids);
-    }
-  }
-  params.push(limit);
-  const limitParam = '$' + params.length;
-
-  // Fonte primária do Inbox: espelho dos chats do WhatsApp. Essa tabela é atualizada
-  // por webhook/reconciliação e deve copiar a ordem/estado do WhatsApp sempre que a
-  // Z-API entregar os dados. Importante: ela NÃO pode ser a única fonte ainda, porque
-  // em produção existem leads/conversas antigas que foram criados antes da tabela
-  // movatak_whatsapp_chats existir. Se usarmos só wc, o Inbox fica vazio ou mostra só
-  // chats arquivados recém-sincronizados — exatamente a falha vista na v2.7.15.
-  const chatsR = await query(
-    `SELECT COALESCE(l.id, wc.lead_id) AS id,
-            wc.id AS whatsapp_chat_row_id,
-            wc.chat_id,
-            wc.nome AS whatsapp_chat_nome,
-            wc.telefone AS whatsapp_chat_telefone,
-            wc.is_group,
-            wc.is_archived AS whatsapp_is_archived,
-            wc.is_pinned,
-            wc.is_muted,
-            wc.unread_count AS whatsapp_unread_count,
-            COALESCE(l.nome, wc.nome, wc.chat_id) AS nome,
-            COALESCE(l.telefone, wc.telefone, wc.chat_id) AS telefone,
-            l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-            (COALESCE(l.arquivado,false) OR COALESCE(wc.is_archived,false)) AS arquivado,
-            s.nome AS setor_nome, s.cor AS setor_cor,
-            fc.nome AS funil_coluna_nome, fc.cor AS funil_coluna_cor,
-            v.nome AS vendedor_nome,
-            COALESCE(l.criado_em, wc.criado_em) AS criado_em,
-            COALESCE(l.atualizado_em, wc.updated_at) AS atualizado_em,
-            l.convertido_em,
-            COALESCE(wc.last_message_text, ult.conteudo) AS ultima_msg,
-            CASE WHEN wc.last_message_from_me THEN 'saida' ELSE COALESCE(ult.direcao, 'entrada') END AS ultima_msg_direcao,
-            COALESCE(wc.last_message_at, ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, wc.updated_at, wc.criado_em) AS ultima_msg_em,
-            (COALESCE(wc.unread_count,0) > 0 OR COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
-            GREATEST(COALESCE(wc.unread_count,0), COALESCE(nl.nao_lidas,0), CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS nao_lidas_count,
-            l.whatsapp_unread_sync_em,
-            true AS fonte_whatsapp_chat
-       FROM movatak_whatsapp_chats wc
-       LEFT JOIN movatak_leads l ON l.id = wc.lead_id OR (l.cliente_id = wc.cliente_id AND l.chat_lid = wc.chat_id)
-       LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-       LEFT JOIN movatak_setores s ON s.id = l.setor_id
-       LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
-       LEFT JOIN LATERAL (
-         SELECT conteudo, direcao, criado_em FROM movatak_conversas c
-          WHERE c.lead_id = l.id ORDER BY c.criado_em DESC LIMIT 1
-       ) ult ON true
-       LEFT JOIN LATERAL (
-         SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
-          WHERE c.lead_id = l.id AND c.direcao='entrada' AND c.lida_em IS NULL
-       ) nl ON true
-      WHERE wc.cliente_id=$1${filtroEscopo}
-      ORDER BY COALESCE(wc.is_pinned,false) DESC,
-               COALESCE(wc.last_message_at, ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, wc.updated_at, wc.criado_em) DESC NULLS LAST,
-               wc.id DESC
-      LIMIT ${limitParam}`,
-    params
-  ).catch(e => { console.error('[inbox][whatsapp_chats]', e.message); return { rows: [] }; });
-
-  const rows = chatsR.rows || [];
-
-  // Fallback/backfill operacional: complementa o Inbox com leads/conversas que ainda
-  // não possuem linha em movatak_whatsapp_chats. Isso mantém o CRM utilizável durante
-  // a migração do espelho e evita sumir tudo do Inbox quando a Z-API não entregou a
-  // lista completa ou quando a tabela nova ainda está vazia/parcial.
-  const restantes = Math.max(0, limit - rows.length);
-  if (restantes > 0) {
-    const p2 = [clienteId];
-    let filtroLeadEscopo = '';
-    if (Array.isArray(opts.setorIds) && opts.setorIds.length) {
-      const ids = opts.setorIds.map(Number).filter(Number.isFinite);
-      if (ids.length) {
-        const ph = ids.map((_, i) => '$' + (i + 2)).join(',');
-        filtroLeadEscopo = ` AND (l.setor_id IN (${ph}) OR l.setor_id IS NULL)`;
-        p2.push(...ids);
-      }
-    }
-    p2.push(restantes);
-    const lim2 = '$' + p2.length;
-    const leadsFallback = await query(
-      `SELECT l.id,
-              NULL::int AS whatsapp_chat_row_id,
-              COALESCE(NULLIF(l.chat_lid,''), l.telefone) AS chat_id,
-              NULL::text AS whatsapp_chat_nome,
-              l.telefone AS whatsapp_chat_telefone,
-              (COALESCE(l.origem,'') = 'whatsapp_group' OR COALESCE(l.chat_lid,'') LIKE '%@g.us') AS is_group,
-              false AS whatsapp_is_archived,
-              false AS is_pinned,
-              false AS is_muted,
-              COALESCE(nl.nao_lidas, CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS whatsapp_unread_count,
-              COALESCE(l.nome, l.telefone, l.chat_lid, 'Sem nome') AS nome,
-              COALESCE(l.telefone, l.chat_lid) AS telefone,
-              l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-              COALESCE(l.arquivado,false) AS arquivado,
-              s.nome AS setor_nome, s.cor AS setor_cor,
-              fc.nome AS funil_coluna_nome, fc.cor AS funil_coluna_cor,
-              v.nome AS vendedor_nome,
-              l.criado_em,
-              l.atualizado_em,
-              l.convertido_em,
-              ult.conteudo AS ultima_msg,
-              ult.direcao AS ultima_msg_direcao,
-              COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) AS ultima_msg_em,
-              (COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
-              GREATEST(COALESCE(nl.nao_lidas,0), CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS nao_lidas_count,
-              l.whatsapp_unread_sync_em,
-              false AS fonte_whatsapp_chat
-         FROM movatak_leads l
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-         LEFT JOIN movatak_setores s ON s.id = l.setor_id
-         LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
-         LEFT JOIN LATERAL (
-           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
-            WHERE c.lead_id = l.id ORDER BY c.criado_em DESC LIMIT 1
-         ) ult ON true
-         LEFT JOIN LATERAL (
-           SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
-            WHERE c.lead_id = l.id AND c.direcao='entrada' AND c.lida_em IS NULL
-         ) nl ON true
-        WHERE l.cliente_id=$1${filtroLeadEscopo}
-          AND NOT EXISTS (
-            SELECT 1 FROM movatak_whatsapp_chats wc
-             WHERE wc.cliente_id = l.cliente_id
-               AND (wc.lead_id = l.id OR (l.chat_lid IS NOT NULL AND wc.chat_id = l.chat_lid))
-          )
-        ORDER BY COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) DESC NULLS LAST
-        LIMIT ${lim2}`,
-      p2
-    ).catch(e => { console.error('[inbox][fallback_leads]', e.message); return { rows: [] }; });
-    rows.push(...(leadsFallback.rows || []));
-  }
-
-  // Ordenação final estilo WhatsApp: fixados primeiro, depois última movimentação.
-  rows.sort((a, b) => {
-    const pa = a.is_pinned ? 1 : 0;
-    const pb = b.is_pinned ? 1 : 0;
-    if (pa !== pb) return pb - pa;
-    const ta = new Date(a.ultima_msg_em || a.atualizado_em || a.criado_em || 0).getTime() || 0;
-    const tb = new Date(b.ultima_msg_em || b.atualizado_em || b.criado_em || 0).getTime() || 0;
-    return tb - ta;
-  });
-  return rows.slice(0, limit);
-}
-
 app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
@@ -9373,8 +8265,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       colunas, colunasVendedores,
       setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
       nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leads.rows, // lista da visão atual do Kanban
-      inbox: await carregarInboxCliente(clienteId, { limit: 2000 }) // Inbox estilo WhatsApp: independe da aba/setor/kanban
+      leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
