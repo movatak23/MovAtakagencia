@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.15-whatsapp-chats-fonte';
+const MOVATAK_VERSION = 'v2.7.16-inbox-fallback-leads';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -8912,7 +8912,14 @@ async function carregarInboxCliente(clienteId, opts = {}) {
   }
   params.push(limit);
   const limitParam = '$' + params.length;
-  const r = await query(
+
+  // Fonte primária do Inbox: espelho dos chats do WhatsApp. Essa tabela é atualizada
+  // por webhook/reconciliação e deve copiar a ordem/estado do WhatsApp sempre que a
+  // Z-API entregar os dados. Importante: ela NÃO pode ser a única fonte ainda, porque
+  // em produção existem leads/conversas antigas que foram criados antes da tabela
+  // movatak_whatsapp_chats existir. Se usarmos só wc, o Inbox fica vazio ou mostra só
+  // chats arquivados recém-sincronizados — exatamente a falha vista na v2.7.15.
+  const chatsR = await query(
     `SELECT COALESCE(l.id, wc.lead_id) AS id,
             wc.id AS whatsapp_chat_row_id,
             wc.chat_id,
@@ -8938,7 +8945,8 @@ async function carregarInboxCliente(clienteId, opts = {}) {
             COALESCE(wc.last_message_at, ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, wc.updated_at, wc.criado_em) AS ultima_msg_em,
             (COALESCE(wc.unread_count,0) > 0 OR COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
             GREATEST(COALESCE(wc.unread_count,0), COALESCE(nl.nao_lidas,0), CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS nao_lidas_count,
-            l.whatsapp_unread_sync_em
+            l.whatsapp_unread_sync_em,
+            true AS fonte_whatsapp_chat
        FROM movatak_whatsapp_chats wc
        LEFT JOIN movatak_leads l ON l.id = wc.lead_id OR (l.cliente_id = wc.cliente_id AND l.chat_lid = wc.chat_id)
        LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
@@ -8958,8 +8966,91 @@ async function carregarInboxCliente(clienteId, opts = {}) {
                wc.id DESC
       LIMIT ${limitParam}`,
     params
-  );
-  return r.rows;
+  ).catch(e => { console.error('[inbox][whatsapp_chats]', e.message); return { rows: [] }; });
+
+  const rows = chatsR.rows || [];
+
+  // Fallback/backfill operacional: complementa o Inbox com leads/conversas que ainda
+  // não possuem linha em movatak_whatsapp_chats. Isso mantém o CRM utilizável durante
+  // a migração do espelho e evita sumir tudo do Inbox quando a Z-API não entregou a
+  // lista completa ou quando a tabela nova ainda está vazia/parcial.
+  const restantes = Math.max(0, limit - rows.length);
+  if (restantes > 0) {
+    const p2 = [clienteId];
+    let filtroLeadEscopo = '';
+    if (Array.isArray(opts.setorIds) && opts.setorIds.length) {
+      const ids = opts.setorIds.map(Number).filter(Number.isFinite);
+      if (ids.length) {
+        const ph = ids.map((_, i) => '$' + (i + 2)).join(',');
+        filtroLeadEscopo = ` AND (l.setor_id IN (${ph}) OR l.setor_id IS NULL)`;
+        p2.push(...ids);
+      }
+    }
+    p2.push(restantes);
+    const lim2 = '$' + p2.length;
+    const leadsFallback = await query(
+      `SELECT l.id,
+              NULL::int AS whatsapp_chat_row_id,
+              COALESCE(NULLIF(l.chat_lid,''), l.telefone) AS chat_id,
+              NULL::text AS whatsapp_chat_nome,
+              l.telefone AS whatsapp_chat_telefone,
+              (COALESCE(l.origem,'') = 'whatsapp_group' OR COALESCE(l.chat_lid,'') LIKE '%@g.us') AS is_group,
+              false AS whatsapp_is_archived,
+              false AS is_pinned,
+              false AS is_muted,
+              COALESCE(nl.nao_lidas, CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS whatsapp_unread_count,
+              COALESCE(l.nome, l.telefone, l.chat_lid, 'Sem nome') AS nome,
+              COALESCE(l.telefone, l.chat_lid) AS telefone,
+              l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+              COALESCE(l.arquivado,false) AS arquivado,
+              s.nome AS setor_nome, s.cor AS setor_cor,
+              fc.nome AS funil_coluna_nome, fc.cor AS funil_coluna_cor,
+              v.nome AS vendedor_nome,
+              l.criado_em,
+              l.atualizado_em,
+              l.convertido_em,
+              ult.conteudo AS ultima_msg,
+              ult.direcao AS ultima_msg_direcao,
+              COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) AS ultima_msg_em,
+              (COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
+              GREATEST(COALESCE(nl.nao_lidas,0), CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS nao_lidas_count,
+              l.whatsapp_unread_sync_em,
+              false AS fonte_whatsapp_chat
+         FROM movatak_leads l
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+         LEFT JOIN movatak_setores s ON s.id = l.setor_id
+         LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
+         LEFT JOIN LATERAL (
+           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
+            WHERE c.lead_id = l.id ORDER BY c.criado_em DESC LIMIT 1
+         ) ult ON true
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
+            WHERE c.lead_id = l.id AND c.direcao='entrada' AND c.lida_em IS NULL
+         ) nl ON true
+        WHERE l.cliente_id=$1${filtroLeadEscopo}
+          AND NOT EXISTS (
+            SELECT 1 FROM movatak_whatsapp_chats wc
+             WHERE wc.cliente_id = l.cliente_id
+               AND (wc.lead_id = l.id OR (l.chat_lid IS NOT NULL AND wc.chat_id = l.chat_lid))
+          )
+        ORDER BY COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) DESC NULLS LAST
+        LIMIT ${lim2}`,
+      p2
+    ).catch(e => { console.error('[inbox][fallback_leads]', e.message); return { rows: [] }; });
+    rows.push(...(leadsFallback.rows || []));
+  }
+
+  // Ordenação final estilo WhatsApp: fixados primeiro, depois última movimentação.
+  rows.sort((a, b) => {
+    const pa = a.is_pinned ? 1 : 0;
+    const pb = b.is_pinned ? 1 : 0;
+    if (pa !== pb) return pb - pa;
+    const ta = new Date(a.ultima_msg_em || a.atualizado_em || a.criado_em || 0).getTime() || 0;
+    const tb = new Date(b.ultima_msg_em || b.atualizado_em || b.criado_em || 0).getTime() || 0;
+    return tb - ta;
+  });
+  return rows.slice(0, limit);
 }
 
 app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
