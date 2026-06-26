@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.2-vendedor-funil-loading-fix';
+const MOVATAK_VERSION = 'v2.7.3-vendedor-definitivo';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -3829,11 +3829,10 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       });
     }
 
-    // Correção de carregamento do CRM do vendedor:
-    // A versão anterior espelhava a query pesada do admin e podia ficar pendente
-    // em produção. Aqui mantemos o MESMO formato de resposta que o layout do admin
-    // espera, mas com consulta enxuta e sempre restrita aos setores do vendedor.
-    await garantirFunilPadraoCliente(clienteId).catch(() => null);
+    // Correção definitiva de carregamento do CRM do vendedor:
+    // esta rota NÃO executa DDL/template em GET e NÃO busca a última mensagem
+    // com LATERAL por lead. Assim a tela não fica presa em "Carregando funil..."
+    // quando a tabela de conversas está grande ou o banco está com lock de migração.
 
     let setoresAlvo = setorIds;
     let setorFiltro = null;
@@ -3862,31 +3861,24 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
     const leadsRes = await query(
-      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
-         FROM (
-           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  COALESCE(l.nao_lida,false) AS nao_lida,
-                  COALESCE(l.arquivado,false) AS arquivado,
-                  s.nome AS setor_nome, s.cor AS setor_cor,
-                  l.criado_em, l.atualizado_em, l.convertido_em,
-                  v.nome AS vendedor_nome,
-                  p.nome AS plano_nome, p.valor AS plano_valor,
-                  0::int AS followups_pendentes,
-                  NULL::int AS fu_sequencia_ativa
-             FROM movatak_leads l
-             LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-             LEFT JOIN movatak_planos p ON p.id = l.plano_id
-             LEFT JOIN movatak_setores s ON s.id = l.setor_id
-            WHERE l.cliente_id=$1 AND l.setor_id IN (${ph})
-         ) lb
-         LEFT JOIN LATERAL (
-           SELECT conteudo, direcao, criado_em
-             FROM movatak_conversas c
-            WHERE c.lead_id = lb.id
-            ORDER BY c.criado_em DESC
-            LIMIT 1
-         ) ult ON true
-        ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
+      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+              COALESCE(l.nao_lida,false) AS nao_lida,
+              COALESCE(l.arquivado,false) AS arquivado,
+              s.nome AS setor_nome, s.cor AS setor_cor,
+              l.criado_em, l.atualizado_em, l.convertido_em,
+              v.nome AS vendedor_nome,
+              p.nome AS plano_nome, p.valor AS plano_valor,
+              NULL::text AS ultima_msg,
+              NULL::text AS ultima_msg_direcao,
+              l.atualizado_em AS ultima_msg_em,
+              0::int AS followups_pendentes,
+              NULL::int AS fu_sequencia_ativa
+         FROM movatak_leads l
+         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+         LEFT JOIN movatak_planos p ON p.id = l.plano_id
+         LEFT JOIN movatak_setores s ON s.id = l.setor_id
+        WHERE l.cliente_id=$1 AND l.setor_id IN (${ph})
+        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
         LIMIT 500`,
       params
     );
@@ -4503,7 +4495,7 @@ app.delete('/movatak/vendedor/agendamentos/:id', authVendedor, async (req, res) 
 
 app.post('/movatak/vendedor/funil/colunas', authVendedor, async (req, res) => {
   try {
-    await garantirFunilPadraoCliente(req.vendedor.cliente_id);
+    // Não inicializa template em ação do vendedor; evita lock/DDL durante atendimento.
     const nome = String((req.body && req.body.nome) || '').trim();
     if (!nome) return res.status(400).json({ error: 'Informe o nome da etapa.' });
     const setorId = req.body && req.body.setor_id ? parseInt(req.body.setor_id, 10) : (req.vendedor.setorIds || [])[0];
@@ -7361,6 +7353,8 @@ async function garantirEstruturaFunil() {
 
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_funil_colunas_cliente_slug ON movatak_funil_colunas(cliente_id, slug)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_cliente_setor_atualizado ON movatak_leads(cliente_id, setor_id, atualizado_em DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_conversas_lead_criado_desc ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
 }
 
 
