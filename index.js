@@ -6717,9 +6717,17 @@ async function buscarColunaAgenda(clienteId, tipo, colunaId) {
 
 async function garantirFunilPadraoCliente(clienteId) {
   await garantirEstruturaFunil();
+  // Se o cliente JÁ tem colunas (ativas ou não), o funil dele já foi inicializado.
+  // Não recriamos nem reaplicamos nada — o usuário tem autonomia total sobre as
+  // colunas (excluir, criar), inclusive sobre as que vieram de um template. O
+  // template só é (re)aplicado quando o usuário clica explicitamente em "aplicar".
+  const existe = await query('SELECT 1 FROM movatak_funil_colunas WHERE cliente_id=$1 LIMIT 1', [clienteId]).catch(() => ({ rows: [] }));
+  if (existe.rows.length) return;
+
   const cliNichoR = await query('SELECT nicho FROM movatak_clientes WHERE id=$1', [clienteId]).catch(() => ({ rows: [] }));
   const nichoCliente = normalizarNichoCliente((cliNichoR.rows[0] || {}).nicho);
   if (nichoCliente) {
+    // Primeira inicialização de um cliente com nicho: aplica o template uma única vez.
     await aplicarTemplateNichoCliente(clienteId, nichoCliente, { sincronizar: false }).catch(e => console.error('[nicho][garantir-funil]', e.message));
     return;
   }
