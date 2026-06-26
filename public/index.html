@@ -800,7 +800,15 @@ async function carregarFunilVendedor() {
     renderVendBoard();
     renderVendInbox();
   } catch (e) {
-    document.getElementById('vend-board').innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar: ' + escapeHtml(e.message) + '</div>';
+    // Estado de erro com ação de retry. Limpa também a inbox pra não ficar presa em
+    // "Carregando..." — falha do board não deve travar o resto visualmente.
+    const board = document.getElementById('vend-board');
+    if (board) board.innerHTML = `<div class="state-row" style="grid-column:1/-1;color:var(--red);text-align:center">
+      Erro ao carregar: ${escapeHtml(e.message)}<br>
+      <button class="btn-add-small" style="margin-top:10px" onclick="carregarFunilVendedor()">↻ Tentar novamente</button>
+    </div>`;
+    const inbox = document.getElementById('vend-inbox-lista');
+    if (inbox) inbox.innerHTML = '<div class="fu-hint" style="padding:18px;text-align:center">Não foi possível carregar.</div>';
   }
 }
 
@@ -1073,6 +1081,11 @@ async function api(path, opts = {}, raw = false) {
     }
     if (!_vendedorToken) sair();
     throw new Error('Sessão expirada.');
+  }
+  if (res.status === 403 && !raw) {
+    let msg403 = 'Você não tem permissão para acessar isto.';
+    try { const err = await res.json(); if (err.error) msg403 = err.error; } catch (_) {}
+    throw new Error(msg403);
   }
   if (!res.ok) {
     let detalhe = '';
@@ -5474,7 +5487,10 @@ async function carregarFunilAtendimento() {
     board.dataset.carregado = '1';
   } catch (e) {
     if (primeiraCarga) {
-      board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
+      board.innerHTML = `<div class="state-row" style="grid-column:1/-1;color:var(--red);text-align:center">
+        Erro ao carregar funil: ${escapeHtml(e.message)}<br>
+        <button class="btn-add-small" style="margin-top:10px" onclick="carregarFunilAtendimento()">↻ Tentar novamente</button>
+      </div>`;
     } else if (status) {
       status.style.color = 'var(--red)';
       status.textContent = 'Erro ao atualizar funil: ' + e.message;
