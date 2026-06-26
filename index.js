@@ -15,9 +15,30 @@ const { Server: SocketIOServer } = require('socket.io');
 
 const path = require('path');
 const app = express();
-app.use(express.json({ limit: '30mb' }));
+
+// Body limit reduzido para 12mb (envio de mídia base64 cabe; 30mb era folga demais
+// e aumenta superfície de abuso). Webhooks e uploads de imagem cabem nesse limite.
+app.use(express.json({ limit: '12mb' }));
+
+// CORS por allowlist. Só domínios autorizados podem fazer requisição cross-origin
+// pelo navegador. Requisições SEM header Origin (webhooks Z-API, apps mobile, curl,
+// chamadas servidor-a-servidor) passam normalmente — CORS é uma proteção de browser
+// e bloquear o que não tem Origin quebraria o webhook.
+const ORIGENS_PERMITIDAS = [
+  'https://app.movatak.com.br'
+];
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (!origin) {
+    // Sem Origin: requisição não-browser (webhook/mobile/curl). Não seta header CORS,
+    // o que é o correto — essas chamadas não dependem de CORS pra funcionar.
+  } else if (ORIGENS_PERMITIDAS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  } else {
+    // Origem não autorizada: não seta o header. O browser bloqueia a resposta.
+    return res.status(403).json({ error: 'Origem não autorizada.' });
+  }
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token, x-vendedor-token');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -26,13 +47,40 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ============================================================
+// Rate limit simples em memória (sem dependência externa; Redis distribuído fica
+// para o Bloco 9). Protege endpoints sensíveis contra abuso/brute-force por IP.
+// Como é em memória, vale por instância — suficiente para o estágio atual.
+// ============================================================
+const _rateBuckets = new Map();
+function rateLimit({ janelaMs = 60000, max = 10, chave = 'global' } = {}) {
+  return (req, res, next) => {
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'desconhecido').toString().split(',')[0].trim();
+    const k = chave + ':' + ip;
+    const agora = Date.now();
+    let b = _rateBuckets.get(k);
+    if (!b || agora > b.reset) { b = { count: 0, reset: agora + janelaMs }; _rateBuckets.set(k, b); }
+    b.count++;
+    if (b.count > max) {
+      const espera = Math.ceil((b.reset - agora) / 1000);
+      return res.status(429).json({ error: `Muitas tentativas. Tente novamente em ${espera}s.` });
+    }
+    next();
+  };
+}
+// Limpeza periódica dos buckets expirados, pra não crescer indefinidamente.
+setInterval(() => {
+  const agora = Date.now();
+  for (const [k, b] of _rateBuckets) { if (agora > b.reset) _rateBuckets.delete(k); }
+}, 5 * 60000).unref?.();
+
+// ============================================================
 // Socket.io — tela de atendimento em tempo real
 // Mantém app.listen funcionando igual antes: criamos um servidor HTTP
 // explícito só para poder amarrar o socket nele, sem mudar nenhuma rota.
 // ============================================================
 const httpServer = http.createServer(app);
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: ORIGENS_PERMITIDAS, methods: ['GET', 'POST'] }
 });
 
 io.use(async (socket, next) => {
@@ -3745,7 +3793,7 @@ app.patch('/movatak/admin/vendedores/:id/setores', authMovatak, async (req, res)
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/vendedor/login', async (req, res) => {
+app.post('/movatak/vendedor/login', rateLimit({ janelaMs: 60000, max: 5, chave: 'login-vend' }), async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
     const { email, senha } = req.body || {};
@@ -8306,6 +8354,16 @@ app.get('/movatak/health', (req, res) => {
 
 app.get('/movatak/version', (req, res) => {
   res.json({ version: MOVATAK_VERSION });
+});
+
+// Error handler global. Erros que escaparem das rotas são logados com detalhe no
+// servidor (pra diagnóstico), mas a resposta ao cliente é genérica — nunca expõe
+// stack trace nem detalhe interno. Mensagens de validação controladas (que as rotas
+// retornam explicitamente) não passam por aqui.
+app.use((err, req, res, next) => {
+  console.error('[erro-nao-tratado]', req.method, req.path, '|', err && err.message, err && err.stack ? '\n' + err.stack.split('\n').slice(0, 4).join('\n') : '');
+  if (res.headersSent) return next(err);
+  res.status(500).json({ error: 'Erro interno. Tente novamente.' });
 });
 
 // ============================================================
