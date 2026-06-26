@@ -973,7 +973,7 @@ function renderConversaVendedor(msgs) {
     const txt = m.conteudo ? escapeHtml(m.conteudo) : '';
     return `<div style="display:flex;justify-content:${saida?'flex-end':'flex-start'};margin-bottom:8px">
       <div style="max-width:85%;background:${saida?'var(--msg-out)':'var(--msg-in)'};border-radius:12px;padding:8px 12px">
-        ${midia}${txt?`<div style="font-size:13px;color:var(--msg-text-out);white-space:pre-wrap">${txt}</div>`:''}
+        ${midia}${txt?`<div style="font-size:13px;color:${saida?'var(--msg-text-out)':'var(--msg-text-in)'};white-space:pre-wrap">${txt}</div>`:''}
         <div style="font-size:10px;color:${saida?'var(--msg-time-out)':'var(--msg-time-in)'};margin-top:3px;text-align:right">${hora}</div>
       </div></div>`;
   }).join('');
@@ -1965,7 +1965,7 @@ function renderBolhaMensagemPainel(m) {
     <div style="max-width:85%;background:${saida ? 'var(--msg-out)' : 'var(--msg-in)'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
       ${renderPreviewRespostaMensagem(m)}
       ${midiaHtml}
-      ${texto ? `<div style="font-size:13px;line-height:1.4;color:var(--msg-text-out);white-space:pre-wrap">${texto}</div>` : ''}
+      ${texto ? `<div style="font-size:13px;line-height:1.4;color:${saida ? 'var(--msg-text-out)' : 'var(--msg-text-in)'};white-space:pre-wrap">${texto}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
         <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : 'var(--msg-time-in)'}">${hora}</span>
         ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnEditar}${btnLidaZap}${btnApagar}
@@ -2041,23 +2041,6 @@ function renderConversaPainel(msgs) {
   if (box) box.innerHTML = painelConversasCache.map(renderBolhaMensagemPainel).join('');
   // Scroll robusto até a última mensagem (espera mídia carregar).
   rolarConversaParaFim();
-  // [DIAG-TEMA] Loga a cor de fundo computada da cadeia de elementos do chat.
-  try {
-    const ids = ['funil-painel','funil-chat-conteudo','painel-body-conversa','painel-conversa'];
-    ids.forEach(id => {
-      const el = document.getElementById(id);
-      if (el) console.log('[DIAG-TEMA]', id, '→ bg:', getComputedStyle(el).backgroundColor);
-    });
-    let el = document.getElementById('painel-conversa');
-    let chain = [];
-    while (el && chain.length < 12) {
-      const bg = getComputedStyle(el).backgroundColor;
-      chain.push((el.id || el.className || el.tagName) + '=' + bg);
-      el = el.parentElement;
-    }
-    console.log('[DIAG-TEMA] cadeia pai→raiz:', chain.join(' | '));
-    console.log('[DIAG-TEMA] html.classList:', document.documentElement.className);
-  } catch(e) { console.log('[DIAG-TEMA] erro', e); }
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
