@@ -24,6 +24,12 @@
   --red:     #ff5a5a;
   --mono:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --msg-out: #2563eb;
+  --msg-in:  #2a2f3d;
+  --msg-text-out: #f0f0f0;
+  --msg-text-in: #e8e8f8;
+  --msg-time-out: #93c5fd;
+  --msg-time-in: #888;
 }
 
 html.light-mode {
@@ -40,6 +46,12 @@ html.light-mode {
   --green:   #00b873;
   --amber:   #d97706;
   --red:     #dc2626;
+  --msg-out: #2563eb;
+  --msg-in:  #e8e8f0;
+  --msg-text-out: #ffffff;
+  --msg-text-in: #1a1a2e;
+  --msg-time-out: #93c5fd;
+  --msg-time-in: #8b8b9f;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
@@ -745,7 +757,7 @@ async function iniciarAppVendedor() {
             <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
                 <div>
-                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -755,17 +767,17 @@ async function iniciarAppVendedor() {
                   <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
                 </div>
               </div>
-              <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
-                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
-                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+              <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
+                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
               </div>
               <div style="flex:1;display:flex;flex-direction:column;min-height:0">
                 <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
-                  <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
+                  <div id="painel-conversa"><div style="font-size:12px;color:var(--text2)">Carregando conversa...</div></div>
                 </div>
                 <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
-                  <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
-                  <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
+                  <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:var(--text2)">Carregando...</div></div>
                 </div>
               </div>
               <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
@@ -960,9 +972,9 @@ function renderConversaVendedor(msgs) {
     const midia = m.midia_url ? renderMidiaMensagem(m) : '';
     const txt = m.conteudo ? escapeHtml(m.conteudo) : '';
     return `<div style="display:flex;justify-content:${saida?'flex-end':'flex-start'};margin-bottom:8px">
-      <div style="max-width:85%;background:${saida?'#2563eb':'#2a2f3d'};border-radius:12px;padding:8px 12px">
-        ${midia}${txt?`<div style="font-size:13px;color:#f0f0f0;white-space:pre-wrap">${txt}</div>`:''}
-        <div style="font-size:10px;color:${saida?'#93c5fd':'#888'};margin-top:3px;text-align:right">${hora}</div>
+      <div style="max-width:85%;background:${saida?'var(--msg-out)':'var(--msg-in)'};border-radius:12px;padding:8px 12px">
+        ${midia}${txt?`<div style="font-size:13px;color:var(--msg-text-out);white-space:pre-wrap">${txt}</div>`:''}
+        <div style="font-size:10px;color:${saida?'var(--msg-time-out)':'var(--msg-time-in)'};margin-top:3px;text-align:right">${hora}</div>
       </div></div>`;
   }).join('');
   box.scrollTop = box.scrollHeight;
@@ -1918,9 +1930,9 @@ function renderPreviewRespostaMensagem(m) {
   const resumo = resumoMensagemPainel({ conteudo: m.reply_to_conteudo, midia_tipo: m.reply_to_midia_tipo, midia_url: m.reply_to_midia_url }, 86);
   const targetId = m.reply_to_conversa_id ? Number(m.reply_to_conversa_id) : 0;
   const click = targetId ? `onclick="focarMensagemRespondida(event, ${targetId})"` : '';
-  return `<div ${click} title="${escapeHtml(resumo)}" style="border-left:3px solid ${m.reply_to_direcao === 'saida' ? '#93c5fd' : 'var(--green)'};background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:7px;cursor:${targetId ? 'pointer' : 'default'};max-width:100%">
-    <div style="font-size:10px;color:${m.reply_to_direcao === 'saida' ? '#bfdbfe' : 'var(--green)'};font-weight:700;margin-bottom:2px">${label}</div>
-    <div style="font-size:11px;color:#cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumo)}</div>
+  return `<div ${click} title="${escapeHtml(resumo)}" style="border-left:3px solid ${m.reply_to_direcao === 'saida' ? 'var(--msg-time-out)' : 'var(--green)'};background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:7px;cursor:${targetId ? 'pointer' : 'default'};max-width:100%">
+    <div style="font-size:10px;color:${m.reply_to_direcao === 'saida' ? 'var(--msg-time-out)' : 'var(--green)'};font-weight:700;margin-bottom:2px">${label}</div>
+    <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumo)}</div>
   </div>`;
 }
 
@@ -1931,13 +1943,13 @@ function renderBolhaMensagemPainel(m) {
   const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
   const podeApagar = m.id && m.fonte !== 'zapi';
   const btnResponder = m.id
-    ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↩</button>`
+    ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↩</button>`
     : '';
   const btnReagir = (m.id && m.msg_id)
-    ? `<button onclick="reagirMensagemPainel(${Number(m.id)})" title="Reagir com emoji" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">😊</button>`
+    ? `<button onclick="reagirMensagemPainel(${Number(m.id)})" title="Reagir com emoji" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">😊</button>`
     : '';
   const btnEncaminhar = (m.id && m.msg_id)
-    ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.72)' : '#b8c0d9'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↪</button>`
+    ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↪</button>`
     : '';
   const btnEditar = (saida && m.id && m.msg_id && !m.midia_url)
     ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:rgba(255,255,255,.70);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
@@ -1950,12 +1962,12 @@ function renderBolhaMensagemPainel(m) {
     : '';
   const statusTxt = saida && m.msg_status ? `<span class="zap-msg-status" title="Status WhatsApp: ${escapeHtml(m.msg_status)}"> · ${escapeHtml(formatarStatusZap(m.msg_status))}</span>` : '';
   return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
-    <div style="max-width:85%;background:${saida ? '#2563eb' : '#2a2f3d'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
+    <div style="max-width:85%;background:${saida ? 'var(--msg-out)' : 'var(--msg-in)'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
       ${renderPreviewRespostaMensagem(m)}
       ${midiaHtml}
-      ${texto ? `<div style="font-size:13px;line-height:1.4;color:#f0f0f0;white-space:pre-wrap">${texto}</div>` : ''}
+      ${texto ? `<div style="font-size:13px;line-height:1.4;color:var(--msg-text-out);white-space:pre-wrap">${texto}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
-        <span style="font-size:10px;color:${saida ? '#93c5fd' : '#888'}">${hora}</span>
+        <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : '#888'}">${hora}</span>
         ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnEditar}${btnLidaZap}${btnApagar}
       </div>
     </div>
@@ -2023,7 +2035,7 @@ function renderConversaPainel(msgs) {
   const box = document.getElementById('painel-conversa');
   painelConversasCache = Array.isArray(msgs) ? msgs : [];
   if (!painelConversasCache.length) {
-    if (box) box.innerHTML = '<div style="font-size:12px;color:#666;text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
+    if (box) box.innerHTML = '<div style="font-size:12px;color:var(--text2);text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
     return;
   }
   if (box) box.innerHTML = painelConversasCache.map(renderBolhaMensagemPainel).join('');
@@ -5226,7 +5238,7 @@ async function iniciarPaginaFunilAtendimento() {
             <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
                 <div>
-                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
@@ -5236,17 +5248,17 @@ async function iniciarPaginaFunilAtendimento() {
                   <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
                 </div>
               </div>
-              <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
-                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
-                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+              <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
+                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
               </div>
               <div style="flex:1;display:flex;flex-direction:column;min-height:0">
                 <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
-                  <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
+                  <div id="painel-conversa"><div style="font-size:12px;color:var(--text2)">Carregando conversa...</div></div>
                 </div>
                 <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
-                  <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
-                  <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
+                  <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:var(--text2)">Carregando...</div></div>
                 </div>
               </div>
               <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
