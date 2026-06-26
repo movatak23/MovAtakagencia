@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.11-zapi-recon-cirurgico';
+const MOVATAK_VERSION = 'v2.7.12-zapi-invalid-instance-guard';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -591,6 +591,61 @@ function erroZapiDetalhado(e, contexto = {}) {
     e?.message ? `erro=${limitarTextoDebug(e.message, 180)}` : null
   ].filter(Boolean);
   return partes.join(' | ');
+}
+
+
+// Guarda cirúrgica da reconciliação Z-API.
+// Quando a Z-API responde "Instance not found", o problema não é o CRM nem o
+// banco: é credencial/instância inválida daquele cliente. Sem essa guarda, o cron
+// tenta a cada minuto e polui os logs, além de passar a impressão de falha geral.
+// A suspensão é em memória, por combinação cliente+instance; se a instância for
+// corrigida no cadastro, a chave muda e a reconciliação volta automaticamente.
+const _zapiReconSuspensos = new Map();
+
+function erroZapiEhInstanciaInvalida(e) {
+  const status = e?.response?.status || e?.movatakZapi?.status || 0;
+  const body = e?.response?.data || e?.movatakZapi?.body || null;
+  const texto = [
+    e?.message,
+    typeof body === 'string' ? body : '',
+    body && typeof body === 'object' ? (body.message || body.error || body.msg || body.description || JSON.stringify(body)) : ''
+  ].filter(Boolean).join(' ').toLowerCase();
+  return (status === 400 || status === 404) && (
+    texto.includes('instance not found') ||
+    texto.includes('instance_not_found') ||
+    texto.includes('instancia nao encontrada') ||
+    texto.includes('instância não encontrada') ||
+    texto.includes('instance notfound')
+  );
+}
+
+function chaveReconZapiCliente(cliente) {
+  return String(cliente?.id || '') + ':' + String(cliente?.zapi_instance || '');
+}
+
+function reconZapiSuspensaoAtiva(cliente) {
+  const item = _zapiReconSuspensos.get(chaveReconZapiCliente(cliente));
+  if (!item) return null;
+  if (Date.now() >= item.ate) {
+    _zapiReconSuspensos.delete(chaveReconZapiCliente(cliente));
+    return null;
+  }
+  return item;
+}
+
+function suspenderReconZapiCliente(cliente, motivo, horas = null) {
+  const ttlHoras = Math.max(1, Math.min(parseInt(horas || process.env.MOVATAK_ZAPI_INSTANCE_INVALID_TTL_HORAS || '6', 10) || 6, 24));
+  const item = { ate: Date.now() + ttlHoras * 60 * 60 * 1000, motivo: String(motivo || 'Instance not found').slice(0, 500) };
+  _zapiReconSuspensos.set(chaveReconZapiCliente(cliente), item);
+  logEstruturado('warn', 'zapi_recon_suspensa_instance_invalida', {
+    cliente_id: cliente?.id,
+    cliente_nome: cliente?.nome,
+    instance_hint: mascararTokenDebug(cliente?.zapi_instance),
+    ttl_horas: ttlHoras,
+    proxima_tentativa_em: new Date(item.ate).toISOString(),
+    motivo: item.motivo
+  });
+  return item;
 }
 
 const ZAPI_ADVANCED_ENDPOINTS = {
@@ -1457,13 +1512,24 @@ cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/
 cron.schedule('*/1 * * * *', async () => {
   if (String(process.env.MOVATAK_RECONCILIAR_CHATS_CRON || '').toLowerCase() !== 'true') return;
   try {
-    const clientes = await query(`SELECT id FROM movatak_clientes WHERE ativo=true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL AND zapi_client_token IS NOT NULL ORDER BY id ASC LIMIT 50`, []);
+    const clientes = await query(`SELECT id, nome, zapi_instance FROM movatak_clientes WHERE ativo=true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL AND zapi_client_token IS NOT NULL ORDER BY id ASC LIMIT 50`, []);
     for (const row of clientes.rows) {
+      const suspenso = reconZapiSuspensaoAtiva(row);
+      if (suspenso) {
+        console.log('[reconciliacao-chats]', row.id, JSON.stringify({ ok:false, suspenso:true, motivo:suspenso.motivo, proxima_tentativa_em:new Date(suspenso.ate).toISOString() }));
+        continue;
+      }
       try {
-        const r = await sincronizarChatsCliente(row.id, { max: parseInt(process.env.MOVATAK_RECONCILIAR_CHATS_MAX || '200', 10) || 200 });
+        const r = await sincronizarChatsCliente(row.id, { max: parseInt(process.env.MOVATAK_RECONCILIAR_CHATS_MAX || '200', 10) || 200, origem: 'cron', automatico: true });
         console.log('[reconciliacao-chats]', row.id, JSON.stringify(r));
       } catch (e) {
-        console.error('[reconciliacao-chats][cliente ' + row.id + ']', erroZapiDetalhado(e, { clienteId: row.id, endpoint: 'chats' }) || e.message);
+        const detalhe = erroZapiDetalhado(e, { clienteId: row.id, endpoint: 'chats' }) || e.message;
+        if (erroZapiEhInstanciaInvalida(e)) {
+          suspenderReconZapiCliente(row, detalhe);
+          console.warn('[reconciliacao-chats][cliente ' + row.id + '] suspenso por instância inválida:', detalhe);
+          continue;
+        }
+        console.error('[reconciliacao-chats][cliente ' + row.id + ']', detalhe);
       }
     }
   } catch (e) {
@@ -5642,12 +5708,23 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
     throw new Error('Z-API não configurada para este cliente.');
   }
 
+  const suspenso = reconZapiSuspensaoAtiva(cliente);
+  if (suspenso && (opts.automatico || opts.origem === 'cron')) {
+    return { ok:false, suspenso:true, motivo:suspenso.motivo, proxima_tentativa_em:new Date(suspenso.ate).toISOString(), total:0, criados:0, atualizados:0, mensagensCriadas:0, marcadosNaoLidos:0, ignorados:0, semTelefone:0 };
+  }
+
   let data;
   try {
     data = await zapiListarChats(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token);
   } catch (e) {
     const detalhe = erroZapiDetalhado(e, { clienteId: cliente.id, endpoint: 'chats' });
     await registrarErroZapi(cliente.id, detalhe, { endpoint: 'chats', status: e?.response?.status || e?.movatakZapi?.status || null, body: e?.response?.data || e?.movatakZapi?.body || null }).catch(() => null);
+
+    if (erroZapiEhInstanciaInvalida(e) && (opts.automatico || opts.origem === 'cron')) {
+      const item = suspenderReconZapiCliente(cliente, detalhe);
+      return { ok:false, suspenso:true, motivo:detalhe, proxima_tentativa_em:new Date(item.ate).toISOString(), total:0, criados:0, atualizados:0, mensagensCriadas:0, marcadosNaoLidos:0, ignorados:0, semTelefone:0 };
+    }
+
     logEstruturado('error', 'zapi_chats_falha', {
       cliente_id: cliente.id,
       cliente_nome: cliente.nome,
