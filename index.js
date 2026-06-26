@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-vendedor-definitivo';
+const MOVATAK_VERSION = 'v2.7.5-seguranca-observabilidade';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -15,6 +15,35 @@ const { Server: SocketIOServer } = require('socket.io');
 
 const path = require('path');
 const app = express();
+
+// ============================================================
+// Observabilidade (Bloco 8): request_id + logger estruturado.
+// Cada requisição ganha um ID curto que aparece nos logs e no erro retornado ao
+// cliente. Quando algo falha, o usuário informa esse ID e dá pra achar exatamente
+// a requisição no log. O logger nunca imprime tokens/senhas/segredos.
+// ============================================================
+const CHAVES_SENSIVEIS = ['senha', 'senha_acesso', 'senha_hash', 'secret', 'token', 'acesso_token', 'app_token', 'zapi_token', 'zapi_client_token', 'client_token', 'authorization', 'x-movatak-secret', 'x-vendedor-token', 'x-app-token'];
+function limparSensivel(obj) {
+  if (!obj || typeof obj !== 'object') return obj;
+  const out = Array.isArray(obj) ? [] : {};
+  for (const k of Object.keys(obj)) {
+    if (CHAVES_SENSIVEIS.includes(String(k).toLowerCase())) { out[k] = '***'; continue; }
+    const v = obj[k];
+    out[k] = (v && typeof v === 'object') ? limparSensivel(v) : v;
+  }
+  return out;
+}
+function logEstruturado(nivel, evento, ctx = {}) {
+  const linha = { t: new Date().toISOString(), nivel, evento, ...limparSensivel(ctx) };
+  const fn = nivel === 'error' ? console.error : console.log;
+  fn(JSON.stringify(linha));
+}
+
+app.use((req, res, next) => {
+  req.id = (req.headers['x-request-id'] || crypto.randomUUID()).toString().slice(0, 36);
+  res.setHeader('x-request-id', req.id);
+  next();
+});
 
 // Body limit reduzido para 12mb (envio de mídia base64 cabe; 30mb era folga demais
 // e aumenta superfície de abuso). Webhooks e uploads de imagem cabem nesse limite.
@@ -30,13 +59,11 @@ const ORIGENS_PERMITIDAS = [
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (!origin) {
-    // Sem Origin: requisição não-browser (webhook/mobile/curl). Não seta header CORS,
-    // o que é o correto — essas chamadas não dependem de CORS pra funcionar.
+    // Sem Origin: requisição não-browser (webhook/mobile/curl). Não seta header CORS.
   } else if (ORIGENS_PERMITIDAS.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
   } else {
-    // Origem não autorizada: não seta o header. O browser bloqueia a resposta.
     return res.status(403).json({ error: 'Origem não autorizada.' });
   }
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token, x-vendedor-token');
@@ -49,7 +76,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ============================================================
 // Rate limit simples em memória (sem dependência externa; Redis distribuído fica
 // para o Bloco 9). Protege endpoints sensíveis contra abuso/brute-force por IP.
-// Como é em memória, vale por instância — suficiente para o estágio atual.
 // ============================================================
 const _rateBuckets = new Map();
 function rateLimit({ janelaMs = 60000, max = 10, chave = 'global' } = {}) {
@@ -67,7 +93,6 @@ function rateLimit({ janelaMs = 60000, max = 10, chave = 'global' } = {}) {
     next();
   };
 }
-// Limpeza periódica dos buckets expirados, pra não crescer indefinidamente.
 setInterval(() => {
   const agora = Date.now();
   for (const [k, b] of _rateBuckets) { if (agora > b.reset) _rateBuckets.delete(k); }
@@ -1339,6 +1364,26 @@ async function enviarRelatorioDiarioClientes() {
 
 cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/Sao_Paulo' });
 
+// Reconciliação opcional WhatsApp → CRM. Para ativar no Railway:
+// MOVATAK_RECONCILIAR_CHATS_CRON=true
+// Mantém desligado por padrão para não aumentar consumo/limite da Z-API sem decisão operacional.
+cron.schedule('*/10 * * * *', async () => {
+  if (String(process.env.MOVATAK_RECONCILIAR_CHATS_CRON || '').toLowerCase() !== 'true') return;
+  try {
+    const clientes = await query(`SELECT id FROM movatak_clientes WHERE ativo=true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL AND zapi_client_token IS NOT NULL ORDER BY id ASC LIMIT 50`, []);
+    for (const row of clientes.rows) {
+      try {
+        const r = await sincronizarChatsCliente(row.id, { max: parseInt(process.env.MOVATAK_RECONCILIAR_CHATS_MAX || '200', 10) || 200 });
+        console.log('[reconciliacao-chats]', row.id, JSON.stringify(r));
+      } catch (e) {
+        console.error('[reconciliacao-chats][cliente ' + row.id + ']', e.message);
+      }
+    }
+  } catch (e) {
+    console.error('[reconciliacao-chats]', e.message);
+  }
+});
+
 // Reativador de questionário: lembrete por inatividade e devolução ao follow-up.
 cron.schedule('*/15 * * * *', async () => {
   await processarQuestionariosParados();
@@ -2095,7 +2140,22 @@ app.patch('/movatak/admin/leads/:id/setor', authMovatak, async (req, res) => {
 // chamado ao abrir o painel de conversa, ou manualmente via "Marcar como não lida".
 app.patch('/movatak/admin/leads/:id/marcar-lida', authMovatak, async (req, res) => {
   try {
+    await garantirEstruturaConversas();
     const naoLida = !!(req.body && req.body.nao_lida);
+    if (naoLida) {
+      // Marca como não lida de propósito: reabre a última mensagem de entrada.
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = NULL, lida_por = NULL
+                    WHERE id = (
+                      SELECT id FROM movatak_conversas
+                       WHERE lead_id = $1 AND direcao = 'entrada'
+                       ORDER BY criado_em DESC LIMIT 1
+                    )`, [req.params.id]).catch(() => null);
+    } else {
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = COALESCE(lida_em, NOW()), lida_por = COALESCE(lida_por, 'admin')
+                    WHERE lead_id = $1 AND direcao = 'entrada' AND lida_em IS NULL`, [req.params.id]).catch(() => null);
+    }
     await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, req.params.id]);
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) {
@@ -2771,20 +2831,37 @@ function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
 function variantesTelefone(tel) {
   const d = String(tel || '').replace(/\D/g, '');
   if (!d) return [];
-  const set = new Set([d]);
-  // Formato BR: 55 (DDI) + DD (2) + número (8 ou 9 dígitos)
-  if (d.startsWith('55') && d.length >= 12) {
-    const ddi = d.slice(0, 2);
-    const ddd = d.slice(2, 4);
-    const numero = d.slice(4);
-    if (numero.length === 9 && numero[0] === '9') {
-      // tem o 9 → adiciona versão sem o 9
-      set.add(ddi + ddd + numero.slice(1));
-    } else if (numero.length === 8) {
-      // sem o 9 → adiciona versão com o 9
-      set.add(ddi + ddd + '9' + numero);
+
+  // Correção crítica para inbox/WhatsApp: o mesmo contato pode chegar como
+  // 5581999999999, 81999999999, 558188888888 ou 8188888888. Antes a busca
+  // tolerava só o 9º dígito quando o número já vinha com 55; isso deixava
+  // mensagens órfãs e fazia algumas conversas não aparecerem no CRM.
+  const set = new Set();
+  const add = (v) => {
+    const x = String(v || '').replace(/\D/g, '');
+    if (x && x.length >= 10 && x.length <= 15) set.add(x);
+  };
+  const addBR = (raw) => {
+    const x = String(raw || '').replace(/\D/g, '');
+    if (!x) return;
+    add(x);
+    const local = x.startsWith('55') && x.length >= 12 ? x.slice(2) : x;
+    add(local);
+    if (local.length === 10 || local.length === 11) add('55' + local);
+
+    // local = DD + número. Gera variação com/sem 9º dígito.
+    if (local.length === 11 && local[2] === '9') {
+      const sem9 = local.slice(0, 2) + local.slice(3);
+      add(sem9);
+      add('55' + sem9);
+    } else if (local.length === 10) {
+      const com9 = local.slice(0, 2) + '9' + local.slice(2);
+      add(com9);
+      add('55' + com9);
     }
-  }
+  };
+
+  addBR(d);
   return Array.from(set);
 }
 
@@ -3806,8 +3883,12 @@ app.post('/movatak/vendedor/login', rateLimit({ janelaMs: 60000, max: 5, chave: 
         LIMIT 1`,
       [String(email).trim().toLowerCase(), hashSenha(senha)]
     );
-    if (!r.rows.length) return res.status(401).json({ error: 'Acesso inválido.' });
+    if (!r.rows.length) {
+      logEstruturado('warn', 'login_vendedor_falha', { req_id: req.id, email: String(email).trim().toLowerCase(), ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim() });
+      return res.status(401).json({ error: 'Acesso inválido.' });
+    }
     const vend = r.rows[0];
+    logEstruturado('info', 'login_vendedor_ok', { req_id: req.id, vendedor_id: vend.id, cliente_id: vend.cliente_id });
     // Setores que este vendedor acessa — definem o que ele vê no kanban.
     const setoresR = await query(
       `SELECT s.id, s.nome, s.cor FROM movatak_setor_vendedores sv
@@ -3915,25 +3996,35 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     const colById = new Map(colunas.map(c => [Number(c.id), c]));
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
+    await garantirEstruturaConversas();
     const leadsRes = await query(
       `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-              COALESCE(l.nao_lida,false) AS nao_lida,
+              (COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
+              COALESCE(nl.nao_lidas,0)::int AS nao_lidas_count,
               COALESCE(l.arquivado,false) AS arquivado,
               s.nome AS setor_nome, s.cor AS setor_cor,
               l.criado_em, l.atualizado_em, l.convertido_em,
               v.nome AS vendedor_nome,
               p.nome AS plano_nome, p.valor AS plano_valor,
-              NULL::text AS ultima_msg,
-              NULL::text AS ultima_msg_direcao,
-              l.atualizado_em AS ultima_msg_em,
+              ult.conteudo AS ultima_msg,
+              ult.direcao AS ultima_msg_direcao,
+              COALESCE(ult.criado_em, l.atualizado_em) AS ultima_msg_em,
               0::int AS followups_pendentes,
               NULL::int AS fu_sequencia_ativa
          FROM movatak_leads l
          LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
          LEFT JOIN movatak_planos p ON p.id = l.plano_id
          LEFT JOIN movatak_setores s ON s.id = l.setor_id
+         LEFT JOIN LATERAL (
+           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
+            WHERE c.lead_id = l.id ORDER BY c.criado_em DESC LIMIT 1
+         ) ult ON true
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
+            WHERE c.lead_id = l.id AND c.direcao='entrada' AND c.lida_em IS NULL
+         ) nl ON true
         WHERE l.cliente_id=$1 AND l.setor_id IN (${ph})
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
+        ORDER BY COALESCE(ult.criado_em, l.atualizado_em) DESC NULLS LAST, l.criado_em DESC
         LIMIT 500`,
       params
     );
@@ -3964,11 +4055,17 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     );
 
     const contagemSetoresRes = await query(
-      `SELECT setor_id,
-              COUNT(*)::int AS cnt,
-              COUNT(*) FILTER (WHERE COALESCE(nao_lida,false) = true)::int AS nao_lidas
-         FROM movatak_leads
-        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false AND setor_id IN (${phTodos})
+      `SELECT setor_id, COUNT(*)::int AS cnt,
+              COUNT(*) FILTER (WHERE unread=true)::int AS nao_lidas
+         FROM (
+           SELECT l.id, l.setor_id,
+                  (COALESCE(l.nao_lida,false) OR EXISTS (
+                    SELECT 1 FROM movatak_conversas cv
+                     WHERE cv.lead_id = l.id AND cv.direcao='entrada' AND cv.lida_em IS NULL
+                  )) AS unread
+             FROM movatak_leads l
+            WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false AND l.setor_id IN (${phTodos})
+         ) x
         GROUP BY setor_id`,
       paramsTodos
     );
@@ -4016,7 +4113,7 @@ app.get('/movatak/vendedor/funil/metricas', authVendedor, async (req, res) => {
     const params = [clienteId, ...setoresAlvo];
     const totaisR = await query(
       `SELECT COUNT(*)::int AS total_leads,
-              COUNT(*) FILTER (WHERE l.nao_lida = true)::int AS novas_mensagens,
+              COUNT(*) FILTER (WHERE COALESCE(l.nao_lida,false) = true OR EXISTS (SELECT 1 FROM movatak_conversas cv WHERE cv.lead_id = l.id AND cv.direcao='entrada' AND cv.lida_em IS NULL))::int AS novas_mensagens,
               COUNT(*) FILTER (WHERE l.criado_em >= date_trunc('month', now()))::int AS criados_mes,
               COUNT(*) FILTER (WHERE l.convertido_em >= date_trunc('month', now()))::int AS convertidos_mes
          FROM movatak_leads l
@@ -4179,9 +4276,23 @@ async function vendedorPodeColuna(req, colunaId) {
 
 app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, res) => {
   try {
+    await garantirEstruturaConversas();
     const lead = await vendedorPodeLead(req, req.params.id);
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const naoLida = !!(req.body && req.body.nao_lida);
+    if (naoLida) {
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = NULL, lida_por = NULL
+                    WHERE id = (
+                      SELECT id FROM movatak_conversas
+                       WHERE lead_id = $1 AND direcao = 'entrada'
+                       ORDER BY criado_em DESC LIMIT 1
+                    )`, [lead.id]).catch(() => null);
+    } else {
+      await query(`UPDATE movatak_conversas
+                      SET lida_em = COALESCE(lida_em, NOW()), lida_por = COALESCE(lida_por, 'vendedor')
+                    WHERE lead_id = $1 AND direcao = 'entrada' AND lida_em IS NULL`, [lead.id]).catch(() => null);
+    }
     await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, lead.id]);
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5223,6 +5334,171 @@ app.post('/movatak/admin/leads/:id/zapi/send-advanced', authMovatak, async (req,
   } catch(e) { res.status(500).json({ error: e.response?.data?.message || JSON.stringify(e.response?.data || {}) || e.message }); }
 });
 
+
+// ============================================================
+// Reconciliação WhatsApp → CRM
+// Corrige divergência entre "não lidas" do WhatsApp/Z-API e o Inbox do Kanban.
+// O webhook continua sendo a fonte principal em tempo real; esta rotina fecha
+// buracos causados por deploy, timeout, payload sem match exato de telefone ou
+// contato que ainda não existia como lead.
+// ============================================================
+function chatZapiEhGrupo(ch) {
+  const id = String(ch.id || ch.chatId || ch.remoteJid || ch.phone || '');
+  return !!(ch.isGroup || ch.group || id.includes('@g.us') || id.includes('@newsletter'));
+}
+
+function extrairTelefoneChatZapi(ch, cliente = null) {
+  const candidatos = [
+    ch.phone, ch.phoneNumber, ch.contactPhone, ch.id, ch.chatId, ch.remoteJid,
+    ch.jid, ch.waId, ch.participantPhone, ch.senderPhone,
+    ch.lastMessage && ch.lastMessage.phone,
+    ch.lastMessage && ch.lastMessage.senderPhone,
+    ch.lastMessage && ch.lastMessage.remoteJid
+  ];
+  return primeiroTelefoneValido(candidatos, cliente);
+}
+
+function extrairNomeChatZapi(ch, telefone) {
+  const nomes = [ch.name, ch.pushName, ch.contactName, ch.shortName, ch.notifyName, ch.senderName];
+  for (const n of nomes) {
+    const s = String(n || '').trim();
+    if (s && s !== telefone) return s;
+  }
+  return telefone || 'Contato WhatsApp';
+}
+
+function extrairUltimaMensagemChatZapi(ch) {
+  const m = ch.lastMessage || ch.lastMessageData || ch.message || (Array.isArray(ch.messages) ? ch.messages[0] : null) || {};
+  const base = Object.keys(m).length ? m : ch;
+  const texto = textoDePossivelMensagem(base) || ch.lastMessageText || ch.lastMessage || ch.preview || ch.body || '';
+  const msgId = base.messageId || base.msgId || base.id || base.keyId || ch.lastMessageId || ch.messageId || null;
+  const midia = extrairMidiaPayloadZapi(base);
+  const fromMe = !!(base.fromMe || base.owner || ch.fromMe);
+  const tsRaw = base.moment || base.timestamp || base.createdAt || base.date || ch.lastMessageTime || ch.updatedAt || ch.timestamp || null;
+  let criadoEm = null;
+  if (tsRaw) {
+    const n = Number(tsRaw);
+    if (Number.isFinite(n) && n > 0) criadoEm = new Date(n < 10_000_000_000 ? n * 1000 : n).toISOString();
+    else {
+      const d = new Date(tsRaw);
+      if (!isNaN(d.getTime())) criadoEm = d.toISOString();
+    }
+  }
+  return {
+    temMensagem: !!(String(texto || '').trim() || midia.url || msgId),
+    texto: String(texto || ''),
+    midiaUrl: midia.url || null,
+    midiaTipo: midia.tipo || null,
+    msgId,
+    direcao: fromMe ? 'saida' : 'entrada',
+    criadoEm
+  };
+}
+
+function chatZapiTemNaoLida(ch) {
+  const n = Number(ch.unreadCount ?? ch.unreadMessages ?? ch.unread ?? ch.pendingMessages ?? 0);
+  return !!(ch.unread === true || ch.isUnread === true || n > 0);
+}
+
+async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
+  const chatLid = ch.chatLid || ch.lid || (String(ch.id || '').includes('@lid') ? ch.id : null) || null;
+  let lead = await localizarLeadPorPayload(cliente.id, telefone, chatLid, false);
+  const nome = extrairNomeChatZapi(ch, telefone);
+  if (lead) {
+    await query(
+      `UPDATE movatak_leads
+          SET nome = COALESCE(NULLIF($1,''), nome),
+              telefone = COALESCE(NULLIF($2,''), telefone),
+              chat_lid = COALESCE($3, chat_lid),
+              atualizado_em = NOW()
+        WHERE id = $4`,
+      [nome || null, telefone || null, chatLid, lead.id]
+    ).catch(() => null);
+    return { lead, criado: false };
+  }
+  const novo = await query(
+    `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, chat_lid, nao_lida, criado_em, atualizado_em)
+     VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,false,NOW(),NOW())
+     RETURNING *`,
+    [cliente.id, nome || telefone, telefone, chatLid]
+  );
+  return { lead: novo.rows[0], criado: true };
+}
+
+async function sincronizarChatsCliente(clienteId, opts = {}) {
+  await garantirEstruturaQuestionario().catch(() => null);
+  await garantirEstruturaConversas().catch(() => null);
+  const c = await query('SELECT * FROM movatak_clientes WHERE id=$1 AND ativo=true', [clienteId]);
+  if (!c.rows.length) throw new Error('Cliente não encontrado ou inativo.');
+  const cliente = c.rows[0];
+  if (!cliente.zapi_instance || !cliente.zapi_token || !cliente.zapi_client_token) {
+    throw new Error('Z-API não configurada para este cliente.');
+  }
+
+  const data = await zapiListarChats(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token);
+  const chatsRaw = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : (Array.isArray(data.data) ? data.data : []));
+  const max = Math.max(1, Math.min(parseInt(opts.max || opts.limit || 300, 10) || 300, 1000));
+  const chats = chatsRaw.slice(0, max);
+
+  let criados = 0, atualizados = 0, mensagensCriadas = 0, marcadosNaoLidos = 0, ignorados = 0, semTelefone = 0;
+  for (const ch of chats) {
+    if (!ch || chatZapiEhGrupo(ch)) { ignorados++; continue; }
+    const telefone = extrairTelefoneChatZapi(ch, cliente);
+    if (!telefone) { semTelefone++; continue; }
+
+    const { lead, criado } = await garantirLeadParaChatWhatsapp(cliente, ch, telefone);
+    if (criado) criados++; else atualizados++;
+
+    const ultima = extrairUltimaMensagemChatZapi(ch);
+    const temNaoLida = chatZapiTemNaoLida(ch);
+
+    if (ultima.temMensagem) {
+      const conversaId = await registrarConversa(
+        lead.id,
+        cliente.id,
+        ultima.direcao,
+        ultima.texto || (ultima.midiaTipo ? ultima.midiaTipo : ''),
+        ultima.midiaUrl,
+        ultima.midiaTipo,
+        ultima.msgId,
+        null
+      ).catch(() => null);
+      if (conversaId) {
+        mensagensCriadas++;
+        if (ultima.criadoEm) {
+          await query('UPDATE movatak_conversas SET criado_em=$1 WHERE id=$2', [ultima.criadoEm, conversaId]).catch(() => null);
+        }
+      }
+    }
+
+    // O WhatsApp/Z-API é usado como fonte de reconciliação para o badge: se a
+    // conversa está não lida lá, ela precisa aparecer no filtro "Não lidos" do CRM.
+    if (temNaoLida) {
+      await query(`UPDATE movatak_leads SET nao_lida=true, atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
+      // Se não veio a mensagem completa na listagem de chats, pelo menos deixa o
+      // lead visível como não lido. Quando o webhook/abrir conversa trouxer o corpo,
+      // o histórico fica completo.
+      if (!ultima.temMensagem) {
+        await registrarEventoLead(lead.id, cliente.id, 'whatsapp_sync_unread_sem_corpo', 'Chat marcado como não lido pela Z-API, sem corpo da mensagem na listagem', { telefone }).catch(() => null);
+      }
+      marcadosNaoLidos++;
+    }
+  }
+
+  await registrarWebhookCliente(cliente.id, {
+    tipo: 'reconciliacao_chats',
+    total_chats: chats.length,
+    criados,
+    atualizados,
+    mensagensCriadas,
+    marcadosNaoLidos,
+    ignorados,
+    semTelefone
+  }).catch(() => null);
+
+  return { ok: true, total: chats.length, criados, atualizados, mensagensCriadas, marcadosNaoLidos, ignorados, semTelefone };
+}
+
 app.get('/movatak/admin/clientes/:id/zapi/chats', authMovatak, async (req, res) => {
   try {
     const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
@@ -5235,27 +5511,15 @@ app.get('/movatak/admin/clientes/:id/zapi/chats', authMovatak, async (req, res) 
 
 app.post('/movatak/admin/clientes/:id/zapi/sincronizar-chats', authMovatak, async (req, res) => {
   try {
-    await garantirEstruturaQuestionario();
-    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
-    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const cli = c.rows[0];
-    const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
-    const chats = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : []);
-    let criados = 0, atualizados = 0, ignorados = 0;
-    for (const ch of chats) {
-      const phone = String(ch.phone || ch.id || '').replace(/\D/g, '');
-      if (!phone || ch.isGroup) { ignorados++; continue; }
-      const existe = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [cli.id, phone]).catch(() => ({ rows: [] }));
-      if (existe.rows.length) {
-        await query(`UPDATE movatak_leads SET nome=COALESCE(NULLIF($1,''),nome), nao_lida=COALESCE($2,nao_lida), atualizado_em=NOW() WHERE id=$3`, [ch.name || null, !!ch.unread, existe.rows[0].id]).catch(() => null);
-        atualizados++;
-      } else {
-        await query(`INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, nao_lida, criado_em, atualizado_em)
-                    VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,NOW(),NOW())`, [cli.id, ch.name || phone, phone, !!ch.unread]).catch(() => null);
-        criados++;
-      }
-    }
-    res.json({ ok: true, total: chats.length, criados, atualizados, ignorados });
+    const r = await sincronizarChatsCliente(req.params.id, req.body || {});
+    res.json(r);
+  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
+});
+
+app.post('/movatak/vendedor/zapi/sincronizar-chats', authVendedor, async (req, res) => {
+  try {
+    const r = await sincronizarChatsCliente(req.vendedor.cliente_id, req.body || {});
+    res.json(r);
   } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });
 
@@ -6996,7 +7260,20 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status_em TIMESTAMPTZ`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS zapi_status_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS lida_em TIMESTAMPTZ`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS lida_por TEXT`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_conversas_unread ON movatak_conversas(lead_id, criado_em DESC) WHERE direcao='entrada' AND lida_em IS NULL`).catch(() => null);
+  // Migração segura: ao criar lida_em em bancos antigos, não transforme todo
+  // histórico antigo em “não lido”. Mantém como não lidas apenas as conversas
+  // cujo lead já estava sinalizado como nao_lida=true.
+  await query(`UPDATE movatak_conversas cv
+                 SET lida_em = COALESCE(cv.lida_em, NOW()), lida_por = COALESCE(cv.lida_por, 'migracao')
+                FROM movatak_leads l
+               WHERE cv.lead_id = l.id
+                 AND cv.direcao = 'entrada'
+                 AND cv.lida_em IS NULL
+                 AND COALESCE(l.nao_lida,false) = false`).catch(() => null);
   // Garante que a mesma mensagem do WhatsApp (mesmo lead + mesmo messageId) nunca
   // seja gravada duas vezes — fecha a corrida entre o envio pelo painel e o webhook fromMe.
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_conversas_lead_msgid ON movatak_conversas(lead_id, msg_id) WHERE msg_id IS NOT NULL`).catch(() => null);
@@ -7033,19 +7310,31 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
       'SELECT id FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
       [leadId, msgId]
     ).catch(() => ({ rows: [] }));
-    if (existe.rows.length) return null; // já registrada — não duplica nem reemite socket
+    if (existe.rows.length) {
+      // Mesmo em duplicata, mantém o estado de leitura consistente. Isso resolve
+      // casos em que a reconciliação criou/atualizou o lead e o webhook chegou depois.
+      if (direcao === 'entrada') {
+        await query(`UPDATE movatak_leads SET nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
+      } else if (direcao === 'saida') {
+        await query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
+      }
+      return null; // já registrada — não duplica nem reemite socket
+    }
   }
   const reply = normalizarReplyInfoConversa(replyInfo);
+  const lidaEm = direcao === 'entrada' ? null : new Date().toISOString();
+  const lidaPor = direcao === 'entrada' ? null : 'saida';
   const ins = await query(
     `INSERT INTO movatak_conversas
        (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id,
         reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
-        reply_to_midia_url, reply_to_midia_tipo, reply_payload)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`,
+        reply_to_midia_url, reply_to_midia_tipo, reply_payload, lida_em, lida_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16) RETURNING id`,
     [
       leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null,
       reply.reply_to_conversa_id, reply.reply_to_msg_id, reply.reply_to_direcao, reply.reply_to_conteudo,
-      reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {})
+      reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {}),
+      lidaEm, lidaPor
     ]
   ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
   if (!ins || !ins.rows.length) return null;
@@ -7818,11 +8107,17 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       params.push(setorFiltro);
       filtroSetorSql = ' AND l.setor_id = $2';
     }
+    await garantirEstruturaConversas();
     const leads = await query(
-      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
+      `SELECT lb.*,
+              ult.conteudo AS ultima_msg,
+              ult.direcao AS ultima_msg_direcao,
+              COALESCE(ult.criado_em, lb.atualizado_em) AS ultima_msg_em,
+              (COALESCE(lb.lead_nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
+              COALESCE(nl.nao_lidas,0)::int AS nao_lidas_count
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  l.nao_lida, l.arquivado,
+                  COALESCE(l.nao_lida,false) AS lead_nao_lida, COALESCE(l.arquivado,false) AS arquivado,
                   s.nome AS setor_nome, s.cor AS setor_cor,
                   l.criado_em, l.atualizado_em, l.convertido_em,
                   v.nome AS vendedor_nome,
@@ -7841,7 +8136,11 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
            SELECT conteudo, direcao, criado_em FROM movatak_conversas c
             WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
          ) ult ON true
-        ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
+         LEFT JOIN LATERAL (
+           SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
+            WHERE c.lead_id = lb.id AND c.direcao='entrada' AND c.lida_em IS NULL
+         ) nl ON true
+        ORDER BY COALESCE(ult.criado_em, lb.atualizado_em) DESC NULLS LAST, lb.criado_em DESC
         LIMIT 500`,
       params
     );
@@ -7882,9 +8181,17 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       [clienteId]
     );
     const contagemSetoresRes = await query(
-      `SELECT setor_id, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE nao_lida = true)::int AS nao_lidas
-         FROM movatak_leads
-        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false
+      `SELECT setor_id, COUNT(*)::int AS cnt,
+              COUNT(*) FILTER (WHERE unread=true)::int AS nao_lidas
+         FROM (
+           SELECT l.id, l.setor_id,
+                  (COALESCE(l.nao_lida,false) OR EXISTS (
+                    SELECT 1 FROM movatak_conversas cv
+                     WHERE cv.lead_id = l.id AND cv.direcao='entrada' AND cv.lida_em IS NULL
+                  )) AS unread
+             FROM movatak_leads l
+            WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false
+         ) x
         GROUP BY setor_id`,
       [clienteId]
     );
@@ -7920,7 +8227,7 @@ app.get('/movatak/admin/clientes/:id/funil/metricas', authMovatak, async (req, r
     const totaisR = await query(
       `SELECT
          COUNT(*)::int AS total_leads,
-         COUNT(*) FILTER (WHERE l.nao_lida = true)::int AS novas_mensagens,
+         COUNT(*) FILTER (WHERE COALESCE(l.nao_lida,false) = true OR EXISTS (SELECT 1 FROM movatak_conversas cv WHERE cv.lead_id = l.id AND cv.direcao='entrada' AND cv.lida_em IS NULL))::int AS novas_mensagens,
          COUNT(*) FILTER (WHERE l.criado_em >= date_trunc('month', now()))::int AS criados_mes,
          COUNT(*) FILTER (WHERE l.convertido_em >= date_trunc('month', now()))::int AS convertidos_mes
        FROM movatak_leads l
@@ -8348,8 +8655,18 @@ app.post('/movatak/admin/reset-lead', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/health', (req, res) => {
-  res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
+app.get('/movatak/health', async (req, res) => {
+  const saude = { status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString(), componentes: {} };
+  try {
+    const ini = Date.now();
+    await query('SELECT 1');
+    saude.componentes.banco = { ok: true, ms: Date.now() - ini };
+  } catch (e) {
+    saude.status = 'degradado';
+    saude.componentes.banco = { ok: false, erro: e.message };
+  }
+  saude.componentes.app = { ok: true, uptime_s: Math.round(process.uptime()) };
+  res.status(saude.status === 'ok' ? 200 : 503).json(saude);
 });
 
 app.get('/movatak/version', (req, res) => {
@@ -8357,13 +8674,19 @@ app.get('/movatak/version', (req, res) => {
 });
 
 // Error handler global. Erros que escaparem das rotas são logados com detalhe no
-// servidor (pra diagnóstico), mas a resposta ao cliente é genérica — nunca expõe
-// stack trace nem detalhe interno. Mensagens de validação controladas (que as rotas
-// retornam explicitamente) não passam por aqui.
+// servidor (com request_id), mas a resposta ao cliente é genérica — nunca expõe
+// stack trace. Mensagens de validação controladas (que as rotas retornam
+// explicitamente) não passam por aqui.
 app.use((err, req, res, next) => {
-  console.error('[erro-nao-tratado]', req.method, req.path, '|', err && err.message, err && err.stack ? '\n' + err.stack.split('\n').slice(0, 4).join('\n') : '');
+  logEstruturado('error', 'erro_nao_tratado', {
+    req_id: req.id,
+    metodo: req.method,
+    rota: req.path,
+    msg: err && err.message,
+    stack: err && err.stack ? err.stack.split('\n').slice(0, 4).join(' | ') : null
+  });
   if (res.headersSent) return next(err);
-  res.status(500).json({ error: 'Erro interno. Tente novamente.' });
+  res.status(500).json({ error: 'Erro interno. Tente novamente.', req_id: req.id });
 });
 
 // ============================================================
