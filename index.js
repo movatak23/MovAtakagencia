@@ -6690,6 +6690,7 @@ async function garantirEstruturaAgenda() {
     ADD COLUMN IF NOT EXISTS fim TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS observacao TEXT,
     ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER,
+    ADD COLUMN IF NOT EXISTS cancelado_em TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_cliente_inicio ON movatak_agendamentos(cliente_id, inicio)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_lead ON movatak_agendamentos(lead_id)`).catch(() => null);
@@ -7128,6 +7129,50 @@ app.patch('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Muda o status do agendamento e, opcionalmente, move o lead para uma coluna.
+app.patch('/movatak/admin/agendamentos/:id/status', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaAgenda();
+    const { status, mover_para_coluna_id } = req.body || {};
+    if (!status) return res.status(400).json({ error: 'Informe o status.' });
+    const r = await query(
+      `UPDATE movatak_agendamentos SET status=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *`,
+      [status, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    const ag = r.rows[0];
+    let leadMovido = false;
+    // Se foi pedido pra mover o lead, valida que a coluna é do mesmo cliente e ativa.
+    if (mover_para_coluna_id && ag.lead_id) {
+      const col = await query(
+        'SELECT id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true',
+        [mover_para_coluna_id, ag.cliente_id]
+      );
+      if (col.rows.length) {
+        await moverLeadParaColunaFunil(ag.lead_id, mover_para_coluna_id).catch(() => null);
+        await registrarEventoLead(ag.lead_id, ag.cliente_id, 'agenda_status', `Agendamento "${ag.titulo || ''}" → ${status}`, { agendamento_id: ag.id, status }).catch(() => null);
+        leadMovido = true;
+      }
+    }
+    res.json({ ok: true, agendamento: ag, lead_movido: leadMovido });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cancela/exclui logicamente um agendamento (soft delete via status + cancelado_em).
+// Não apaga o lead nem a conversa.
+app.delete('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaAgenda();
+    const r = await query(
+      `UPDATE movatak_agendamentos SET status='cancelado', cancelado_em=NOW(), atualizado_em=NOW()
+        WHERE id=$1 RETURNING id, lead_id, cliente_id, titulo`,
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/movatak/admin/clientes/:id/funil/colunas', authMovatak, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
@@ -7209,38 +7254,46 @@ app.patch('/movatak/admin/funil/colunas/:id/ausencia', authMovatak, async (req, 
 app.delete('/movatak/admin/funil/colunas/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaFunil();
-    const colId = parseInt(req.params.id, 10);
+    // Colunas de vendedor são virtuais no front (ex: "vendedor_12") — nunca chegam
+    // como ID numérico real. Se vier algo não-numérico, rejeita explicitamente.
+    const idRaw = String(req.params.id || '');
+    if (idRaw.startsWith('vendedor_') || idRaw.startsWith('vendedor-')) {
+      return res.status(400).json({ error: 'Colunas de vendedor não podem ser excluídas pelo kanban. Remova ou desative o vendedor no menu de vendedores.' });
+    }
+    const colId = parseInt(idRaw, 10);
     if (!Number.isFinite(colId)) return res.status(400).json({ error: 'ID inválido.' });
 
-    const cr = await query('SELECT id, cliente_id, nome, etapa_sistema FROM movatak_funil_colunas WHERE id=$1', [colId]);
+    // Confirmação e destino são obrigatórios (regra do briefing).
+    const { confirmar, destino_coluna_id } = req.body || {};
+    if (!confirmar) return res.status(400).json({ error: 'Confirmação obrigatória para excluir a coluna.' });
+    if (!destino_coluna_id) return res.status(400).json({ error: 'Escolha uma coluna de destino para realocar os leads.' });
+
+    const cr = await query('SELECT id, cliente_id, nome FROM movatak_funil_colunas WHERE id=$1 AND ativo=true', [colId]);
     if (!cr.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     const col = cr.rows[0];
 
-    // Colunas de sistema não podem ser excluídas (são usadas pelo motor do funil).
-    const slugsSistema = ['lead', 'auto_atendimento', 'followup', 'negociacao', 'cliente', 'descartado'];
-    if (col.etapa_sistema && slugsSistema.includes(col.etapa_sistema)) {
-      return res.status(400).json({ error: 'Esta é uma etapa padrão do sistema e não pode ser excluída.' });
-    }
+    // O destino precisa ser uma coluna ativa do MESMO cliente e diferente da que será excluída.
+    const destId = parseInt(destino_coluna_id, 10);
+    if (destId === colId) return res.status(400).json({ error: 'A coluna de destino não pode ser a mesma que está sendo excluída.' });
+    const dest = await query('SELECT id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true', [destId, col.cliente_id]);
+    if (!dest.rows.length) return res.status(400).json({ error: 'Coluna de destino inválida.' });
 
-    // Realoca os leads desta coluna para a etapa "Novo contato" do cliente.
-    const destino = await query(
-      `SELECT id FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true AND slug='novo_contato' LIMIT 1`,
-      [col.cliente_id]
-    );
-    const destinoId = destino.rows[0] ? destino.rows[0].id : null;
-    if (destinoId) {
+    // Conta e realoca os leads desta coluna para o destino, registrando o evento.
+    const leadsR = await query('SELECT id FROM movatak_leads WHERE funil_coluna_id=$1', [colId]);
+    const qtdLeads = leadsR.rows.length;
+    if (qtdLeads) {
       await query(
-        `UPDATE movatak_leads SET funil_coluna_id=$1, etapa='lead', atualizado_em=NOW()
-          WHERE funil_coluna_id=$2`,
-        [destinoId, colId]
-      ).catch(() => null);
-    } else {
-      await query(`UPDATE movatak_leads SET funil_coluna_id=NULL, atualizado_em=NOW() WHERE funil_coluna_id=$1`, [colId]).catch(() => null);
+        `UPDATE movatak_leads SET funil_coluna_id=$1, atualizado_em=NOW() WHERE funil_coluna_id=$2`,
+        [destId, colId]
+      );
+      for (const l of leadsR.rows) {
+        registrarEventoLead(l.id, col.cliente_id, 'coluna_excluida', `Lead realocado: coluna "${col.nome}" excluída`, { de: colId, para: destId }).catch(() => null);
+      }
     }
 
+    // Soft delete — nunca apaga a linha.
     await query('UPDATE movatak_funil_colunas SET ativo=false, atualizado_em=NOW() WHERE id=$1', [colId]);
-    res.json({ ok: true, leads_realocados: destinoId ? true : false });
+    res.json({ ok: true, leads_realocados: qtdLeads, destino_coluna_id: destId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
