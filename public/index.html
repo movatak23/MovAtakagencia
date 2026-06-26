@@ -383,7 +383,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.9-whatsapp-inbox-exato</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.11-zapi-recon-cirurgico</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -513,7 +513,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.9-whatsapp-inbox-exato';
+const PAINEL_VERSION = 'v2.7.11-zapi-recon-cirurgico';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -522,6 +522,10 @@ let secret = '';
 let periodoAtual = 0;
 let tokenGerado  = '';
 let templatesFollowupCache = [];
+// Controle global de sincronização WhatsApp → CRM. Precisa existir antes de qualquer chamada
+// a carregarFunilAtendimento(), senão o browser cai em TDZ na primeira carga.
+var _syncWhatsappFunilAtivo = false;
+var _ultimaSyncWhatsappFunil = 0;
 
 function getPermissoesPortal() {
   const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
@@ -5451,8 +5455,6 @@ function fecharFunilAtendimento() {
 }
 
 
-let _syncWhatsappFunilAtivo = false;
-let _ultimaSyncWhatsappFunil = 0;
 async function sincronizarWhatsAppFunilSilencioso() {
   if (!funilState || !funilState.clienteId || _syncWhatsappFunilAtivo) return null;
   _syncWhatsappFunilAtivo = true;
