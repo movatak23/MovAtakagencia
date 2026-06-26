@@ -383,7 +383,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.13-origem-schema-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.15-whatsapp-chats-fonte</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -513,7 +513,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.13-origem-schema-fix';
+const PAINEL_VERSION = 'v2.7.15-whatsapp-chats-fonte';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -5679,15 +5679,17 @@ function renderInboxFunil() {
     return;
   }
   box.innerHTML = lista.map(lead => {
-    const ativo = (window._painelLeadId != null && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
+    const temLead = lead.id != null && String(lead.id) !== '0' && String(lead.id) !== 'null';
+    const ativo = (window._painelLeadId != null && temLead && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
     const naoLida = lead.arquivado ? false : !!lead.nao_lida;
+    const countNaoLida = parseInt(lead.nao_lidas_count || lead.whatsapp_unread_count || 0, 10) || 0;
     const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
     const preview = lead.ultima_msg ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56) : 'Sem mensagens ainda';
     const col = etapaDoLead(lead);
     const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
-    return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
-              onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')">
-      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</div>
+    const click = temLead ? `onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')"` : `title="Chat ainda sem lead vinculado. Clique em Atualizar para reconciliar."`;
+    return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${temLead ? lead.id : ''}" ${click}>
+      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)}">${lead.is_group ? '👥' : iniciaisAvatarLead(lead.nome)}</div>
       <div class="inbox-info">
         <div class="inbox-top-row">
           <strong>${escapeHtml(lead.nome || 'Sem nome')}</strong>
@@ -5696,11 +5698,12 @@ function renderInboxFunil() {
         <div class="inbox-preview">${escapeHtml(preview)}</div>
         <div class="inbox-tags">
           <span class="tag-whatsapp">WhatsApp</span>
+          ${lead.is_group ? '<span class="tag-etapa" style="color:#22B8CF;border-color:#22B8CF66">Grupo</span>' : ''}
           ${col ? `<span class="tag-etapa" style="color:${col.cor || '#9aa3b2'};border-color:${col.cor || '#6b7280'}66">${escapeHtml(col.nome)}</span>` : ''}
           ${lead.arquivado ? '<span class="tag-arquivado">Arquivado</span>' : ''}
         </div>
       </div>
-      ${naoLida ? '<span class="inbox-dot" title="Não lida"></span>' : ''}
+      ${naoLida ? `<span class="inbox-dot" title="${countNaoLida > 1 ? countNaoLida + ' não lidas' : 'Não lida'}"></span>` : ''}
     </div>`;
   }).join('');
 }
@@ -5712,6 +5715,7 @@ function marcarItemInboxAtivo(leadId) {
 }
 
 function selecionarLeadInbox(id, nome) {
+  if (id == null || String(id) === '0') return;
   abrirPainelLead(id, nome);
 }
 
