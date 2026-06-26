@@ -6785,7 +6785,7 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   await garantirEstruturaFunil();
   const r = await query(
     `SELECT l.id, l.cliente_id, l.telefone, l.nome, l.funil_coluna_id AS coluna_anterior_id,
-            fc.id AS coluna_id, fc.nome AS coluna_nome, fc.slug, fc.etapa_sistema, fc.sincronizar_whatsapp, fc.zapi_tag_id,
+            fc.id AS coluna_id, fc.nome AS coluna_nome, fc.slug, fc.etapa_sistema, fc.sincronizar_whatsapp, fc.zapi_tag_id, fc.setor_id AS coluna_setor_id,
             c.zapi_instance, c.zapi_token, c.zapi_client_token
        FROM movatak_leads l
        JOIN movatak_funil_colunas fc ON fc.id = $2 AND fc.cliente_id = l.cliente_id AND fc.ativo = true
@@ -6821,6 +6821,13 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
     await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
   }
 
+  // O lead herda o setor da coluna para onde foi movido. Sem isso, o lead ficaria
+  // na coluna de um setor mas com setor_id de outro — sumindo do filtro por setor e
+  // do CRM do vendedor daquele setor. Só atualiza se a coluna tiver setor definido.
+  if (row.coluna_setor_id) {
+    await query(`UPDATE movatak_leads SET setor_id=$1, atualizado_em=NOW() WHERE id=$2`, [row.coluna_setor_id, leadId]).catch(() => null);
+  }
+
   if (row.sincronizar_whatsapp && tagId && row.zapi_instance && row.zapi_token && row.zapi_client_token && row.telefone) {
     const tagsAntigas = await query(
       `SELECT zapi_tag_id FROM movatak_funil_colunas
@@ -6838,6 +6845,27 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   }
   return { ok: true, coluna: { id: colunaId, nome: row.coluna_nome, etapa_sistema: etapa } };
 }
+
+// Reconcilia o setor dos leads com o setor das colunas onde eles estão. Útil para
+// corrigir leads movidos antes do fix (que ficaram com setor_id de um setor mas em
+// coluna de outro). Atualiza só quando há divergência.
+app.post('/movatak/admin/clientes/:id/reconciliar-setores', authMovatak, async (req, res) => {
+  try {
+    const clienteId = parseInt(req.params.id, 10);
+    const r = await query(
+      `UPDATE movatak_leads l
+          SET setor_id = fc.setor_id, atualizado_em = NOW()
+         FROM movatak_funil_colunas fc
+        WHERE l.funil_coluna_id = fc.id
+          AND l.cliente_id = $1
+          AND fc.setor_id IS NOT NULL
+          AND (l.setor_id IS DISTINCT FROM fc.setor_id)
+        RETURNING l.id`,
+      [clienteId]
+    );
+    res.json({ ok: true, leads_corrigidos: r.rows.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res) => {
   try {
