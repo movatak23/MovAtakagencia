@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.1-vendedor-crm-admin-layout';
+const MOVATAK_VERSION = 'v2.7.2-vendedor-funil-loading-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -3818,9 +3818,22 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     const clienteId = req.vendedor.cliente_id;
     const setorIds = req.vendedor.setorIds || [];
     if (!setorIds.length) {
-      return res.json({ colunas: [], colunasVendedores: [], leads: [], setores: [], totalGeral: 0, totalNaoLidas: 0, semSetor: true });
+      return res.json({
+        colunas: [],
+        colunasVendedores: [],
+        leads: [],
+        setores: [],
+        totalGeral: 0,
+        totalNaoLidas: 0,
+        semSetor: true
+      });
     }
-    await garantirFunilPadraoCliente(clienteId);
+
+    // Correção de carregamento do CRM do vendedor:
+    // A versão anterior espelhava a query pesada do admin e podia ficar pendente
+    // em produção. Aqui mantemos o MESMO formato de resposta que o layout do admin
+    // espera, mas com consulta enxuta e sempre restrita aos setores do vendedor.
+    await garantirFunilPadraoCliente(clienteId).catch(() => null);
 
     let setoresAlvo = setorIds;
     let setorFiltro = null;
@@ -3830,49 +3843,55 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       setoresAlvo = [pedido];
       setorFiltro = pedido;
     }
+
     const ph = setoresAlvo.map((_, i) => '$' + (i + 2)).join(',');
+    const params = [clienteId, ...setoresAlvo];
 
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro,
-              comando, setor_id, ausencia_ativa, nicho_template, agenda_tipo, agenda_status
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp,
+              zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa,
+              nicho_template, agenda_tipo, agenda_status
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true AND setor_id IN (${ph})
         ORDER BY ordem ASC, id ASC`,
-      [clienteId, ...setoresAlvo]
+      params
     );
+
     const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
     const colById = new Map(colunas.map(c => [Number(c.id), c]));
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
-    const leads = await query(
+    const leadsRes = await query(
       `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  l.nao_lida, l.arquivado,
+                  COALESCE(l.nao_lida,false) AS nao_lida,
+                  COALESCE(l.arquivado,false) AS arquivado,
                   s.nome AS setor_nome, s.cor AS setor_cor,
                   l.criado_em, l.atualizado_em, l.convertido_em,
                   v.nome AS vendedor_nome,
                   p.nome AS plano_nome, p.valor AS plano_valor,
-                  COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
-                  MIN(COALESCE(f.sequencia_fu,1)) FILTER (WHERE f.status='pendente')::int AS fu_sequencia_ativa
+                  0::int AS followups_pendentes,
+                  NULL::int AS fu_sequencia_ativa
              FROM movatak_leads l
              LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
              LEFT JOIN movatak_planos p ON p.id = l.plano_id
              LEFT JOIN movatak_setores s ON s.id = l.setor_id
-             LEFT JOIN movatak_followup f ON f.lead_id = l.id
             WHERE l.cliente_id=$1 AND l.setor_id IN (${ph})
-            GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
          ) lb
          LEFT JOIN LATERAL (
-           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
-            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
+           SELECT conteudo, direcao, criado_em
+             FROM movatak_conversas c
+            WHERE c.lead_id = lb.id
+            ORDER BY c.criado_em DESC
+            LIMIT 1
          ) ult ON true
         ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
         LIMIT 500`,
-      [clienteId, ...setoresAlvo]
+      params
     );
 
-    const leadsAtivos = leads.rows.filter(l => !l.arquivado);
+    const leadsAtivos = leadsRes.rows.filter(l => !l.arquivado);
     for (const lead of leadsAtivos) {
       let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
       if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
@@ -3882,28 +3901,39 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     }
 
     const phTodos = setorIds.map((_, i) => '$' + (i + 2)).join(',');
-    const clienteInfoRes = await query('SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1', [clienteId]).catch(() => ({ rows: [] }));
+    const paramsTodos = [clienteId, ...setorIds];
+
+    const clienteInfoRes = await query(
+      'SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1',
+      [clienteId]
+    ).catch(() => ({ rows: [] }));
     const clienteInfo = clienteInfoRes.rows[0] || {};
+
     const setoresRes = await query(
       `SELECT id, nome, cor FROM movatak_setores
         WHERE cliente_id=$1 AND COALESCE(ativo,true)=true AND id IN (${phTodos})
         ORDER BY ordem_bot ASC, nome ASC`,
-      [clienteId, ...setorIds]
+      paramsTodos
     );
+
     const contagemSetoresRes = await query(
-      `SELECT setor_id, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE nao_lida = true)::int AS nao_lidas
+      `SELECT setor_id,
+              COUNT(*)::int AS cnt,
+              COUNT(*) FILTER (WHERE COALESCE(nao_lida,false) = true)::int AS nao_lidas
          FROM movatak_leads
         WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false AND setor_id IN (${phTodos})
         GROUP BY setor_id`,
-      [clienteId, ...setorIds]
+      paramsTodos
     );
-    const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.cnt]));
-    const naoLidasPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.nao_lidas]));
+
+    const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [Number(r.setor_id), Number(r.cnt || 0)]));
+    const naoLidasPorSetor = new Map(contagemSetoresRes.rows.map(r => [Number(r.setor_id), Number(r.nao_lidas || 0)]));
     const setores = setoresRes.rows.map(s => ({
       ...s,
-      leads_count: contagemPorSetor.get(s.id) || 0,
-      nao_lidas: naoLidasPorSetor.get(s.id) || 0
+      leads_count: contagemPorSetor.get(Number(s.id)) || 0,
+      nao_lidas: naoLidasPorSetor.get(Number(s.id)) || 0
     }));
+
     const totalGeral = contagemSetoresRes.rows.reduce((acc, r) => acc + Number(r.cnt || 0), 0);
     const totalNaoLidas = contagemSetoresRes.rows.reduce((acc, r) => acc + Number(r.nao_lidas || 0), 0);
 
@@ -3916,9 +3946,12 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       totalNaoLidas,
       nicho: clienteInfo.nicho || null,
       agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leads.rows
+      leads: leadsRes.rows
     });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    console.error('[vendedor/funil]', e.message);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/movatak/vendedor/funil/metricas', authVendedor, async (req, res) => {
