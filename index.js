@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.13-origem-schema-fix';
+const MOVATAK_VERSION = 'v2.7.15-whatsapp-chats-fonte';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2951,6 +2951,78 @@ function extrairTelefonePayload(body, cliente = null) {
   return primeiroTelefoneValido(candidatos, cliente);
 }
 
+// Identificador real do chat do WhatsApp. Para contatos privados retorna telefone normalizado;
+// para grupos retorna o JID do grupo (@g.us). Isso permite que o Inbox do CRM espelhe a
+// lista do WhatsApp, incluindo grupos, sem tentar tratar grupo como telefone de lead.
+function extrairChatIdBrutoPayload(body) {
+  const candidatos = [
+    body && body.chatId,
+    body && body.remoteJid,
+    body && body.id,
+    body && body.phone,
+    body && body.from,
+    body && body.to,
+    body && body.key && body.key.remoteJid,
+    body && body.message && body.message.key && body.message.key.remoteJid,
+    body && body.lastMessage && body.lastMessage.chatId,
+    body && body.lastMessage && body.lastMessage.remoteJid
+  ];
+  for (const v of candidatos) {
+    const s = String(v || '').trim();
+    if (s) return s;
+  }
+  return null;
+}
+
+function extrairGrupoIdPayload(body) {
+  const vals = extrairValoresProfundos(body || {}, 4)
+    .map(x => String(x.valor || '').trim())
+    .filter(Boolean);
+  const diretos = [
+    body && body.chatId,
+    body && body.remoteJid,
+    body && body.id,
+    body && body.phone,
+    body && body.from,
+    body && body.to,
+    body && body.key && body.key.remoteJid,
+    body && body.message && body.message.key && body.message.key.remoteJid
+  ].map(v => String(v || '').trim()).filter(Boolean);
+  for (const s of [...diretos, ...vals]) {
+    if (/@g\.us$/i.test(s) || s.includes('@g.us')) return s;
+  }
+  return null;
+}
+
+function payloadZapiEhGrupo(body) {
+  if (!body) return false;
+  if (body.isGroup || body.group) return true;
+  const id = extrairChatIdBrutoPayload(body) || '';
+  return /@g\.us/i.test(String(id)) || !!extrairGrupoIdPayload(body);
+}
+
+function nomeGrupoOuContatoPayload(body, telefoneOuChat) {
+  const nomes = [
+    body && body.chatName,
+    body && body.groupName,
+    body && body.name,
+    body && body.contactName,
+    body && body.pushName,
+    body && body.notifyName,
+    body && body.senderName
+  ];
+  for (const n of nomes) {
+    const s = String(n || '').trim();
+    if (s && s !== telefoneOuChat) return s;
+  }
+  return telefoneOuChat || 'Chat WhatsApp';
+}
+
+function extrairIdentificadorChatPayload(body, cliente = null) {
+  if (payloadZapiEhGrupo(body)) return extrairGrupoIdPayload(body) || extrairChatIdBrutoPayload(body);
+  return extrairTelefonePayload(body, cliente);
+}
+
 function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
   const nomes = body && body.fromMe
     ? [body.contactName, body.chatName, body.pushName, body.notifyName]
@@ -3197,13 +3269,21 @@ async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFal
   }
 
   if ((!rl || !rl.rows.length) && telefone) {
-    // Busca tolerante ao 9º dígito do celular (com/sem o 9).
+    // Busca tolerante ao 9º dígito do celular (com/sem o 9). Para grupos/@g.us,
+    // variantesTelefone retorna vazio; nesses casos busca por telefone/chat_lid exato.
     const variantes = variantesTelefone(telefone);
-    const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
-    rl = await query(
-      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${placeholders}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-      [clienteId, ...variantes]
-    );
+    if (variantes.length) {
+      const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
+      rl = await query(
+        `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${placeholders}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+        [clienteId, ...variantes]
+      );
+    } else {
+      rl = await query(
+        `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND (telefone = $2 OR chat_lid = $2) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+        [clienteId, telefone]
+      );
+    }
   }
 
   if ((!rl || !rl.rows.length) && permitirFallbackRecente) {
@@ -3242,10 +3322,12 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
   // ---- Processamento Movatak ----
   try {
     const instanceId = body.instanceId || body.instance || '';
-    const chatLid    = body.chatLid || null;
+    const isGrupoWhatsapp = payloadZapiEhGrupo(body);
+    let chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
-    // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
-    let telefone     = extrairTelefonePayload(body);
+    // Identificador do chat: telefone para privado; JID @g.us para grupo.
+    let telefone     = extrairIdentificadorChatPayload(body);
+    if (isGrupoWhatsapp) chatLid = extrairGrupoIdPayload(body) || chatLid || telefone;
     const texto      = (body.text && body.text.message) ? body.text.message
                        : (typeof body.text === 'string' ? body.text : '');
     const replyPayload = extrairReplyPayloadZapi(body);
@@ -3264,8 +3346,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       keys: Object.keys(body).slice(0, 30)
     }));
 
-    if (body.isGroup || body.isNewsletter) {
-      logDebug('[zapi][ignorado] grupo ou newsletter');
+    if (body.isNewsletter) {
+      logDebug('[zapi][ignorado] newsletter');
       return;
     }
 
@@ -3275,11 +3357,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Notificações de status (leitura, entrega, etc.) — não são mensagens reais
-    if (body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase())) {
-      logDebug('[zapi][ignorado] evento de status: ' + body.type);
-      return;
-    }
+    // Notificações de status (leitura, entrega, etc.) — não são mensagens reais.
+    // Não retornamos aqui: depois de identificar o cliente, eventos como READ precisam
+    // atualizar o espelho movatak_whatsapp_chats para o Inbox acompanhar o WhatsApp.
+    const eventoStatusZapi = !!(body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase()));
 
     if (!instanceId) {
       logDebug('[zapi][ignorado] payload sem instanceId/instance');
@@ -3302,9 +3383,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // "falando consigo mesmo" quando o webhook fromMe traz connectedPhone/phone
     // como número da conta conectada.
     const telefoneAntesFiltroEmpresa = telefone;
-    telefone = extrairTelefonePayload(body, cliente);
+    telefone = isGrupoWhatsapp ? (extrairGrupoIdPayload(body) || chatLid || telefone) : extrairTelefonePayload(body, cliente);
+    if (isGrupoWhatsapp) chatLid = chatLid || telefone;
     if (telefoneAntesFiltroEmpresa && !telefone) {
-      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe }));
+      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe, isGrupoWhatsapp }));
     }
 
     const comandos = cliente.comandos || {};
@@ -3318,8 +3400,45 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     });
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
+    if (eventoStatusZapi) {
+      const chatIdStatus = normalizarChatIdWhatsapp(isGrupoWhatsapp ? (extrairGrupoIdPayload(body) || chatLid) : (extrairChatIdBrutoPayload(body) || telefone));
+      const leadStatus = chatIdStatus ? await localizarLeadPorPayload(cliente.id, chatIdStatus, chatLid || chatIdStatus, false).catch(() => null) : null;
+      const tipoStatus = String(body.type || '').toLowerCase();
+      const unreadConhecidoStatus = tipoStatus === 'read' || body.unread === true || body.isUnread === true || body.messagesUnread != null || body.unreadCount != null;
+      const unreadCountStatus = tipoStatus === 'read' ? 0 : (body.unread === true || body.isUnread === true ? 1 : (body.messagesUnread ?? body.unreadCount ?? null));
+      await upsertWhatsappChat(cliente, {
+        chatId: chatIdStatus || chatLid || telefone,
+        telefone: isGrupoWhatsapp ? null : telefone,
+        nome: nomeGrupoOuContatoPayload(body, chatIdStatus || telefone),
+        isGroup: isGrupoWhatsapp,
+        unreadKnown: unreadConhecidoStatus,
+        unreadCount: unreadCountStatus,
+        leadId: leadStatus && leadStatus.id,
+        rawPayload: body
+      }).catch(() => null);
+      if (leadStatus && unreadConhecidoStatus) {
+        await aplicarEstadoLeituraLead({ ...cliente, ...leadStatus, id: leadStatus.id, cliente_id: cliente.id }, Number(unreadCountStatus || 0) > 0, 'whatsapp_status', { syncZap:false }).catch(() => null);
+      }
+      logDebug('[zapi][status] atualizado no espelho de chats: ' + (body.type || 'status'));
+      return;
+    }
+
     if (!telefone) {
-      logDebug('[zapi][ignorado] telefone real do contato não identificado após filtro anti-próprio-número', JSON.stringify({
+      const chatIdFallback = normalizarChatIdWhatsapp(extrairChatIdBrutoPayload(body) || chatLid);
+      await upsertWhatsappChat(cliente, {
+        chatId: chatIdFallback,
+        nome: nomeGrupoOuContatoPayload(body, chatIdFallback),
+        isGroup: isGrupoWhatsapp,
+        unreadKnown: true,
+        unreadCount: body.fromMe ? 0 : 1,
+        lastMessageText: texto || (extrairMidiaPayloadZapi(body).tipo || ''),
+        lastMessageAt: new Date().toISOString(),
+        lastMessageFromMe: !!body.fromMe,
+        lastMessageMsgId: body.messageId || body.id || null,
+        rawPayload: body
+      }).catch(() => null);
+      logDebug('[zapi][ignorado] telefone real do contato não identificado; salvo no espelho de chats quando possível', JSON.stringify({
+        chatIdFallback,
         fromMe: !!body.fromMe,
         phone: body.phone || null,
         senderPhone: body.senderPhone || null,
@@ -3365,11 +3484,18 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         // automação nem marcar como não lido.
         if (!ehComandoInterno && telefone && ((texto && String(texto).trim()) || midiaFromMe.url)) {
           const novoLeadFromMe = await query(
-            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-             VALUES ($1, $2, $3, 'lead', $4, false, NOW())
+            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, origem, chat_lid, nao_lida, atualizado_em)
+             VALUES ($1, $2, $3, 'lead', $5, $4, false, NOW())
              RETURNING id`,
-            [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
-          );
+            [cliente.id, telefone, isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, telefone) : extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid, isGrupoWhatsapp ? 'whatsapp_group' : 'whatsapp_web']
+          ).catch(async (e) => {
+            if (String(e.message || '').includes('origem')) return await query(
+              `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+               VALUES ($1, $2, $3, 'lead', $4, false, NOW()) RETURNING id`,
+              [cliente.id, telefone, isGrupoWhatsapp ? nomeGrupoOuContatoPayload(body, telefone) : extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
+            );
+            throw e;
+          });
           await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
@@ -3407,6 +3533,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         } else {
           logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
         }
+      }
+
+      if (isGrupoWhatsapp) {
+        logDebug('[zapi][fromMe][grupo] mensagem de grupo registrada no histórico/Inbox; automação ignorada');
+        return;
       }
 
       if (!ehComandoInterno) {
@@ -3554,12 +3685,25 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // Buscar lead pelo telefone (tolerante ao 9º dígito)
-    const _varMsg = variantesTelefone(telefone);
-    const rl = await query(
-      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-      [cliente.id, ..._varMsg]
-    );
+    // Buscar lead pelo identificador do chat. Privado: telefone tolerante ao 9º dígito.
+    // Grupo: chat_lid/telefone exato (@g.us), sem passar por variantes de telefone.
+    let rl;
+    if (isGrupoWhatsapp) {
+      rl = await query(
+        `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND (chat_lid = $2 OR telefone = $2) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+        [cliente.id, chatLid || telefone]
+      );
+    } else {
+      const _varMsg = variantesTelefone(telefone);
+      if (_varMsg.length) {
+        rl = await query(
+          `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
+          [cliente.id, ..._varMsg]
+        );
+      } else {
+        rl = { rows: [] };
+      }
+    }
     const lead = rl.rows[0] || null;
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
@@ -3568,6 +3712,34 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       const msgIdEntrada = body.messageId || body.id || null;
       const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
       registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
+    }
+
+    // Grupos devem espelhar o WhatsApp no Inbox/histórico, mas não devem acionar
+    // automação comercial, questionário, follow-up ou comandos de funil.
+    if (isGrupoWhatsapp && lead) {
+      await query(`UPDATE movatak_leads SET origem=COALESCE(origem,'whatsapp_group'), chat_lid=COALESCE($2, chat_lid), atualizado_em=NOW() WHERE id=$1`, [lead.id, chatLid || telefone]).catch(() => null);
+      return;
+    }
+
+    // Grupo novo: cria chat no CRM e registra a primeira mensagem, sem automação.
+    // Fica ANTES do retorno de mídia sem texto para que áudio/foto em grupo também apareça no Inbox.
+    if (isGrupoWhatsapp && !lead) {
+      const novoGrupo = await query(
+        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, origem, chat_lid, nao_lida, atualizado_em)
+         VALUES ($1,$2,$3,'lead','whatsapp_group',$4,true,NOW()) RETURNING id`,
+        [cliente.id, telefone, nomeGrupoOuContatoPayload(body, telefone), chatLid || telefone]
+      ).catch(async (e) => {
+        if (String(e.message || '').includes('origem')) return await query(
+          `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+           VALUES ($1,$2,$3,'lead',$4,true,NOW()) RETURNING id`,
+          [cliente.id, telefone, nomeGrupoOuContatoPayload(body, telefone), chatLid || telefone]
+        );
+        throw e;
+      });
+      const msgIdGrupo = body.messageId || body.id || null;
+      await registrarConversa(novoGrupo.rows[0].id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdGrupo, replyPayload).catch(() => null);
+      await registrarEventoLead(novoGrupo.rows[0].id, cliente.id, 'grupo_criado_whatsapp', 'Grupo criado no Inbox a partir do WhatsApp', { chat_lid: chatLid || telefone }).catch(() => null);
+      return;
     }
 
     // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.
@@ -5491,6 +5663,17 @@ function chatZapiEhGrupo(ch) {
   return !!(ch.isGroup || ch.group || id.includes('@g.us') || id.includes('@newsletter'));
 }
 
+function extrairGrupoIdChatZapi(ch) {
+  if (!ch) return null;
+  const diretos = [ch.id, ch.chatId, ch.chat_id, ch.remoteJid, ch.remote_jid, ch.jid, ch.phone, ch.from, ch.to]
+    .map(v => String(v || '').trim()).filter(Boolean);
+  const profundos = extrairValoresProfundos(ch, 4).map(x => String(x.valor || '').trim()).filter(Boolean);
+  for (const s of [...diretos, ...profundos]) {
+    if (/@g\.us$/i.test(s) || s.includes('@g.us')) return s;
+  }
+  return null;
+}
+
 function extrairValoresProfundos(obj, maxDepth = 4, prefixo = '', out = []) {
   if (!obj || typeof obj !== 'object' || maxDepth < 0) return out;
   if (Array.isArray(obj)) {
@@ -5666,26 +5849,151 @@ async function aplicarEstadoLeituraLead(lead, naoLida, origem = 'crm', opts = {}
   if (naoLida) {
     await query(`UPDATE movatak_conversas SET lida_em=NULL, lida_por=NULL WHERE id=(SELECT id FROM movatak_conversas WHERE lead_id=$1 AND direcao='entrada' ORDER BY criado_em DESC LIMIT 1)`, [lead.id]).catch(() => null);
     await query(`UPDATE movatak_leads SET nao_lida=true, whatsapp_unread_count=GREATEST(COALESCE(whatsapp_unread_count,0),1), whatsapp_unread_sync_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
+    await atualizarWhatsappChatPorLead(lead.id, { unreadCount: 1 });
   } else {
     await query(`UPDATE movatak_conversas SET lida_em=COALESCE(lida_em,NOW()), lida_por=COALESCE(lida_por,$2) WHERE lead_id=$1 AND direcao='entrada' AND lida_em IS NULL`, [lead.id, origem]).catch(() => null);
     await query(`UPDATE movatak_leads SET nao_lida=false, whatsapp_unread_count=0, whatsapp_unread_sync_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
+    await atualizarWhatsappChatPorLead(lead.id, { unreadCount: 0 });
   }
   return { ok:true, nao_lida:!!naoLida, zapi:zapiData || null };
 }
 
+
+// ============================================================
+// Fonte real do Inbox: espelho de chats do WhatsApp
+// ============================================================
+function normalizarChatIdWhatsapp(valor, fallback = null) {
+  let s = String(valor || '').trim();
+  if (!s && fallback) s = String(fallback || '').trim();
+  if (!s) return null;
+  if (s.includes('@g.us') || s.includes('@newsletter') || s.includes('@lid')) return s;
+  s = s.replace(/@c\.us$/i, '').replace(/@s\.whatsapp\.net$/i, '');
+  const dig = s.replace(/\D/g, '');
+  return dig || s;
+}
+
+function extrairChatIdChatZapi(ch, cliente = null) {
+  if (!ch) return null;
+  const grupo = extrairGrupoIdChatZapi(ch);
+  if (grupo) return grupo;
+  const diretos = [
+    ch.id, ch.chatId, ch.chat_id, ch.remoteJid, ch.remote_jid, ch.jid, ch.lid, ch.chatLid,
+    ch.phone, ch.phoneNumber, ch.contactPhone, ch.waId, ch.wa_id, ch.number,
+    ch.contact && ch.contact.id, ch.contact && ch.contact.phone, ch.contact && ch.contact.number,
+    ch.lastMessage && (ch.lastMessage.chatId || ch.lastMessage.remoteJid || ch.lastMessage.phone || ch.lastMessage.from || ch.lastMessage.to),
+    ch.lastMessageData && (ch.lastMessageData.chatId || ch.lastMessageData.remoteJid || ch.lastMessageData.phone)
+  ].filter(Boolean);
+  const profundos = extrairValoresProfundos(ch, 4)
+    .filter(x => chavePareceTelefoneOuChat(x.caminho))
+    .map(x => x.valor)
+    .filter(Boolean);
+  for (const v of [...diretos, ...profundos]) {
+    const raw = String(v || '').trim();
+    if (!raw) continue;
+    if (raw.includes('@newsletter')) continue;
+    const id = normalizarChatIdWhatsapp(raw);
+    if (!id) continue;
+    // Evita usar o telefone da própria empresa como chat privado.
+    const dig = id.replace(/\D/g, '');
+    if (dig && telefoneEhDaEmpresa(dig, cliente)) continue;
+    return id;
+  }
+  const tel = extrairTelefoneChatZapi(ch, cliente);
+  return tel ? normalizarChatIdWhatsapp(tel) : null;
+}
+
+function extrairBoolChat(ch, campos) {
+  for (const c of campos) {
+    if (Object.prototype.hasOwnProperty.call(ch || {}, c)) return !!ch[c];
+  }
+  return false;
+}
+
+async function upsertWhatsappChat(cliente, info = {}) {
+  if (!cliente || !cliente.id) return null;
+  await garantirEstruturaConversas().catch(() => null);
+  const chatId = normalizarChatIdWhatsapp(info.chatId || info.chat_id || info.telefone || info.phone);
+  if (!chatId) return null;
+  const unreadKnown = info.unreadKnown === true || info.unreadCount != null;
+  const unreadCount = unreadKnown ? Math.max(0, parseInt(info.unreadCount || 0, 10) || 0) : null;
+  const rawPayload = info.rawPayload || info.raw || {};
+  let lastAt = info.lastMessageAt || info.last_message_at || null;
+  if (lastAt) {
+    const n = Number(lastAt);
+    if (Number.isFinite(n) && n > 0) lastAt = new Date(n < 10_000_000_000 ? n * 1000 : n).toISOString();
+    else {
+      const d = new Date(lastAt);
+      lastAt = isNaN(d.getTime()) ? null : d.toISOString();
+    }
+  }
+  const lastText = info.lastMessageText != null ? String(info.lastMessageText) : null;
+  const leadId = info.leadId || info.lead_id || null;
+  const telefone = info.telefone || info.phone || (/^\d{10,15}$/.test(chatId) ? chatId : null);
+  const nome = info.nome || info.name || chatId;
+  const r = await query(
+    `INSERT INTO movatak_whatsapp_chats
+       (cliente_id, chat_id, telefone, nome, is_group, is_archived, is_pinned, is_muted,
+        unread_count, last_message_text, last_message_at, last_message_from_me, last_message_msg_id,
+        lead_id, raw_payload, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9,0),$10,$11,$12,$13,$14,$15::jsonb,NOW())
+     ON CONFLICT (cliente_id, chat_id) DO UPDATE SET
+        telefone = COALESCE(EXCLUDED.telefone, movatak_whatsapp_chats.telefone),
+        nome = COALESCE(NULLIF(EXCLUDED.nome,''), movatak_whatsapp_chats.nome),
+        is_group = EXCLUDED.is_group,
+        is_archived = EXCLUDED.is_archived,
+        is_pinned = EXCLUDED.is_pinned,
+        is_muted = EXCLUDED.is_muted,
+        unread_count = CASE WHEN $16 THEN EXCLUDED.unread_count ELSE movatak_whatsapp_chats.unread_count END,
+        last_message_text = COALESCE(EXCLUDED.last_message_text, movatak_whatsapp_chats.last_message_text),
+        last_message_at = COALESCE(EXCLUDED.last_message_at, movatak_whatsapp_chats.last_message_at),
+        last_message_from_me = COALESCE(EXCLUDED.last_message_from_me, movatak_whatsapp_chats.last_message_from_me),
+        last_message_msg_id = COALESCE(EXCLUDED.last_message_msg_id, movatak_whatsapp_chats.last_message_msg_id),
+        lead_id = COALESCE(EXCLUDED.lead_id, movatak_whatsapp_chats.lead_id),
+        raw_payload = CASE WHEN EXCLUDED.raw_payload <> '{}'::jsonb THEN EXCLUDED.raw_payload ELSE movatak_whatsapp_chats.raw_payload END,
+        updated_at = NOW()
+     RETURNING *`,
+    [
+      cliente.id, chatId, telefone || null, nome || chatId, !!info.isGroup, !!info.isArchived, !!info.isPinned, !!info.isMuted,
+      unreadCount, lastText, lastAt, !!info.lastMessageFromMe, info.lastMessageMsgId || null, leadId,
+      JSON.stringify(rawPayload || {}), unreadKnown
+    ]
+  ).catch(e => { console.error('[whatsapp_chats][upsert]', e.message); return { rows: [] }; });
+  return r.rows[0] || null;
+}
+
+async function atualizarWhatsappChatPorLead(leadId, patch = {}) {
+  if (!leadId) return;
+  const sets = [];
+  const vals = [];
+  let i = 1;
+  const add = (sql, val) => { sets.push(sql.replace(/\?/g, '$' + i)); vals.push(val); i++; };
+  if (patch.unreadCount != null) add('unread_count=?', Math.max(0, parseInt(patch.unreadCount || 0, 10) || 0));
+  if (patch.lastMessageText !== undefined) add('last_message_text=?', patch.lastMessageText || null);
+  if (patch.lastMessageAt !== undefined) add('last_message_at=?', patch.lastMessageAt || null);
+  if (patch.lastMessageFromMe !== undefined) add('last_message_from_me=?', !!patch.lastMessageFromMe);
+  if (patch.lastMessageMsgId !== undefined) add('last_message_msg_id=?', patch.lastMessageMsgId || null);
+  if (!sets.length) return;
+  vals.push(leadId);
+  await query(`UPDATE movatak_whatsapp_chats SET ${sets.join(', ')}, updated_at=NOW() WHERE lead_id=$${i}`, vals).catch(() => null);
+}
+
 async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
-  const chatLid = ch.chatLid || ch.lid || (String(ch.id || '').includes('@lid') ? ch.id : null) || null;
-  let lead = await localizarLeadPorPayload(cliente.id, telefone, chatLid, false);
-  const nome = extrairNomeChatZapi(ch, telefone);
+  const ehGrupo = chatZapiEhGrupo(ch);
+  const grupoId = ehGrupo ? extrairGrupoIdChatZapi(ch) : null;
+  const chatLid = grupoId || ch.chatLid || ch.lid || (String(ch.id || '').includes('@lid') ? ch.id : null) || null;
+  const identificador = grupoId || telefone;
+  let lead = await localizarLeadPorPayload(cliente.id, identificador, chatLid, false);
+  const nome = extrairNomeChatZapi(ch, identificador);
   if (lead) {
     await query(
       `UPDATE movatak_leads
           SET nome = COALESCE(NULLIF($1,''), nome),
               telefone = COALESCE(NULLIF($2,''), telefone),
               chat_lid = COALESCE($3, chat_lid),
+              origem = CASE WHEN $5 THEN COALESCE(origem, 'whatsapp_group') ELSE origem END,
               atualizado_em = NOW()
         WHERE id = $4`,
-      [nome || null, telefone || null, chatLid, lead.id]
+      [nome || null, identificador || null, chatLid, lead.id, ehGrupo]
     ).catch(() => null);
     return { lead, criado: false };
   }
@@ -5693,9 +6001,9 @@ async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
   try {
     novo = await query(
       `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, chat_lid, nao_lida, criado_em, atualizado_em)
-       VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,false,NOW(),NOW())
+       VALUES ($1,$2,$3,'lead',$5,$4,false,NOW(),NOW())
        RETURNING *`,
-      [cliente.id, nome || telefone, telefone, chatLid]
+      [cliente.id, nome || identificador, identificador, chatLid, ehGrupo ? 'whatsapp_group' : 'whatsapp_sync']
     );
   } catch (e) {
     // Fallback cirúrgico para bancos que ainda não receberam a coluna origem.
@@ -5705,7 +6013,7 @@ async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
         `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, chat_lid, nao_lida, criado_em, atualizado_em)
          VALUES ($1,$2,$3,'lead',$4,false,NOW(),NOW())
          RETURNING *`,
-        [cliente.id, nome || telefone, telefone, chatLid]
+        [cliente.id, nome || identificador, identificador, chatLid]
       );
     } else {
       throw e;
@@ -5765,21 +6073,56 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
   let criados = 0, atualizados = 0, mensagensCriadas = 0, marcadosNaoLidos = 0, ignorados = 0, semTelefone = 0;
   const amostrasSemTelefone = [];
   for (const ch of chats) {
-    if (!ch || chatZapiEhGrupo(ch)) { ignorados++; continue; }
-    const telefone = extrairTelefoneChatZapi(ch, cliente);
-    if (!telefone) {
+    if (!ch) { ignorados++; continue; }
+    const ehGrupoChat = chatZapiEhGrupo(ch);
+    const telefoneExtraido = ehGrupoChat ? extrairGrupoIdChatZapi(ch) : extrairTelefoneChatZapi(ch, cliente);
+    const chatId = extrairChatIdChatZapi(ch, cliente) || telefoneExtraido;
+    if (!chatId) {
       semTelefone++;
       if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch));
       continue;
     }
-
-    const { lead, criado } = await garantirLeadParaChatWhatsapp(cliente, ch, telefone);
-    if (criado) criados++; else atualizados++;
+    if (!telefoneExtraido && !ehGrupoChat) {
+      semTelefone++;
+      if (amostrasSemTelefone.length < 5) amostrasSemTelefone.push(resumirChatSemTelefone(ch));
+    }
+    const telefone = telefoneExtraido || chatId;
 
     const ultima = extrairUltimaMensagemChatZapi(ch);
     const unreadConhecido = chatZapiTemEstadoUnreadConhecido(ch);
     const unreadCount = extrairUnreadCountChatZapi(ch);
     const temNaoLida = chatZapiTemNaoLida(ch);
+
+    let lead = null, criado = false;
+    try {
+      const rLead = await garantirLeadParaChatWhatsapp(cliente, ch, telefone);
+      lead = rLead.lead;
+      criado = rLead.criado;
+      if (criado) criados++; else atualizados++;
+    } catch (e) {
+      ignorados++;
+      console.error('[reconciliacao-chats][lead]', e.message);
+    }
+
+    await upsertWhatsappChat(cliente, {
+      chatId,
+      telefone: ehGrupoChat ? null : telefoneExtraido,
+      nome: extrairNomeChatZapi(ch, chatId),
+      isGroup: ehGrupoChat,
+      isArchived: extrairBoolChat(ch, ['archived','isArchived']),
+      isPinned: extrairBoolChat(ch, ['pinned','isPinned']),
+      isMuted: extrairBoolChat(ch, ['isMuted','muted']),
+      unreadKnown: unreadConhecido,
+      unreadCount: unreadConhecido ? (unreadCount || 0) : null,
+      lastMessageText: ultima.texto || (ultima.midiaTipo ? ultima.midiaTipo : null),
+      lastMessageAt: ultima.criadoEm || ch.lastMessageTime || ch.updatedAt || null,
+      lastMessageFromMe: ultima.direcao === 'saida',
+      lastMessageMsgId: ultima.msgId || null,
+      leadId: lead && lead.id,
+      rawPayload: ch
+    }).catch(() => null);
+
+    if (!lead) continue;
 
     await query(`UPDATE movatak_leads
                     SET whatsapp_unread_count = COALESCE($2, whatsapp_unread_count),
@@ -7679,6 +8022,30 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_unread_sync_em TIMESTAMPTZ`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_last_chat JSONB DEFAULT '{}'::jsonb`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_last_msg_em TIMESTAMPTZ`).catch(() => null);
+  await query(`CREATE TABLE IF NOT EXISTS movatak_whatsapp_chats (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    chat_id TEXT NOT NULL,
+    telefone TEXT,
+    nome TEXT,
+    is_group BOOLEAN DEFAULT false,
+    is_archived BOOLEAN DEFAULT false,
+    is_pinned BOOLEAN DEFAULT false,
+    is_muted BOOLEAN DEFAULT false,
+    unread_count INTEGER DEFAULT 0,
+    last_message_text TEXT,
+    last_message_at TIMESTAMPTZ,
+    last_message_from_me BOOLEAN DEFAULT false,
+    last_message_msg_id TEXT,
+    lead_id INTEGER,
+    raw_payload JSONB DEFAULT '{}'::jsonb,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(cliente_id, chat_id)
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_cliente_last ON movatak_whatsapp_chats(cliente_id, is_pinned DESC, last_message_at DESC NULLS LAST, updated_at DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_unread ON movatak_whatsapp_chats(cliente_id, unread_count) WHERE unread_count > 0`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_whatsapp_chats_lead ON movatak_whatsapp_chats(lead_id)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_unread ON movatak_conversas(lead_id, criado_em DESC) WHERE direcao='entrada' AND lida_em IS NULL`).catch(() => null);
   // Migração segura: ao criar lida_em em bancos antigos, não transforme todo
@@ -7761,11 +8128,43 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   // - entrada do cliente => fica não lida;
   // - saída do vendedor/painel/WhatsApp Web => limpa o não lido.
   // Isso evita que mensagens enviadas pelo próprio WhatsApp Web apareçam como novas.
+  const agoraIso = new Date().toISOString();
   if (direcao === 'entrada') {
     query(`UPDATE movatak_leads SET nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
+    atualizarWhatsappChatPorLead(leadId, { unreadCount: 1, lastMessageText: conteudo || midiaTipo || '', lastMessageAt: agoraIso, lastMessageFromMe: false, lastMessageMsgId: msgId || null }).catch(() => null);
   } else if (direcao === 'saida') {
     query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
+    atualizarWhatsappChatPorLead(leadId, { unreadCount: 0, lastMessageText: conteudo || midiaTipo || '', lastMessageAt: agoraIso, lastMessageFromMe: true, lastMessageMsgId: msgId || null }).catch(() => null);
   }
+
+  // Também faz UPSERT no espelho real do Inbox. Se o chat ainda não existia na
+  // movatak_whatsapp_chats (ex.: mensagem nova chegou antes da reconciliação), ele
+  // passa a aparecer imediatamente no Inbox, igual ao WhatsApp.
+  try {
+    const rLead = await query(`SELECT l.id, l.nome, l.telefone, l.chat_lid, l.origem, c.id AS cliente_id, c.nome AS cliente_nome
+           FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id
+          WHERE l.id=$1 LIMIT 1`, [leadId]);
+    const l = rLead.rows[0];
+    if (l) {
+      const chatId = normalizarChatIdWhatsapp(l.chat_lid || l.telefone);
+      if (chatId) {
+        await upsertWhatsappChat({ id: clienteId, nome: l.cliente_nome }, {
+          chatId,
+          telefone: String(chatId).includes('@g.us') ? null : l.telefone,
+          nome: l.nome || chatId,
+          isGroup: String(chatId).includes('@g.us') || String(l.origem || '').includes('whatsapp_group'),
+          unreadKnown: true,
+          unreadCount: direcao === 'entrada' ? 1 : 0,
+          lastMessageText: conteudo || midiaTipo || '',
+          lastMessageAt: agoraIso,
+          lastMessageFromMe: direcao === 'saida',
+          lastMessageMsgId: msgId || null,
+          leadId,
+          rawPayload: { origem: 'registrarConversa' }
+        });
+      }
+    }
+  } catch (_) {}
 
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
   // sem precisar dar reload na tela.
@@ -8499,34 +8898,49 @@ app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res)
 
 async function carregarInboxCliente(clienteId, opts = {}) {
   await garantirEstruturaConversas();
-  const limit = Math.max(50, Math.min(parseInt(opts.limit || 1500, 10) || 1500, 5000));
+  const limit = Math.max(50, Math.min(parseInt(opts.limit || 2000, 10) || 2000, 5000));
   const params = [clienteId];
   let filtroEscopo = '';
   if (Array.isArray(opts.setorIds) && opts.setorIds.length) {
     const ids = opts.setorIds.map(Number).filter(Number.isFinite);
     if (ids.length) {
       const ph = ids.map((_, i) => '$' + (i + 2)).join(',');
-      filtroEscopo = ` AND (l.setor_id IN (${ph}) OR l.setor_id IS NULL)`;
+      // Segurança para vendedor: chat sem lead ainda aparece se não estiver atribuído a outro setor.
+      filtroEscopo = ` AND (l.id IS NULL OR l.setor_id IN (${ph}) OR l.setor_id IS NULL)`;
       params.push(...ids);
     }
   }
   params.push(limit);
   const limitParam = '$' + params.length;
   const r = await query(
-    `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-            COALESCE(l.arquivado,false) AS arquivado,
+    `SELECT COALESCE(l.id, wc.lead_id) AS id,
+            wc.id AS whatsapp_chat_row_id,
+            wc.chat_id,
+            wc.nome AS whatsapp_chat_nome,
+            wc.telefone AS whatsapp_chat_telefone,
+            wc.is_group,
+            wc.is_archived AS whatsapp_is_archived,
+            wc.is_pinned,
+            wc.is_muted,
+            wc.unread_count AS whatsapp_unread_count,
+            COALESCE(l.nome, wc.nome, wc.chat_id) AS nome,
+            COALESCE(l.telefone, wc.telefone, wc.chat_id) AS telefone,
+            l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+            (COALESCE(l.arquivado,false) OR COALESCE(wc.is_archived,false)) AS arquivado,
             s.nome AS setor_nome, s.cor AS setor_cor,
             fc.nome AS funil_coluna_nome, fc.cor AS funil_coluna_cor,
             v.nome AS vendedor_nome,
-            l.criado_em, l.atualizado_em, l.convertido_em,
-            ult.conteudo AS ultima_msg,
-            ult.direcao AS ultima_msg_direcao,
-            COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) AS ultima_msg_em,
-            (COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0 OR COALESCE(l.whatsapp_unread_count,0) > 0) AS nao_lida,
-            GREATEST(COALESCE(nl.nao_lidas,0), COALESCE(l.whatsapp_unread_count,0))::int AS nao_lidas_count,
-            COALESCE(l.whatsapp_unread_count,0)::int AS whatsapp_unread_count,
+            COALESCE(l.criado_em, wc.criado_em) AS criado_em,
+            COALESCE(l.atualizado_em, wc.updated_at) AS atualizado_em,
+            l.convertido_em,
+            COALESCE(wc.last_message_text, ult.conteudo) AS ultima_msg,
+            CASE WHEN wc.last_message_from_me THEN 'saida' ELSE COALESCE(ult.direcao, 'entrada') END AS ultima_msg_direcao,
+            COALESCE(wc.last_message_at, ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, wc.updated_at, wc.criado_em) AS ultima_msg_em,
+            (COALESCE(wc.unread_count,0) > 0 OR COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0) AS nao_lida,
+            GREATEST(COALESCE(wc.unread_count,0), COALESCE(nl.nao_lidas,0), CASE WHEN COALESCE(l.nao_lida,false) THEN 1 ELSE 0 END)::int AS nao_lidas_count,
             l.whatsapp_unread_sync_em
-       FROM movatak_leads l
+       FROM movatak_whatsapp_chats wc
+       LEFT JOIN movatak_leads l ON l.id = wc.lead_id OR (l.cliente_id = wc.cliente_id AND l.chat_lid = wc.chat_id)
        LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
        LEFT JOIN movatak_setores s ON s.id = l.setor_id
        LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
@@ -8538,8 +8952,10 @@ async function carregarInboxCliente(clienteId, opts = {}) {
          SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
           WHERE c.lead_id = l.id AND c.direcao='entrada' AND c.lida_em IS NULL
        ) nl ON true
-      WHERE l.cliente_id=$1${filtroEscopo}
-      ORDER BY COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) DESC NULLS LAST, l.id DESC
+      WHERE wc.cliente_id=$1${filtroEscopo}
+      ORDER BY COALESCE(wc.is_pinned,false) DESC,
+               COALESCE(wc.last_message_at, ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, wc.updated_at, wc.criado_em) DESC NULLS LAST,
+               wc.id DESC
       LIMIT ${limitParam}`,
     params
   );
