@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.6-migracoes-no-boot';
+const MOVATAK_VERSION = 'v2.7.7-indices-performance';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -8710,6 +8710,25 @@ app.use((err, req, res, next) => {
 // executando dezenas de DDLs (CREATE/ALTER/INDEX) a cada requisição. Agora
 // concentramos tudo aqui. As tabelas existem antes do servidor aceitar tráfego.
 // ============================================================
+// Índices de performance (Bloco 6, rodada 2). Aditivos e idempotentes — só aceleram
+// queries, não alteram dados. Criados CONCURRENTLY não dá em migração de boot simples,
+// então usamos IF NOT EXISTS comum (rápido em tabelas que ainda não têm o índice).
+async function garantirIndices() {
+  // lead_eventos: tabela de auditoria que mais cresce. Toda consulta de histórico
+  // filtra por lead_id e ordena por criado_em desc.
+  await query(`CREATE INDEX IF NOT EXISTS idx_lead_eventos_lead_criado ON movatak_lead_eventos(lead_id, criado_em DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_lead_eventos_cliente ON movatak_lead_eventos(cliente_id)`).catch(() => null);
+  // followup: filtrado por lead_id (operações) e por status='pendente' (o cron de disparo).
+  await query(`CREATE INDEX IF NOT EXISTS idx_followup_lead_status ON movatak_followup(lead_id, status)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_followup_pendente ON movatak_followup(status) WHERE status='pendente'`).catch(() => null);
+  // conversas: além de lead_id (já indexado), buscas por cliente_id em alguns pontos.
+  await query(`CREATE INDEX IF NOT EXISTS idx_conversas_cliente ON movatak_conversas(cliente_id)`).catch(() => null);
+  // leads: índice por vendedor_id para o filtro de leads atribuídos a um vendedor.
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_vendedor ON movatak_leads(vendedor_id)`).catch(() => null);
+  // leads: cliente_id isolado, para contagens/agregações que não usam setor.
+  await query(`CREATE INDEX IF NOT EXISTS idx_leads_cliente_atualizado ON movatak_leads(cliente_id, atualizado_em DESC)`).catch(() => null);
+}
+
 async function migrarTudo() {
   if (_migracoesProntas) return;
   const etapas = [
@@ -8721,7 +8740,8 @@ async function migrarTudo() {
     ['mensagens_rapidas', garantirEstruturaMensagensRapidas],
     ['campanhas_templates', garantirEstruturaCampanhasTemplates],
     ['planos', garantirEstruturaPlanos],
-    ['questionario', garantirEstruturaQuestionario]
+    ['questionario', garantirEstruturaQuestionario],
+    ['indices', garantirIndices]
   ];
   for (const [nome, fn] of etapas) {
     try { await fn(); }
