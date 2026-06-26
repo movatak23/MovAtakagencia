@@ -383,7 +383,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.1.6-conversao-data-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.1-vendedor-crm-admin-layout</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -600,43 +600,189 @@ function sair() {
 // ============================================================
 let _vendFunil = { colunas: [], leads: [], setores: [], leadAberto: null };
 
-function iniciarAppVendedor() {
+async function iniciarAppVendedor() {
   document.getElementById('login-screen').classList.add('hidden');
   document.getElementById('app').classList.add('visible');
   document.getElementById('login-err').textContent = '';
+
   const app = document.getElementById('app');
   const nomeVend = _vendedorInfo && _vendedorInfo.nome ? _vendedorInfo.nome : 'Vendedor';
   const cliente = _vendedorInfo && _vendedorInfo.cliente_nome ? _vendedorInfo.cliente_nome : '';
+  const clienteId = _vendedorInfo && _vendedorInfo.cliente_id ? Number(_vendedorInfo.cliente_id) : null;
+
   app.innerHTML = `
-    <header style="display:flex;align-items:center;justify-content:space-between;padding:10px 20px;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:10px">
+    <header>
+      <div class="header-left">
         <div class="header-logo">M</div>
         <div>
-          <div style="font-weight:800;font-size:15px">${escapeHtml(nomeVend)}</div>
-          <div style="font-size:11px;color:var(--text2)">${escapeHtml(cliente)} · Atendimento</div>
+          <div class="header-title">Funil de Atendimento</div>
+          <div class="header-sub">${escapeHtml(cliente || 'Cliente')} · Vendedor: ${escapeHtml(nomeVend)}</div>
         </div>
       </div>
-      <button class="btn-sair" onclick="sair()">Sair</button>
+      <div class="header-right">
+        <span id="header-status" style="font-size:12px;color:var(--text2)">Atualizado agora</span>
+        <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
+        <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
+        <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
+        <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+        <button class="btn-sair" onclick="sair()">Sair</button>
+      </div>
     </header>
-    <main class="funil-main-3col" style="height:calc(100vh - 50px);overflow:hidden">
+    <main class="funil-main-3col">
       <div class="funil-page funil-page-3col">
-        <div class="funil-3col-grid">
+        <div class="funil-layout-controls" id="funil-layout-controls">
+          <span class="layout-label">Visual:</span>
+          <button type="button" class="funil-layout-btn" id="layout-btn-inbox" onclick="toggleColunaFunil('inbox')" title="Mostrar/ocultar caixa de entrada">☰ Inbox</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-kanban" onclick="toggleColunaFunil('kanban')" title="Mostrar/ocultar funil">▦ Kanban</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-chat" onclick="toggleColunaFunil('chat')" title="Mostrar/ocultar conversa">💬 Chat</button>
+          <button type="button" class="funil-layout-btn" onclick="mostrarTodasColunasFunil()" title="Restaurar layout completo">Mostrar tudo</button>
+        </div>
+        <div class="funil-3col-grid" id="funil-layout-grid">
+          <!-- Coluna 1: Caixa de entrada (conversas) -->
           <div class="funil-inbox-col">
-            <div class="funil-inbox-head"><input id="vend-busca" type="text" placeholder="🔍 Buscar..." oninput="renderVendInbox()"></div>
-            <div id="vend-inbox-lista" class="funil-inbox-lista"><div class="state-row"><div class="spinner"></div>Carregando...</div></div>
+            <div class="funil-inbox-head">
+              <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
+            </div>
+            <div class="funil-inbox-filtros" id="funil-inbox-filtros"></div>
+            <div id="funil-inbox-lista" class="funil-inbox-lista">
+              <div class="state-row"><div class="spinner"></div>Carregando...</div>
+            </div>
           </div>
+
+          <!-- Coluna 2: Kanban (métricas + toolbar + abas de setor ficam aqui dentro) -->
           <div class="funil-kanban-col">
-            <div id="vend-setores-barra" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px"></div>
-            <div id="vend-board" class="funil-board"><div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div></div>
+            <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
+            <div class="funil-toolbar">
+              <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
+              <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
+              <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
+            </div>
+            <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0">
+              <span id="funil-lote-count" style="font-size:13px;color:var(--accent);font-weight:600"></span>
+              <button class="btn-save" style="padding:7px 14px;font-size:12px" onclick="abrirModalLote()">Enviar mensagem em lote</button>
+              <button class="btn-cancel" style="padding:7px 14px;font-size:12px" onclick="limparSelecaoLote()">Cancelar seleção</button>
+            </div>
+            <div id="funil-board" class="funil-board">
+              <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+            </div>
+            <div id="funil-vendedores-section" style="margin-top:20px;display:none">
+              <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Distribuição por Vendedor</div>
+              <div class="fu-hint" style="margin-bottom:10px">Leads atribuídos automaticamente ao final do fluxo. Arraste um lead para outro vendedor para reatribuir.</div>
+              <div id="funil-board-vendedores" class="funil-board"></div>
+            </div>
           </div>
-          <div class="funil-chat-col" id="vend-chat">
-            <div class="funil-chat-vazio" id="vend-chat-vazio"><div style="font-size:32px;margin-bottom:8px">💬</div><div>Selecione uma conversa.</div></div>
-            <div id="vend-chat-conteudo" style="display:none;flex-direction:column;height:100%"></div>
+
+          <!-- Coluna 3: Conversa do lead selecionado (sempre visível) -->
+          <div class="funil-chat-col" id="funil-painel">
+            <div id="funil-chat-vazio" class="funil-chat-vazio">
+              <div style="font-size:32px;margin-bottom:8px">💬</div>
+              <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
+            </div>
+            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+                <div>
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px"></div>
+                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
+                  <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
+                  <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
+                </div>
+              </div>
+              <div style="display:flex;border-bottom:1px solid #2a2f3d;flex-shrink:0">
+                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:#1c2030;border:none;color:#a0aec0;font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
+                  <div id="painel-conversa"><div style="font-size:12px;color:#666">Carregando conversa...</div></div>
+                </div>
+                <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
+                  <div style="font-size:11px;font-weight:700;color:#666;letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:#666">Carregando...</div></div>
+                </div>
+              </div>
+              <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
+                <div id="painel-reply-preview" style="display:none;margin-bottom:8px"></div>
+                <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
+                  <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
+                  <div id="painel-midia-el"></div>
+                </div>
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
+                  onpaste="painelColarArea(event)"
+                  ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
+                    📎
+                    <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                  </label>
+                  <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
+                    style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
+                  <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+                  <div style="position:relative">
+                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋ Recursos</button>
+                    <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Enviar recurso Z-API</div>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('document')">📄 Documento/PDF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('link')">🔗 Link com preview</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('location')">📍 Localização</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('contact')">👤 Contato</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('pix')">💠 Botão PIX</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('option_list')">☑️ Lista de opções</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('poll')">📊 Enquete</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('sticker')">🏷️ Sticker</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('gif')">🎞️ GIF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('ptv')">🎥 PTV</button>
+                      <div style="height:1px;background:var(--border);margin:8px 0"></div>
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Ações do chat</div>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('read')">✓ Marcar chat lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unread')">📩 Marcar não lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('pin')">📌 Fixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unpin')">↘ Desafixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('mute')">🔕 Mutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unmute')">🔔 Desmutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('archive')">🗄️ Arquivar no WhatsApp</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unarchive')">📂 Desarquivar no WhatsApp</button>
+                    </div>
+                  </div>
+                  <div class="quick-menu-wrap" id="quick-menu-painel">
+                    <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
+                    <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
+                  </div>
+                </div>
+                <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
+              </div>
+            </div>
           </div>
         </div>
+
+        <div id="funil-status"></div>
       </div>
     </main>`;
-  carregarFunilVendedor();
+
+  funilState = {
+    clienteId,
+    clienteNome: cliente,
+    colunas: [],
+    setores: [],
+    setorAtivo: null,
+    leads: [],
+    totalGeral: 0,
+    totalNaoLidas: 0,
+    filtroInbox: 'todos',
+    buscaInbox: '',
+    modoVendedor: true
+  };
+
+  restaurarLayoutFunil();
+  await carregarFunilAtendimento();
+  iniciarSocketFunil(clienteId);
 }
 
 async function carregarFunilVendedor() {
@@ -849,13 +995,55 @@ if (_vendTokenSalvo) {
 }
 
 // ── API ────────────────────────────────────────────────────
+// ── Rotas do vendedor: reaproveita a mesma tela do admin, mas redireciona
+// as chamadas para endpoints restritos pelo x-vendedor-token no backend.
+function adaptarPathVendedor(path) {
+  if (!_vendedorToken || !path) return path;
+  let p = String(path);
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil\/metricas(\?.*)?$/, '/movatak/vendedor/funil/metricas$1');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil\/colunas\/reordenar$/, '/movatak/vendedor/funil/colunas/reordenar');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil\/colunas$/, '/movatak/vendedor/funil/colunas');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil(\?.*)?$/, '/movatak/vendedor/funil$1');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/mensagens-rapidas$/, '/movatak/vendedor/mensagens-rapidas');
+  p = p.replace(/^\/movatak\/admin\/mensagens-rapidas\/([^/]+)(\/usar)?$/, '/movatak/vendedor/mensagens-rapidas/$1$2');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/questionario-templates$/, '/movatak/vendedor/questionario-templates');
+  p = p.replace(/^\/movatak\/admin\/questionario-templates\/([^/]+)$/, '/movatak/vendedor/questionario-templates/$1');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/agendamentos(\?.*)?$/, '/movatak/vendedor/agendamentos$1');
+  p = p.replace(/^\/movatak\/admin\/agendamentos\/([^/]+)(\/status)?$/, '/movatak/vendedor/agendamentos/$1$2');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/conversas$/, '/movatak/vendedor/leads/$1/conversas');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/historico$/, '/movatak/vendedor/leads/$1/historico');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/marcar-lida$/, '/movatak/vendedor/leads/$1/marcar-lida');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/arquivar$/, '/movatak/vendedor/leads/$1/arquivar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/cliente$/, '/movatak/vendedor/leads/$1/cliente');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/descartar$/, '/movatak/vendedor/leads/$1/descartar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/followup\/pausar$/, '/movatak/vendedor/leads/$1/followup/pausar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/followup\/reativar$/, '/movatak/vendedor/leads/$1/followup/reativar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/iniciar-autoatendimento$/, '/movatak/vendedor/leads/$1/iniciar-autoatendimento');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)$/, '/movatak/vendedor/leads/$1');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/funil$/, '/movatak/vendedor/leads/$1/coluna');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/setor$/, '/movatak/vendedor/leads/$1/setor');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/mensagem-kanban$/, '/movatak/vendedor/leads/$1/mensagem-kanban');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/mensagem-rapida$/, '/movatak/vendedor/leads/$1/mensagem-rapida');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/reativar-followup$/, '/movatak/vendedor/leads/$1/reativar-followup');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/zapi\/chat-action$/, '/movatak/vendedor/leads/$1/zapi/chat-action');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/zapi\/send-advanced$/, '/movatak/vendedor/leads/$1/zapi/send-advanced');
+  p = p.replace(/^\/movatak\/admin\/conversas\/([^/]+)(\/reagir|\/encaminhar|\/marcar-lida-zap|\/editar)?$/, '/movatak/vendedor/conversas/$1$2');
+  p = p.replace(/^\/movatak\/admin\/upload-imagem$/, '/movatak/vendedor/upload-imagem');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)\/setor$/, '/movatak/vendedor/funil/colunas/$1/setor');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)\/ausencia$/, '/movatak/vendedor/funil/colunas/$1/ausencia');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)\/sincronizar-whatsapp$/, '/movatak/vendedor/funil/colunas/$1/sincronizar-whatsapp');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)$/, '/movatak/vendedor/funil/colunas/$1');
+  return p;
+}
+
 async function api(path, opts = {}, raw = false) {
   // Headers de auth: se estamos logados como vendedor, manda o token do vendedor;
   // senão, a secret do gestor. (raw=true evita o auto-logout em 401, usado no login.)
   const authHeaders = _vendedorToken
     ? { 'x-vendedor-token': _vendedorToken }
     : { 'x-movatak-secret': secret };
-  const res = await fetch(API_BASE + path, {
+  const pathFinal = adaptarPathVendedor(path);
+  const res = await fetch(API_BASE + pathFinal, {
     ...opts,
     headers: {
       'Content-Type': 'application/json',
@@ -4374,8 +4562,9 @@ function abrirWhatsLead(telefone) {
 }
 
 function ehPaginaFunilAtendimento() {
-  try { return new URLSearchParams(window.location.search).get('funil') === '1'; }
-  catch(e) { return false; }
+  try {
+    return new URLSearchParams(window.location.search).get('funil') === '1' || (!!_vendedorToken && !!document.getElementById('funil-board'));
+  } catch(e) { return false; }
 }
 
 // ── Tempo real (Socket.io) ──────────────────────────────────
@@ -4396,10 +4585,10 @@ function agendarReloadKanban() {
 
 function iniciarSocketFunil(clienteId) {
   if (typeof io === 'undefined') return; // CDN não carregou; segue com polling
-  if (!secret || !clienteId) return;
+  if ((!secret && !_vendedorToken) || !clienteId) return;
   try {
     if (_socketFunil) { _socketFunil.disconnect(); }
-    _socketFunil = io(API_BASE, { auth: { secret: secret }, transports: ['websocket', 'polling'] });
+    _socketFunil = io(API_BASE, { auth: { secret: secret || null, vendedorToken: _vendedorToken || null }, transports: ['websocket', 'polling'] });
 
     _socketFunil.on('connect', () => {
       _socketFunil.emit('entrar-cliente', clienteId);
@@ -5307,8 +5496,8 @@ function renderBarraSetores() {
     '<span style="font-size:12px;color:var(--text2);margin-right:2px">Setor:</span>' +
     btn(null, 'Todos', null, funilState.totalGeral, funilState.totalNaoLidas) +
     setores.map(s => btn(s.id, s.nome, s.cor, s.leads_count, s.nao_lidas)).join('') +
-    `<button onclick="abrirGerenciarSetores()" title="Criar, editar ou excluir setores"
-      style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">⚙ Gerenciar setores</button>`;
+    (_vendedorToken ? '' : `<button onclick="abrirGerenciarSetores()" title="Criar, editar ou excluir setores"
+      style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">⚙ Gerenciar setores</button>`);
 }
 
 function selecionarSetorFunil(setorId) {
