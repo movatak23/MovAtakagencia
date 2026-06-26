@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.8-senhas-scrypt';
+const MOVATAK_VERSION = 'v2.7.9-whatsapp-inbox-exato';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1409,8 +1409,9 @@ cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/
 
 // Reconciliação opcional WhatsApp → CRM. Para ativar no Railway:
 // MOVATAK_RECONCILIAR_CHATS_CRON=true
-// Mantém desligado por padrão para não aumentar consumo/limite da Z-API sem decisão operacional.
-cron.schedule('*/10 * * * *', async () => {
+// Para sincronismo próximo ao WhatsApp Web, roda a cada 1 minuto quando ativado.
+// Se a Z-API impor limite, reduza MOVATAK_RECONCILIAR_CHATS_MAX.
+cron.schedule('*/1 * * * *', async () => {
   if (String(process.env.MOVATAK_RECONCILIAR_CHATS_CRON || '').toLowerCase() !== 'true') return;
   try {
     const clientes = await query(`SELECT id FROM movatak_clientes WHERE ativo=true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL AND zapi_client_token IS NOT NULL ORDER BY id ASC LIMIT 50`, []);
@@ -2185,24 +2186,13 @@ app.patch('/movatak/admin/leads/:id/marcar-lida', authMovatak, async (req, res) 
   try {
     await garantirEstruturaConversas();
     const naoLida = !!(req.body && req.body.nao_lida);
-    if (naoLida) {
-      // Marca como não lida de propósito: reabre a última mensagem de entrada.
-      await query(`UPDATE movatak_conversas
-                      SET lida_em = NULL, lida_por = NULL
-                    WHERE id = (
-                      SELECT id FROM movatak_conversas
-                       WHERE lead_id = $1 AND direcao = 'entrada'
-                       ORDER BY criado_em DESC LIMIT 1
-                    )`, [req.params.id]).catch(() => null);
-    } else {
-      await query(`UPDATE movatak_conversas
-                      SET lida_em = COALESCE(lida_em, NOW()), lida_por = COALESCE(lida_por, 'admin')
-                    WHERE lead_id = $1 AND direcao = 'entrada' AND lida_em IS NULL`, [req.params.id]).catch(() => null);
-    }
-    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, req.params.id]);
-    res.json({ ok: true, nao_lida: naoLida });
+    const lead = await obterLeadComZapi(req.params.id);
+    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const r = await aplicarEstadoLeituraLead(lead, naoLida, 'admin', { syncZap: true });
+    await registrarEventoLead(lead.id, lead.cliente_id, naoLida ? 'whatsapp_marcado_nao_lido' : 'whatsapp_marcado_lido', naoLida ? 'Chat marcado como não lido no CRM e WhatsApp' : 'Chat marcado como lido no CRM e WhatsApp', { origem: 'admin' }).catch(() => null);
+    res.json(r);
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.response?.data?.message || e.message });
   }
 });
 
@@ -4139,7 +4129,8 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       totalNaoLidas,
       nicho: clienteInfo.nicho || null,
       agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leadsRes.rows
+      leads: leadsRes.rows,
+      inbox: await carregarInboxCliente(clienteId, { setorIds, limit: 2000 })
     });
   } catch (e) {
     console.error('[vendedor/funil]', e.message);
@@ -4326,25 +4317,15 @@ async function vendedorPodeColuna(req, colunaId) {
 app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, res) => {
   try {
     await garantirEstruturaConversas();
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    const leadBase = await vendedorPodeLead(req, req.params.id);
+    if (!leadBase) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    const z = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [leadBase.cliente_id]);
+    const lead = { ...leadBase, ...(z.rows[0] || {}) };
     const naoLida = !!(req.body && req.body.nao_lida);
-    if (naoLida) {
-      await query(`UPDATE movatak_conversas
-                      SET lida_em = NULL, lida_por = NULL
-                    WHERE id = (
-                      SELECT id FROM movatak_conversas
-                       WHERE lead_id = $1 AND direcao = 'entrada'
-                       ORDER BY criado_em DESC LIMIT 1
-                    )`, [lead.id]).catch(() => null);
-    } else {
-      await query(`UPDATE movatak_conversas
-                      SET lida_em = COALESCE(lida_em, NOW()), lida_por = COALESCE(lida_por, 'vendedor')
-                    WHERE lead_id = $1 AND direcao = 'entrada' AND lida_em IS NULL`, [lead.id]).catch(() => null);
-    }
-    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, lead.id]);
-    res.json({ ok: true, nao_lida: naoLida });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const r = await aplicarEstadoLeituraLead(lead, naoLida, 'vendedor', { syncZap: true });
+    await registrarEventoLead(lead.id, lead.cliente_id, naoLida ? 'whatsapp_marcado_nao_lido' : 'whatsapp_marcado_lido', naoLida ? 'Chat marcado como não lido pelo vendedor no CRM e WhatsApp' : 'Chat marcado como lido pelo vendedor no CRM e WhatsApp', { vendedor_id: req.vendedor.id }).catch(() => null);
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });
 
 app.patch('/movatak/vendedor/leads/:id/arquivar', authVendedor, async (req, res) => {
@@ -4489,9 +4470,12 @@ app.post('/movatak/vendedor/leads/:id/zapi/chat-action', authVendedor, async (re
       data = resp.data || {};
       await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
     } else {
-      data = await zapiModificarChat(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, action);
-      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
-      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
+      const leadZap = { ...lead, ...c };
+      if (action === 'read') data = await zapiMarcarChatComoLido(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, await obterUltimaMensagemEntradaMsgId(lead.id));
+      else if (action === 'unread') data = await zapiMarcarChatComoNaoLido(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone);
+      else data = await zapiModificarChat(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, action);
+      if (action === 'read') await aplicarEstadoLeituraLead(leadZap, false, 'vendedor', { syncZap: false }).catch(() => null);
+      if (action === 'unread') await aplicarEstadoLeituraLead(leadZap, true, 'vendedor', { syncZap: false }).catch(() => null);
     }
     await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação de chat executada pelo vendedor', { action, vendedor_id: req.vendedor.id });
     res.json({ ok: true, data });
@@ -5331,9 +5315,11 @@ app.post('/movatak/admin/leads/:id/zapi/chat-action', authMovatak, async (req, r
       data = resp.data || {};
       await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
     } else {
-      data = await zapiModificarChat(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, action);
-      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
-      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
+      if (action === 'read') data = await zapiMarcarChatComoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, await obterUltimaMensagemEntradaMsgId(lead.id));
+      else if (action === 'unread') data = await zapiMarcarChatComoNaoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone);
+      else data = await zapiModificarChat(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, action);
+      if (action === 'read') await aplicarEstadoLeituraLead(lead, false, 'admin', { syncZap: false }).catch(() => null);
+      if (action === 'unread') await aplicarEstadoLeituraLead(lead, true, 'admin', { syncZap: false }).catch(() => null);
     }
     await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação aplicada no chat do WhatsApp', { action });
     res.json({ ok: true, data });
@@ -5444,9 +5430,78 @@ function extrairUltimaMensagemChatZapi(ch) {
   };
 }
 
+function extrairUnreadCountChatZapi(ch) {
+  const vals = [ch.unreadCount, ch.unreadMessages, ch.pendingMessages, ch.unread];
+  for (const v of vals) {
+    if (v === true) return 1;
+    if (v === false || v === null || v === undefined || v === '') continue;
+    const n = Number(v);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
+function chatZapiTemEstadoUnreadConhecido(ch) {
+  return ch && (
+    Object.prototype.hasOwnProperty.call(ch, 'unreadCount') ||
+    Object.prototype.hasOwnProperty.call(ch, 'unreadMessages') ||
+    Object.prototype.hasOwnProperty.call(ch, 'pendingMessages') ||
+    Object.prototype.hasOwnProperty.call(ch, 'unread') ||
+    Object.prototype.hasOwnProperty.call(ch, 'isUnread')
+  );
+}
+
 function chatZapiTemNaoLida(ch) {
-  const n = Number(ch.unreadCount ?? ch.unreadMessages ?? ch.unread ?? ch.pendingMessages ?? 0);
-  return !!(ch.unread === true || ch.isUnread === true || n > 0);
+  const n = extrairUnreadCountChatZapi(ch);
+  return !!(ch.unread === true || ch.isUnread === true || (n != null && n > 0));
+}
+
+async function obterUltimaMensagemEntradaMsgId(leadId) {
+  const r = await query(
+    `SELECT msg_id FROM movatak_conversas
+      WHERE lead_id=$1 AND direcao='entrada' AND msg_id IS NOT NULL
+      ORDER BY criado_em DESC LIMIT 1`,
+    [leadId]
+  ).catch(() => ({ rows: [] }));
+  return r.rows[0] ? r.rows[0].msg_id : null;
+}
+
+async function zapiMarcarChatComoLido(instance, token, clientToken, telefone, msgId = null) {
+  try {
+    return await zapiModificarChat(instance, token, clientToken, telefone, 'read');
+  } catch (e) {
+    if (!msgId) throw e;
+    return await zapiLerMensagem(instance, token, clientToken, telefone, msgId);
+  }
+}
+
+async function zapiMarcarChatComoNaoLido(instance, token, clientToken, telefone) {
+  try {
+    return await zapiMarcarNaoLido(instance, token, clientToken, telefone);
+  } catch (e) {
+    return await zapiModificarChat(instance, token, clientToken, telefone, 'unread');
+  }
+}
+
+async function aplicarEstadoLeituraLead(lead, naoLida, origem = 'crm', opts = {}) {
+  if (!lead || !lead.id) throw new Error('Lead inválido para sincronizar leitura.');
+  const syncZap = opts.syncZap !== false;
+  let zapiData = null;
+  if (syncZap) {
+    if (!lead.zapi_instance || !lead.zapi_token || !lead.zapi_client_token || !lead.telefone) {
+      throw new Error('Lead sem configuração Z-API/telefone para sincronizar leitura com WhatsApp.');
+    }
+    if (naoLida) zapiData = await zapiMarcarChatComoNaoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone);
+    else zapiData = await zapiMarcarChatComoLido(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, await obterUltimaMensagemEntradaMsgId(lead.id));
+  }
+  if (naoLida) {
+    await query(`UPDATE movatak_conversas SET lida_em=NULL, lida_por=NULL WHERE id=(SELECT id FROM movatak_conversas WHERE lead_id=$1 AND direcao='entrada' ORDER BY criado_em DESC LIMIT 1)`, [lead.id]).catch(() => null);
+    await query(`UPDATE movatak_leads SET nao_lida=true, whatsapp_unread_count=GREATEST(COALESCE(whatsapp_unread_count,0),1), whatsapp_unread_sync_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
+  } else {
+    await query(`UPDATE movatak_conversas SET lida_em=COALESCE(lida_em,NOW()), lida_por=COALESCE(lida_por,$2) WHERE lead_id=$1 AND direcao='entrada' AND lida_em IS NULL`, [lead.id, origem]).catch(() => null);
+    await query(`UPDATE movatak_leads SET nao_lida=false, whatsapp_unread_count=0, whatsapp_unread_sync_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
+  }
+  return { ok:true, nao_lida:!!naoLida, zapi:zapiData || null };
 }
 
 async function garantirLeadParaChatWhatsapp(cliente, ch, telefone) {
@@ -5499,7 +5554,16 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
     if (criado) criados++; else atualizados++;
 
     const ultima = extrairUltimaMensagemChatZapi(ch);
+    const unreadConhecido = chatZapiTemEstadoUnreadConhecido(ch);
+    const unreadCount = extrairUnreadCountChatZapi(ch);
     const temNaoLida = chatZapiTemNaoLida(ch);
+
+    await query(`UPDATE movatak_leads
+                    SET whatsapp_unread_count = COALESCE($2, whatsapp_unread_count),
+                        whatsapp_unread_sync_em = NOW(),
+                        whatsapp_last_chat = $3::jsonb,
+                        whatsapp_last_msg_em = COALESCE($4::timestamptz, whatsapp_last_msg_em)
+                  WHERE id=$1`, [lead.id, unreadConhecido ? (unreadCount || 0) : null, JSON.stringify(ch || {}), ultima.criadoEm || null]).catch(() => null);
 
     if (ultima.temMensagem) {
       const conversaId = await registrarConversa(
@@ -5520,17 +5584,18 @@ async function sincronizarChatsCliente(clienteId, opts = {}) {
       }
     }
 
-    // O WhatsApp/Z-API é usado como fonte de reconciliação para o badge: se a
-    // conversa está não lida lá, ela precisa aparecer no filtro "Não lidos" do CRM.
-    if (temNaoLida) {
-      await query(`UPDATE movatak_leads SET nao_lida=true, atualizado_em=NOW() WHERE id=$1`, [lead.id]).catch(() => null);
-      // Se não veio a mensagem completa na listagem de chats, pelo menos deixa o
-      // lead visível como não lido. Quando o webhook/abrir conversa trouxer o corpo,
-      // o histórico fica completo.
-      if (!ultima.temMensagem) {
-        await registrarEventoLead(lead.id, cliente.id, 'whatsapp_sync_unread_sem_corpo', 'Chat marcado como não lido pela Z-API, sem corpo da mensagem na listagem', { telefone }).catch(() => null);
+    // O WhatsApp/Z-API é usado como fonte de reconciliação do badge.
+    // Se o estado de leitura veio no payload, ele é soberano: lido no WhatsApp => lido no CRM;
+    // não lido no WhatsApp => não lido no CRM. Se a Z-API não enviar esse campo, preservamos
+    // o estado local para não apagar alerta por falta de informação.
+    if (unreadConhecido) {
+      await aplicarEstadoLeituraLead({ ...cliente, ...lead, id: lead.id, cliente_id: cliente.id }, !!temNaoLida, 'whatsapp_sync', { syncZap: false }).catch(() => null);
+      if (temNaoLida) {
+        if (!ultima.temMensagem) {
+          await registrarEventoLead(lead.id, cliente.id, 'whatsapp_sync_unread_sem_corpo', 'Chat marcado como não lido pela Z-API, sem corpo da mensagem na listagem', { telefone }).catch(() => null);
+        }
+        marcadosNaoLidos++;
       }
-      marcadosNaoLidos++;
     }
   }
 
@@ -7315,6 +7380,10 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS zapi_status_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS lida_em TIMESTAMPTZ`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS lida_por TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_unread_count INTEGER DEFAULT 0`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_unread_sync_em TIMESTAMPTZ`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_last_chat JSONB DEFAULT '{}'::jsonb`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS whatsapp_last_msg_em TIMESTAMPTZ`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_unread ON movatak_conversas(lead_id, criado_em DESC) WHERE direcao='entrada' AND lida_em IS NULL`).catch(() => null);
   // Migração segura: ao criar lida_em em bancos antigos, não transforme todo
@@ -8132,6 +8201,56 @@ app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+
+async function carregarInboxCliente(clienteId, opts = {}) {
+  await garantirEstruturaConversas();
+  const limit = Math.max(50, Math.min(parseInt(opts.limit || 1500, 10) || 1500, 5000));
+  const params = [clienteId];
+  let filtroEscopo = '';
+  if (Array.isArray(opts.setorIds) && opts.setorIds.length) {
+    const ids = opts.setorIds.map(Number).filter(Number.isFinite);
+    if (ids.length) {
+      const ph = ids.map((_, i) => '$' + (i + 2)).join(',');
+      filtroEscopo = ` AND (l.setor_id IN (${ph}) OR l.setor_id IS NULL)`;
+      params.push(...ids);
+    }
+  }
+  params.push(limit);
+  const limitParam = '$' + params.length;
+  const r = await query(
+    `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+            COALESCE(l.arquivado,false) AS arquivado,
+            s.nome AS setor_nome, s.cor AS setor_cor,
+            fc.nome AS funil_coluna_nome, fc.cor AS funil_coluna_cor,
+            v.nome AS vendedor_nome,
+            l.criado_em, l.atualizado_em, l.convertido_em,
+            ult.conteudo AS ultima_msg,
+            ult.direcao AS ultima_msg_direcao,
+            COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) AS ultima_msg_em,
+            (COALESCE(l.nao_lida,false) OR COALESCE(nl.nao_lidas,0) > 0 OR COALESCE(l.whatsapp_unread_count,0) > 0) AS nao_lida,
+            GREATEST(COALESCE(nl.nao_lidas,0), COALESCE(l.whatsapp_unread_count,0))::int AS nao_lidas_count,
+            COALESCE(l.whatsapp_unread_count,0)::int AS whatsapp_unread_count,
+            l.whatsapp_unread_sync_em
+       FROM movatak_leads l
+       LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+       LEFT JOIN movatak_setores s ON s.id = l.setor_id
+       LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
+       LEFT JOIN LATERAL (
+         SELECT conteudo, direcao, criado_em FROM movatak_conversas c
+          WHERE c.lead_id = l.id ORDER BY c.criado_em DESC LIMIT 1
+       ) ult ON true
+       LEFT JOIN LATERAL (
+         SELECT COUNT(*)::int AS nao_lidas FROM movatak_conversas c
+          WHERE c.lead_id = l.id AND c.direcao='entrada' AND c.lida_em IS NULL
+       ) nl ON true
+      WHERE l.cliente_id=$1${filtroEscopo}
+      ORDER BY COALESCE(ult.criado_em, l.whatsapp_last_msg_em, l.atualizado_em, l.criado_em) DESC NULLS LAST, l.id DESC
+      LIMIT ${limitParam}`,
+    params
+  );
+  return r.rows;
+}
+
 app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
@@ -8265,7 +8384,8 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       colunas, colunasVendedores,
       setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
       nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
+      leads: leads.rows, // lista da visão atual do Kanban
+      inbox: await carregarInboxCliente(clienteId, { limit: 2000 }) // Inbox estilo WhatsApp: independe da aba/setor/kanban
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
