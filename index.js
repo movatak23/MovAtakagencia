@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.5-seguranca-observabilidade';
+const MOVATAK_VERSION = 'v2.7.6-migracoes-no-boot';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -15,6 +15,10 @@ const { Server: SocketIOServer } = require('socket.io');
 
 const path = require('path');
 const app = express();
+
+// Flag global: true após migrarTudo() rodar no boot. As funções garantirEstrutura*
+// viram no-op depois disso, evitando DDL em cada request (Bloco 6).
+let _migracoesProntas = false;
 
 // ============================================================
 // Observabilidade (Bloco 8): request_id + logger estruturado.
@@ -235,6 +239,7 @@ async function query(sql, params) {
 
 // Garante colunas usadas pelo portal do cliente e permissões do cadastro.
 async function garantirColunasClientesPortal() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await query(`ALTER TABLE movatak_clientes
     ADD COLUMN IF NOT EXISTS permissoes_portal JSONB DEFAULT '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb,
     ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
@@ -250,6 +255,7 @@ async function garantirColunasClientesPortal() {
 // Garante colunas usadas pelo portal individual do vendedor.
 // Mantém compatibilidade quando o deploy sobe antes da migração completa.
 async function garantirColunasVendedoresPortal() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await query(`ALTER TABLE movatak_vendedores
     ADD COLUMN IF NOT EXISTS comando TEXT,
     ADD COLUMN IF NOT EXISTS email_acesso TEXT,
@@ -5670,6 +5676,7 @@ function erroEstruturaBanco(e) {
 }
 
 async function garantirEstruturaCampanhasTemplates() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   // Proteção contra migrações parciais no Railway. Mantém o painel funcionando
   // mesmo quando alguma versão anterior não criou todas as colunas.
   await query(`CREATE TABLE IF NOT EXISTS movatak_followup_templates (
@@ -5747,6 +5754,7 @@ async function garantirEstruturaCampanhasTemplates() {
 // Questionário consultivo — schema, motor e recomendação
 // ============================================================
 async function garantirEstruturaQuestionario() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await query(`ALTER TABLE movatak_clientes
     ADD COLUMN IF NOT EXISTS questionario_ativo BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS questionario_intro TEXT,
@@ -5809,6 +5817,7 @@ async function garantirEstruturaQuestionario() {
 }
 
 async function garantirEstruturaPlanos() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await query(`CREATE TABLE IF NOT EXISTS movatak_planos (
     id SERIAL PRIMARY KEY,
     cliente_id INTEGER NOT NULL,
@@ -7239,6 +7248,7 @@ app.delete('/movatak/admin/questionario-templates/:tid', authMovatak, async (req
 // API — Mensagens Rápidas (enviadas manualmente do Kanban)
 // ============================================================
 async function garantirEstruturaConversas() {
+  if (_migracoesProntas) return; // já migrado no boot — evita rodar DDL a cada request
   await query(`CREATE TABLE IF NOT EXISTS movatak_conversas (
     id SERIAL PRIMARY KEY,
     lead_id INTEGER NOT NULL,
@@ -7371,6 +7381,7 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
 }
 
 async function garantirEstruturaMensagensRapidas() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await query(`CREATE TABLE IF NOT EXISTS movatak_mensagens_rapidas (
     id SERIAL PRIMARY KEY,
     cliente_id INTEGER NOT NULL,
@@ -7634,6 +7645,7 @@ function extrairZapiTagId(payload) {
 }
 
 async function garantirEstruturaFunil() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await query(`CREATE TABLE IF NOT EXISTS movatak_funil_colunas (
     id SERIAL PRIMARY KEY,
     cliente_id INTEGER NOT NULL,
@@ -7822,6 +7834,7 @@ async function aplicarTemplateNichoCliente(clienteId, nicho, opts = {}) {
 }
 
 async function garantirEstruturaAgenda() {
+  if (_migracoesProntas) return; // já migrado no boot (Bloco 6)
   await garantirEstruturaFunil();
   await query(`CREATE TABLE IF NOT EXISTS movatak_agendamentos (
     id SERIAL PRIMARY KEY,
@@ -8692,10 +8705,35 @@ app.use((err, req, res, next) => {
 // ============================================================
 // Start
 // ============================================================
+// Migrações de schema — rodam UMA VEZ no boot, não a cada request (Bloco 6).
+// Antes, funções garantirEstrutura* eram chamadas dentro de rotas/webhooks,
+// executando dezenas de DDLs (CREATE/ALTER/INDEX) a cada requisição. Agora
+// concentramos tudo aqui. As tabelas existem antes do servidor aceitar tráfego.
+// ============================================================
+async function migrarTudo() {
+  if (_migracoesProntas) return;
+  const etapas = [
+    ['clientes_portal', garantirColunasClientesPortal],
+    ['vendedores_portal', garantirColunasVendedoresPortal],
+    ['funil', garantirEstruturaFunil],
+    ['conversas', garantirEstruturaConversas],
+    ['agenda', garantirEstruturaAgenda],
+    ['mensagens_rapidas', garantirEstruturaMensagensRapidas],
+    ['campanhas_templates', garantirEstruturaCampanhasTemplates],
+    ['planos', garantirEstruturaPlanos],
+    ['questionario', garantirEstruturaQuestionario]
+  ];
+  for (const [nome, fn] of etapas) {
+    try { await fn(); }
+    catch (e) { logEstruturado('error', 'migracao_falha', { etapa: nome, msg: e.message }); }
+  }
+  _migracoesProntas = true;
+  logEstruturado('info', 'migracoes_ok', { total: etapas.length });
+}
+
+// ============================================================
 const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
   console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
-  garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
-  garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
-  garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
+  await migrarTudo();
 });
