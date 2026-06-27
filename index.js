@@ -642,6 +642,58 @@ async function localizarCampanhaPorGatilho(clienteId, texto) {
   }
 }
 
+// Fallback por IA: quando o casamento literal de gatilho falha, a IA lê a
+// mensagem do tráfego e tenta encaixá-la em UMA das campanhas cadastradas.
+// Nunca cria fluxo novo — só escolhe entre as campanhas existentes. Se não
+// tiver certeza, retorna null (cai para humano/geral, como hoje).
+async function localizarCampanhaPorIA(clienteId, texto) {
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) return null;
+    const msg = String(texto || '').trim();
+    if (msg.length < 3) return null;
+
+    const r = await query(
+      `SELECT c.id, c.nome, c.gatilho, c.template_id
+         FROM movatak_campanhas c
+        WHERE c.cliente_id = $1 AND c.ativo = true AND c.excluida_em IS NULL
+          AND c.gatilho IS NOT NULL AND TRIM(c.gatilho) <> ''`,
+      [clienteId]
+    );
+    const campanhas = r.rows || [];
+    if (!campanhas.length) return null;
+
+    const lista = campanhas.map((c, i) => `${i + 1}. ${c.nome} — palavras/tema: "${c.gatilho}"`).join('\n');
+    const systemPrompt =
+      `Você classifica a mensagem inicial de um lead que chegou pelo WhatsApp (geralmente vinda de um anúncio) ` +
+      `em UMA das campanhas cadastradas. Responda APENAS com o NÚMERO da campanha que melhor corresponde à intenção do lead. ` +
+      `Se nenhuma corresponder com clareza, ou se ficar em dúvida, responda APENAS "0". ` +
+      `Não explique. Não invente. Só o número.\n\nCAMPANHAS:\n${lista}`;
+    const userPrompt = `MENSAGEM DO LEAD:\n"${msg}"\n\nNúmero da campanha (ou 0):`;
+
+    const resposta = await chamarHaiku(systemPrompt, userPrompt);
+    const num = parseInt(String(resposta || '').replace(/[^0-9]/g, ''), 10);
+    if (!num || num < 1 || num > campanhas.length) return null; // 0 = sem certeza → humano
+
+    const escolhida = campanhas[num - 1];
+    // Recarrega a campanha completa (com dados do template) no mesmo formato do gatilho.
+    const full = await query(
+      `SELECT c.*, t.followup_v2 AS template_followup_v2, t.boas_vindas_msg AS template_boas_vindas_msg, t.comandos AS template_comandos, t.nome AS template_nome
+         FROM movatak_campanhas c
+         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id AND t.ativo = true
+        WHERE c.id = $1`,
+      [escolhida.id]
+    );
+    if (full.rows.length) {
+      console.log('[IA-ROUTE] lead encaixado por IA na campanha "' + escolhida.nome + '" (id ' + escolhida.id + ')');
+      return full.rows[0];
+    }
+    return null;
+  } catch (e) {
+    console.error('[IA-ROUTE] erro:', e.message);
+    return null; // qualquer falha → comportamento atual (humano/geral)
+  }
+}
+
 function followupDataDaLinha(row) {
   return row.template_followup_v2 || row.followup_msgs_v2 || {};
 }
@@ -3495,7 +3547,18 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
     // Calcula o gatilho antes de tratar lead existente.
     // Assim, se a mesma pessoa clicar no anúncio novamente, conseguimos reativar o FU1.
-    const campanhaDetectada = await localizarCampanhaPorGatilho(cliente.id, texto);
+    let campanhaDetectada = await localizarCampanhaPorGatilho(cliente.id, texto);
+    // Fallback por IA: se o gatilho literal não casou, e existe alguma coluna com
+    // IA ativa neste cliente, deixa a IA tentar encaixar a mensagem numa campanha.
+    if (!campanhaDetectada) {
+      const temIA = await query(
+        `SELECT 1 FROM movatak_funil_colunas WHERE cliente_id=$1 AND ia_ativa=true AND ativo=true LIMIT 1`,
+        [cliente.id]
+      ).catch(() => ({ rows: [] }));
+      if (temIA.rows.length) {
+        campanhaDetectada = await localizarCampanhaPorIA(cliente.id, texto);
+      }
+    }
     const msg = normalizarGatilho(texto);
     const trigger = normalizarGatilho(campanhaDetectada ? campanhaDetectada.gatilho : cliente.trigger_msg);
     const triggerOk = !!campanhaDetectada || textoBateGatilho(texto, cliente.trigger_msg);
@@ -3961,7 +4024,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
 
     const colunasRes = await query(
       `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp,
-              zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa,
+              zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, ia_ativa,
               nicho_template, agenda_tipo, agenda_status
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true AND setor_id IN (${ph})
@@ -7556,6 +7619,7 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS comando TEXT,
     ADD COLUMN IF NOT EXISTS setor_id INTEGER,
     ADD COLUMN IF NOT EXISTS ausencia_ativa BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS ia_ativa BOOLEAN DEFAULT false,
     ADD COLUMN IF NOT EXISTS nicho_template TEXT,
     ADD COLUMN IF NOT EXISTS agenda_tipo TEXT,
     ADD COLUMN IF NOT EXISTS agenda_status TEXT,
@@ -8132,7 +8196,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatak, async (req, res) => {
       filtroColunaSetorSql = ' AND setor_id = $2';
     }
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, nicho_template, agenda_tipo, agenda_status
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, ia_ativa, nicho_template, agenda_tipo, agenda_status
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
         ORDER BY ordem ASC, id ASC`,
@@ -8476,6 +8540,18 @@ app.patch('/movatak/admin/funil/colunas/:id/ausencia', authMovatak, async (req, 
     const ativa = !!(req.body && req.body.ausencia_ativa);
     const r = await query(
       `UPDATE movatak_funil_colunas SET ausencia_ativa = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
+      [ativa, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/funil/colunas/:id/ia', authMovatak, async (req, res) => {
+  try {
+    const ativa = !!(req.body && req.body.ia_ativa);
+    const r = await query(
+      `UPDATE movatak_funil_colunas SET ia_ativa = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
       [ativa, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
