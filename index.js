@@ -166,6 +166,7 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS ia_resumo TEXT,
     ADD COLUMN IF NOT EXISTS portal_email TEXT,
     ADD COLUMN IF NOT EXISTS portal_senha_hash TEXT,
+    ADD COLUMN IF NOT EXISTS portal_senha_trocada_em TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
   await query(`UPDATE movatak_clientes
      SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
@@ -1470,6 +1471,30 @@ app.post('/movatak/webhook/resposta', async (req, res) => {
 // ============================================================
 
 // Dashboard — métricas do período
+// Cliente troca a própria senha (autenticado pelo app_token).
+// Exige a senha atual para confirmar. Registra a data da troca.
+app.patch('/movatak/app/trocar-senha', authCliente, async (req, res) => {
+  try {
+    const senhaAtual = String((req.body && req.body.senha_atual) || '');
+    const senhaNova = String((req.body && req.body.senha_nova) || '');
+    if (!senhaNova || senhaNova.length < 4) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
+
+    const r = await query('SELECT portal_senha_hash FROM movatak_clientes WHERE id = $1', [req.clienteId]);
+    const atualHash = r.rows.length ? r.rows[0].portal_senha_hash : null;
+    // Se já existe senha, exige a atual correta. Se não existe ainda, permite definir.
+    if (atualHash && atualHash !== hashSenha(senhaAtual)) {
+      return res.status(401).json({ error: 'Senha atual incorreta.' });
+    }
+    await query(
+      'UPDATE movatak_clientes SET portal_senha_hash = $1, portal_senha_trocada_em = NOW() WHERE id = $2',
+      [hashSenha(senhaNova), req.clienteId]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── PORTAL DO CLIENTE — Login por email e senha ──────────────
 // Valida email+senha do cliente e devolve o app_token (usado nas demais chamadas).
 app.post('/movatak/app/login', async (req, res) => {
@@ -1652,7 +1677,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
     const r = await query(
       `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
               boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay,
-              ia_oferta, ia_tom, ia_resumo, portal_email,
+              ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha_trocada_em,
               CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
