@@ -563,6 +563,17 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <div id="ia-status" class="fu-hint" style="margin-top:6px"></div>
       </div>
 
+      <!-- ACESSO AO PORTAL DO CLIENTE -->
+      <div class="form-field full" id="portal-section" style="display:none">
+        <label>🔑 ACESSO DO CLIENTE AO PORTAL</label>
+        <div class="fu-hint" style="margin-bottom:10px">Defina o email e a senha que o cliente usará para acessar o portal dele (onde ele vê e edita as próprias configurações). Envie essas credenciais para ele.</div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Email de acesso</label>
+        <input type="email" id="f-portal-email" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none;margin-bottom:12px" placeholder="cliente@empresa.com.br">
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Senha de acesso</label>
+        <input type="text" id="f-portal-senha" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Deixe em branco para manter a senha atual">
+        <div id="portal-senha-hint" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+
       <!-- AUSÊNCIA / FORA DE HORÁRIO -->
       <div class="form-field full" id="ausencia-section" style="display:none">
         <label>🌙 MENSAGEM DE AUSÊNCIA (FORA DO HORÁRIO)</label>
@@ -1714,6 +1725,7 @@ async function abrirEdicao(id) {
   document.getElementById('planos-section').style.display = '';
   document.getElementById('ausencia-section').style.display = '';
   document.getElementById('ia-section').style.display = '';
+  document.getElementById('portal-section').style.display = '';
   planosClienteId = id;
   carregarPlanos(id);
   carregarAusencia(id);
@@ -1744,6 +1756,12 @@ async function abrirEdicao(id) {
     if (iaOferta) iaOferta.value = c.ia_oferta || '';
     if (iaTom) iaTom.value = c.ia_tom || '';
     if (iaResumo) iaResumo.value = c.ia_resumo || '';
+    const portalEmail = document.getElementById('f-portal-email');
+    const portalSenha = document.getElementById('f-portal-senha');
+    const portalHint = document.getElementById('portal-senha-hint');
+    if (portalEmail) portalEmail.value = c.portal_email || '';
+    if (portalSenha) portalSenha.value = '';
+    if (portalHint) portalHint.textContent = c.portal_tem_senha ? '✓ Senha já definida. Preencha apenas para trocar.' : '⚠️ Nenhuma senha definida ainda.';
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -1782,7 +1800,9 @@ async function salvarEdicao() {
         boas_vindas_lead_delay: parseInt(document.getElementById('f-boasvindas-delay')?.value) || 5,
         ia_oferta: (document.getElementById('f-ia-oferta')?.value || '').trim(),
         ia_tom: (document.getElementById('f-ia-tom')?.value || '').trim(),
-        ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim()
+        ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim(),
+        portal_email: (document.getElementById('f-portal-email')?.value || '').trim(),
+        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim()
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
