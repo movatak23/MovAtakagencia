@@ -6524,13 +6524,13 @@ function renderFunilAtendimento() {
           <input type="checkbox" ${col.ausencia_ativa ? 'checked' : ''} onchange="toggleAusenciaColuna(${col.id}, this.checked)" style="cursor:pointer">
           🌙 Ausência
         </label>
-        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="white-space:nowrap">Sync Zap</button>
+        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px;white-space:nowrap;font-family:var(--sans)">🔄 Sync Zap</button>
       </div>
-      <div class="funil-col-actions">
-        <label style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none">
+      <div class="funil-col-actions" style="display:flex;gap:6px">
+        <label style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
           <input type="checkbox" data-select-col="${col.id}" onchange="selecionarTodosColuna(${col.id}, this.checked)" style="cursor:pointer"> Selecionar todos
         </label>
-        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none;font-weight:600">
+        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="flex:1;font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--accent);border-radius:7px;padding:6px 8px;font-weight:600">
           <input type="checkbox" ${col.ia_ativa ? 'checked' : ''} onchange="toggleIAColuna(${col.id}, this.checked)" style="cursor:pointer"> 🤖 AI
         </label>
       </div>
