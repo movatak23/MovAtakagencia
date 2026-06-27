@@ -1049,10 +1049,38 @@ async function enviarMsgVendedor() {
 
 // ════════════════════════════════════════════════════════════
 // TOUR GUIADO / ONBOARDING
-// Lista de passos — ajustar áreas e textos é só editar aqui.
-// 'alvo' é um seletor CSS visível; se não achar, o passo é pulado.
+// Dois conjuntos de passos: TOUR_INICIAL (tela de clientes) e
+// TOUR_FUNIL (dentro do funil de atendimento). Ajustar é só editar aqui.
 // ════════════════════════════════════════════════════════════
-const TOUR_PASSOS = [
+const TOUR_INICIAL = [
+  {
+    alvo: '.metric-card',
+    titulo: '📊 Suas métricas',
+    texto: 'No topo você acompanha o resumo geral: total de leads, convertidos, quem está em follow-up, taxa de conversão e vendedores. Tudo atualizado automaticamente.'
+  },
+  {
+    alvo: '.periodo-btns',
+    titulo: '📅 Período',
+    texto: 'Filtre os números por Hoje, 7, 30 ou 90 dias. Útil pra comparar a evolução do seu atendimento ao longo do tempo.'
+  },
+  {
+    alvo: '.clientes-section',
+    titulo: '🏢 Seus clientes',
+    texto: 'Aqui ficam os clientes/operações que você gerencia. Cada linha tem atalhos: Editar, Followup, Auto Atendimento, Funil de Atendimento e mais. Clique em "Funil de Atendimento" pra atender os leads.'
+  },
+  {
+    alvo: '[onclick="abrirModal()"]',
+    titulo: '➕ Novo cliente',
+    texto: 'Cadastre uma nova operação/cliente aqui. Você configura WhatsApp, follow-up, automações e tudo mais por cliente.'
+  },
+  {
+    alvo: '[onclick="abrirReset()"]',
+    titulo: '♻️ Resetar lead',
+    texto: 'Ferramenta de teste: apaga um lead pelo número pra ele entrar de novo como novo. Ótimo pra testar sua automação com seu próprio número. Bom trabalho! 🚀'
+  }
+];
+
+const TOUR_FUNIL = [
   {
     alvo: '.layout-label',
     titulo: '👀 Modos de visualização',
@@ -1103,10 +1131,14 @@ function tourElementoVisivel(sel) {
 }
 
 function iniciarTour(forcado) {
+  // Detecta a tela atual: se o funil está visível, usa o tour do funil; senão, o inicial.
+  const noFunil = !!tourElementoVisivel('#funil-board') || !!tourElementoVisivel('#painel-msg-texto');
+  const conjunto = noFunil ? TOUR_FUNIL : TOUR_INICIAL;
+
   // Só passos cujo alvo existe na tela atual.
-  const passos = TOUR_PASSOS.filter(p => tourElementoVisivel(p.alvo));
+  const passos = conjunto.filter(p => tourElementoVisivel(p.alvo));
   if (!passos.length) {
-    if (forcado) alert('O tour funciona melhor na tela do funil de atendimento. Abra um cliente primeiro.');
+    if (forcado) alert('Nada para mostrar nesta tela no momento.');
     return;
   }
   _tourPassosAtivos = passos;
@@ -1168,13 +1200,16 @@ function pularTour() { fecharTour(); }
 function fecharTour() {
   _tourAtivo = false;
   document.getElementById('tour-overlay').classList.remove('ativo');
-  try { localStorage.setItem('movatak-tour-visto', '1'); } catch(e) {}
+  // Marca como visto a tela onde o tour rodou (chaves separadas).
+  const noFunil = !!tourElementoVisivel('#funil-board') || !!tourElementoVisivel('#painel-msg-texto');
+  try { localStorage.setItem(noFunil ? 'movatak-tour-funil' : 'movatak-tour-inicial', '1'); } catch(e) {}
 }
 
-// Dispara automaticamente no 1º acesso (só uma vez).
-function talvezIniciarTourAutomatico() {
+// Dispara automaticamente no 1º acesso de cada tela (cada uma só uma vez).
+function talvezIniciarTourAutomatico(tela) {
+  const chave = tela === 'funil' ? 'movatak-tour-funil' : 'movatak-tour-inicial';
   let visto = '0';
-  try { visto = localStorage.getItem('movatak-tour-visto') || '0'; } catch(e) {}
+  try { visto = localStorage.getItem(chave) || '0'; } catch(e) {}
   if (visto !== '1') {
     setTimeout(() => iniciarTour(false), 1200); // espera a tela montar
   }
@@ -1381,6 +1416,7 @@ async function carregarTudo() {
       renderFunil(clientes, periodoAtual);
     }
     atualizarStatus('Atualizado agora');
+    talvezIniciarTourAutomatico('inicial');
   } catch(e) {
     atualizarStatus('Erro: ' + e.message);
   }
@@ -6404,7 +6440,7 @@ async function carregarFunilAtendimento() {
     if (primeiraCarga) iniciarLoopLembretes();
     else verificarLembretesAgenda();
     atualizarBadgePrioridades();
-    if (primeiraCarga) talvezIniciarTourAutomatico();
+    if (primeiraCarga) talvezIniciarTourAutomatico('funil');
   } catch (e) {
     if (primeiraCarga) {
       board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
