@@ -3967,7 +3967,9 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
     const leadsRes = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
+      `SELECT lb.*, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
+         FROM (
+           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
               COALESCE(l.nao_lida,false) AS nao_lida,
               COALESCE(l.arquivado,false) AS arquivado,
               s.nome AS setor_nome, s.cor AS setor_cor,
@@ -3975,8 +3977,6 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
               v.nome AS vendedor_nome,
               p.nome AS plano_nome, p.valor AS plano_valor,
               NULL::text AS ultima_msg,
-              NULL::text AS ultima_msg_direcao,
-              l.atualizado_em AS ultima_msg_em,
               0::int AS followups_pendentes,
               NULL::int AS fu_sequencia_ativa
          FROM movatak_leads l
@@ -3985,7 +3985,12 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
          LEFT JOIN movatak_setores s ON s.id = l.setor_id
         WHERE l.cliente_id=$1 AND l.setor_id IN (${ph})
         ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
-        LIMIT 500`,
+        LIMIT 500
+         ) lb
+         LEFT JOIN LATERAL (
+           SELECT direcao, criado_em FROM movatak_conversas c
+            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
+         ) ult ON true`,
       params
     );
 
