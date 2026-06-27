@@ -5912,6 +5912,9 @@ function avaliarAusencia(cliente) {
     const diaSemana = agora.getUTCDay(); // 0=domingo
     const minutosAgora = agora.getUTCHours() * 60 + agora.getUTCMinutes();
 
+    console.log('[DIAG-AUS] avaliando | dataHoje=' + dataHoje + ' diaSemana=' + diaSemana + ' minutosAgora=' + minutosAgora + ' (' + agora.getUTCHours() + ':' + String(agora.getUTCMinutes()).padStart(2,'0') + ' BRT)');
+    console.log('[DIAG-AUS] config | msg_padrao=' + JSON.stringify((cliente.ausencia_msg_padrao||'').slice(0,40)) + ' horarios=' + JSON.stringify(cliente.ausencia_horarios) + ' datas=' + JSON.stringify(cliente.ausencia_datas));
+
     const paraMin = (hhmm) => {
       const [h, m] = String(hhmm || '').split(':').map(n => parseInt(n, 10));
       if (isNaN(h)) return null;
@@ -5944,10 +5947,13 @@ function avaliarAusencia(cliente) {
     const horarios = Array.isArray(cliente.ausencia_horarios) ? cliente.ausencia_horarios : [];
     for (const h of horarios) {
       const dias = Array.isArray(h.dias) ? h.dias : [];
-      if (!dias.includes(diaSemana)) continue;
       const ini = paraMin(h.inicio);
       const fim = paraMin(h.fim);
-      if (dentroFaixa(ini, fim)) {
+      const diaOk = dias.includes(diaSemana);
+      const faixaOk = dentroFaixa(ini, fim);
+      console.log('[DIAG-AUS] faixa | dias=' + JSON.stringify(dias) + ' diaSemanaOk=' + diaOk + ' inicio=' + h.inicio + ' fim=' + h.fim + ' (' + ini + '-' + fim + ') faixaOk=' + faixaOk);
+      if (!diaOk) continue;
+      if (faixaOk) {
         // Chave por dia+faixa: o período "reinicia" a cada dia, permitindo novo aviso.
         return {
           ausente: true,
@@ -5957,6 +5963,7 @@ function avaliarAusencia(cliente) {
       }
     }
 
+    console.log('[DIAG-AUS] resultado=NAO AUSENTE (nenhuma faixa/data bateu)');
     return vazio;
   } catch (e) {
     console.error('[ausencia] erro ao avaliar:', e.message);
