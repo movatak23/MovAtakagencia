@@ -5028,7 +5028,7 @@ async function salvarCredenciais() {
   try {
     const body = { portal_email: email };
     if (senha) body.portal_senha = senha;
-    await api('/movatak/admin/clientes/' + _credClienteId + '/dados', { method: 'PATCH', body: JSON.stringify(body) });
+    await api('/movatak/admin/clientes/' + _credClienteId + '/credenciais-portal', { method: 'PATCH', body: JSON.stringify(body) });
     msg.style.color = 'var(--green)';
     msg.textContent = '✓ Credenciais salvas. Envie email e senha para o cliente.';
     document.getElementById('cred-senha').value = '';
