@@ -360,6 +360,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
       <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
       <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
+      <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
       <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
       <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
@@ -705,6 +706,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
         <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
+      <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
         <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
         <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
@@ -5427,6 +5429,106 @@ function atenderPrioridade(leadId) {
   // Mantém o painel aberto; a lista se renova quando o funil recarregar.
 }
 
+// ── DASHBOARD SLA — tempo de resposta por setor e vendedor ───
+function fmtTempoSLA(seg) {
+  if (seg == null) return '—';
+  if (seg < 60) return Math.round(seg) + 's';
+  const min = seg / 60;
+  if (min < 60) return Math.round(min) + ' min';
+  const h = min / 60;
+  if (h < 24) return h.toFixed(1).replace('.0', '') + 'h';
+  return (h / 24).toFixed(1).replace('.0', '') + 'd';
+}
+
+async function abrirDashboardSLA() {
+  let modal = document.getElementById('modal-sla');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-sla';
+    modal.className = 'modal-overlay';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:3000;display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow-y:auto';
+    modal.innerHTML = `
+      <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:16px;width:100%;max-width:760px;padding:24px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-size:18px;font-weight:800;color:var(--text)">📊 Tempo de resposta (SLA)</div>
+          <button onclick="document.getElementById('modal-sla').remove()" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:5px 10px;cursor:pointer">✕</button>
+        </div>
+        <div style="font-size:12px;color:var(--text2);margin-bottom:14px">
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:50%;background:var(--green);display:inline-block"></span> humano</span>
+          &nbsp;&nbsp;
+          <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:9px;height:9px;border-radius:50%;background:var(--amber);display:inline-block"></span> automático</span>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <select id="sla-periodo" onchange="carregarDashboardSLA()" class="fu-textarea" style="min-height:auto;padding:8px 12px;max-width:180px">
+            <option value="7">Últimos 7 dias</option>
+            <option value="30" selected>Últimos 30 dias</option>
+            <option value="90">Últimos 90 dias</option>
+          </select>
+        </div>
+        <div id="sla-conteudo"><div class="fu-hint">Carregando...</div></div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  }
+  carregarDashboardSLA();
+}
+
+async function carregarDashboardSLA() {
+  const box = document.getElementById('sla-conteudo');
+  if (!box || !funilState.clienteId) return;
+  const dias = document.getElementById('sla-periodo')?.value || '30';
+  box.innerHTML = '<div class="fu-hint">Carregando métricas...</div>';
+  try {
+    const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/sla?dias=' + dias);
+    renderDashboardSLA(r);
+  } catch (e) {
+    box.innerHTML = '<div style="color:var(--red);font-size:13px">Erro: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderDashboardSLA(data) {
+  const box = document.getElementById('sla-conteudo');
+  if (!box) return;
+  const setores = (data && data.setores) || [];
+  if (!setores.length) {
+    box.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;margin:30px 0">Sem dados de conversa no período.</div>';
+    return;
+  }
+  const linhaMetrica = (label, humano, hn, auto, an) => `
+    <div style="display:flex;align-items:center;gap:10px;font-size:12px;margin:2px 0">
+      <span style="width:110px;color:var(--text2)">${label}</span>
+      <span style="color:var(--green);font-weight:700">${fmtTempoSLA(humano)}</span>
+      <span style="color:var(--text3);font-size:11px">(${hn})</span>
+      <span style="color:var(--amber);font-weight:700;margin-left:8px">${fmtTempoSLA(auto)}</span>
+      <span style="color:var(--text3);font-size:11px">(${an})</span>
+    </div>`;
+
+  box.innerHTML = setores.map(s => {
+    const vends = (s.vendedores || []).sort((a, b) => (b.esperando || 0) - (a.esperando || 0));
+    const corSetor = s.setor_cor || 'var(--accent)';
+    const esperandoSetor = vends.reduce((acc, v) => acc + (v.esperando || 0), 0);
+    return `<div style="border:1px solid var(--border);border-radius:12px;margin-bottom:14px;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--bg3);border-left:4px solid ${corSetor}">
+        <div style="font-weight:800;font-size:14px;color:var(--text)">${escapeHtml(s.setor_nome)}</div>
+        ${esperandoSetor > 0 ? '<div style="font-size:12px;color:var(--red);font-weight:700">⏳ ' + esperandoSetor + ' esperando</div>' : '<div style="font-size:12px;color:var(--green)">✓ em dia</div>'}
+      </div>
+      <div style="padding:8px 16px 12px">
+        ${vends.map(v => `
+          <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <div style="font-weight:700;font-size:13px;color:var(--text)">${escapeHtml(v.vendedor_nome)}</div>
+              ${v.esperando > 0 ? '<span style="font-size:11px;color:var(--red);font-weight:700">' + v.esperando + ' esperando</span>' : ''}
+            </div>
+            ${linhaMetrica('1ª resposta', v.primeira_humano_seg, v.primeira_humano_n, v.primeira_auto_seg, v.primeira_auto_n)}
+            ${linhaMetrica('resposta geral', v.geral_humano_seg, v.geral_humano_n, v.geral_auto_seg, v.geral_auto_n)}
+            ${v.sem_resposta > 0 ? '<div style="font-size:11px;color:var(--text3);margin-top:3px">' + v.sem_resposta + ' mensagens sem resposta</div>' : ''}
+          </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+
 
 async function iniciarPaginaFunilAtendimento() {
   const params = new URLSearchParams(window.location.search);
@@ -5441,6 +5543,7 @@ async function iniciarPaginaFunilAtendimento() {
   if (btnAgenda) btnAgenda.style.display = '';
   const btnTemplate = document.getElementById('btn-template-funil');
   if (btnTemplate) btnTemplate.style.display = '';
+  document.querySelectorAll('.btn-sla').forEach(b => { b.style.display = 'inline-flex'; });
   const headerTitle = document.querySelector('.header-title');
   const headerSub = document.querySelector('.header-sub');
   if (headerTitle) headerTitle.textContent = 'Funil de Atendimento';
