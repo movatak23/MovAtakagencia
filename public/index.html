@@ -5537,8 +5537,19 @@ function renderPainelPrioridades() {
 function atenderPrioridade(leadId) {
   const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId)) || {};
   const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  // 1) Abre a conversa do lead
   if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId, nomeAbrev);
-  // Mantém o painel aberto; a lista se renova quando o funil recarregar.
+  // 2) Fecha o painel de prioridades pra não cobrir a janela de mensagens
+  fecharPainelPrioridades();
+  // 3) Aponta para o card no kanban: rola até ele e dá um destaque temporário
+  setTimeout(() => {
+    const card = document.querySelector('.funil-card[data-lead-id="' + leadId + '"]');
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      card.classList.add('lead-aceso');
+      setTimeout(() => card.classList.remove('lead-aceso'), 3000);
+    }
+  }, 120);
 }
 
 // ── DASHBOARD SLA — tempo de resposta por setor e vendedor ───
