@@ -4594,7 +4594,7 @@ app.delete('/movatak/vendedor/agendamentos/:id', authVendedor, async (req, res) 
     await garantirEstruturaAgenda();
     const ag = await vendedorPodeAgendamento(req, req.params.id);
     if (!ag) return res.status(403).json({ error: 'Sem acesso a este agendamento.' });
-    await query(`UPDATE movatak_agendamentos SET status='cancelado', cancelado_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [req.params.id]);
+    await query(`DELETE FROM movatak_agendamentos WHERE id=$1`, [req.params.id]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -8120,14 +8120,13 @@ app.patch('/movatak/admin/agendamentos/:id/status', authMovatak, async (req, res
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Cancela/exclui logicamente um agendamento (soft delete via status + cancelado_em).
+// Exclui um agendamento permanentemente (delete real).
 // Não apaga o lead nem a conversa.
 app.delete('/movatak/admin/agendamentos/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaAgenda();
     const r = await query(
-      `UPDATE movatak_agendamentos SET status='cancelado', cancelado_em=NOW(), atualizado_em=NOW()
-        WHERE id=$1 RETURNING id, lead_id, cliente_id, titulo`,
+      `DELETE FROM movatak_agendamentos WHERE id=$1 RETURNING id, lead_id, cliente_id, titulo`,
       [req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
