@@ -825,8 +825,8 @@ async function iniciarAppVendedor() {
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
                   <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                  <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+                  <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
                     <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
@@ -1903,7 +1903,15 @@ function renderMidiaMensagem(m) {
   const btnBaixar = `<button onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px">⬇ Baixar</button>`;
   let player;
   if (tipo === 'video') player = `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
-  else if (tipo === 'audio') player = `<audio src="${m.midia_url}" controls style="display:block;margin-bottom:4px;height:36px;max-width:230px"></audio>`;
+  else if (tipo === 'audio') {
+    const btnTranscrever = m.id
+      ? `<button onclick="transcreverAudio(event, ${Number(m.id)}, '${encodeURIComponent(m.midia_url)}')" title="Transcrever áudio para texto" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px;margin-left:6px">📝 Transcrever</button>`
+      : '';
+    player = `<audio src="${m.midia_url}" controls style="display:block;margin-bottom:4px;height:36px;max-width:230px"></audio>`
+      + `<div style="display:flex;flex-wrap:wrap;align-items:center">${btnBaixar}${btnTranscrever}</div>`
+      + `<div id="transcricao-${m.id || 'x'}" style="display:none;font-size:12px;color:var(--text);background:rgba(255,255,255,.06);border-radius:8px;padding:8px 10px;margin-top:4px;line-height:1.4;white-space:pre-wrap"></div>`;
+    return player;
+  }
   else player = `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`;
   return player + btnBaixar;
 }
@@ -1930,9 +1938,35 @@ async function baixarMidia(url, ev) {
   }
 }
 
-// Rola a conversa até a última mensagem. Mídia (imagem/áudio) só define a altura
-// real depois de carregar, então rolamos várias vezes: agora, no próximo frame,
-// e de novo a cada mídia que terminar de carregar.
+// Pede ao backend a transcrição de um áudio e mostra abaixo do player.
+async function transcreverAudio(ev, msgId, urlEnc) {
+  if (ev) ev.stopPropagation();
+  const box = document.getElementById('transcricao-' + msgId);
+  const btn = ev && ev.currentTarget ? ev.currentTarget : null;
+  if (box && box.dataset.pronto === '1') { // toggle se já transcrito
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '📝 Transcrevendo...'; }
+  if (box) { box.style.display = 'block'; box.textContent = 'Transcrevendo áudio...'; box.style.color = 'var(--text2)'; }
+  try {
+    const r = await api('/movatak/admin/transcrever-audio', {
+      method: 'POST',
+      body: JSON.stringify({ url: decodeURIComponent(urlEnc) })
+    });
+    if (r && r.texto) {
+      if (box) { box.textContent = '📝 ' + r.texto; box.style.color = 'var(--text)'; box.dataset.pronto = '1'; }
+    } else {
+      if (box) { box.textContent = 'Não foi possível transcrever.'; box.style.color = 'var(--red)'; }
+    }
+  } catch (e) {
+    if (box) { box.textContent = 'Erro ao transcrever: ' + e.message; box.style.color = 'var(--red)'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📝 Transcrever'; }
+  }
+}
+
+
 function rolarConversaParaFim() {
   const wrap = document.getElementById('painel-body-conversa');
   if (!wrap) return;
@@ -1966,12 +2000,40 @@ function resumoMensagemPainel(m, limite = 96) {
 function renderPreviewRespostaMensagem(m) {
   if (!m || !(m.reply_to_conversa_id || m.reply_to_msg_id || m.reply_to_conteudo || m.reply_to_midia_url)) return '';
   const label = m.reply_to_direcao === 'saida' ? 'Respondendo você' : (m.reply_to_direcao === 'entrada' ? 'Respondendo cliente' : 'Respondendo mensagem');
-  const resumo = resumoMensagemPainel({ conteudo: m.reply_to_conteudo, midia_tipo: m.reply_to_midia_tipo, midia_url: m.reply_to_midia_url }, 86);
+  const corBorda = m.reply_to_direcao === 'saida' ? 'var(--msg-time-out)' : 'var(--green)';
   const targetId = m.reply_to_conversa_id ? Number(m.reply_to_conversa_id) : 0;
   const click = targetId ? `onclick="focarMensagemRespondida(event, ${targetId})"` : '';
-  return `<div ${click} title="${escapeHtml(resumo)}" style="border-left:3px solid ${m.reply_to_direcao === 'saida' ? 'var(--msg-time-out)' : 'var(--green)'};background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:7px;cursor:${targetId ? 'pointer' : 'default'};max-width:100%">
-    <div style="font-size:10px;color:${m.reply_to_direcao === 'saida' ? 'var(--msg-time-out)' : 'var(--green)'};font-weight:700;margin-bottom:2px">${label}</div>
-    <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumo)}</div>
+
+  const tipo = (m.reply_to_midia_tipo || '').toLowerCase();
+  const url = m.reply_to_midia_url || '';
+  const txt = String(m.reply_to_conteudo || '').trim();
+
+  // Miniatura/ícone da mídia citada
+  let thumb = '';
+  let resumoTxt = txt;
+  if (url) {
+    if (tipo.includes('image') || tipo === 'imagem') {
+      thumb = `<img src="${escapeHtml(url)}" style="width:38px;height:38px;border-radius:6px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`;
+      if (!resumoTxt) resumoTxt = '📷 Foto';
+    } else if (tipo.includes('video') || tipo === 'video' || tipo === 'vídeo') {
+      thumb = `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">🎥</div>`;
+      if (!resumoTxt) resumoTxt = '🎥 Vídeo';
+    } else if (tipo.includes('audio') || tipo.includes('ptt') || tipo === 'áudio') {
+      thumb = `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">🎙️</div>`;
+      if (!resumoTxt) resumoTxt = '🎙️ Áudio';
+    } else {
+      thumb = `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">📎</div>`;
+      if (!resumoTxt) resumoTxt = '📎 Arquivo';
+    }
+  }
+  if (!resumoTxt) resumoTxt = resumoMensagemPainel({ conteudo: m.reply_to_conteudo, midia_tipo: m.reply_to_midia_tipo, midia_url: m.reply_to_midia_url }, 86);
+
+  return `<div ${click} title="Ir para a mensagem original" style="border-left:3px solid ${corBorda};background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:7px;cursor:${targetId ? 'pointer' : 'default'};max-width:100%;display:flex;gap:8px;align-items:center">
+    ${thumb}
+    <div style="min-width:0;flex:1">
+      <div style="font-size:10px;color:${corBorda};font-weight:700;margin-bottom:2px">${label}</div>
+      <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumoTxt)}</div>
+    </div>
   </div>`;
 }
 
@@ -5819,8 +5881,8 @@ async function iniciarPaginaFunilAtendimento() {
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
                   <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center">
-                  <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+                  <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
                     <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
@@ -6524,13 +6586,13 @@ function renderFunilAtendimento() {
           <input type="checkbox" ${col.ausencia_ativa ? 'checked' : ''} onchange="toggleAusenciaColuna(${col.id}, this.checked)" style="cursor:pointer">
           🌙 Ausência
         </label>
-        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="white-space:nowrap">Sync Zap</button>
+        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px;white-space:nowrap;font-family:var(--sans)">🔄 Sync Zap</button>
       </div>
-      <div class="funil-col-actions">
-        <label style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none">
+      <div class="funil-col-actions" style="display:flex;gap:6px">
+        <label style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
           <input type="checkbox" data-select-col="${col.id}" onchange="selecionarTodosColuna(${col.id}, this.checked)" style="cursor:pointer"> Selecionar todos
         </label>
-        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none;font-weight:600">
+        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="flex:1;font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--accent);border-radius:7px;padding:6px 8px;font-weight:600">
           <input type="checkbox" ${col.ia_ativa ? 'checked' : ''} onchange="toggleIAColuna(${col.id}, this.checked)" style="cursor:pointer"> 🤖 AI
         </label>
       </div>
@@ -7463,6 +7525,8 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-3col-grid.hide-kanban.hide-chat .funil-inbox-col{display:flex}
 .funil-3col-grid.hide-inbox.hide-kanban{grid-template-columns:minmax(420px,1fr)}
 .funil-3col-grid.hide-inbox.hide-kanban .funil-chat-col{display:flex}
+/* Sem o kanban, a caixa de digitação ganha mais altura para escrever confortável */
+.funil-3col-grid.hide-kanban #painel-msg-texto{min-height:200px}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat{grid-template-columns:1fr}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-chat-col{display:flex}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-kanban-col,
