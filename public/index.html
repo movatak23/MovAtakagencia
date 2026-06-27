@@ -1677,6 +1677,7 @@ function renderClientes(clientes) {
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
       <td class="td-mono" style="font-size:13px">—</td>
       <td>
+        <button onclick="event.stopPropagation();abrirCredenciais(${c.id})" style="background:transparent;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">🔑 Credenciais</button>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
@@ -4982,6 +4983,62 @@ async function limparCobertura() {
   } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
 }
 
+// ── Credenciais de acesso ao portal do cliente ──
+let _credClienteId = null;
+async function abrirCredenciais(clienteId) {
+  _credClienteId = clienteId;
+  document.getElementById('cred-email').value = '';
+  document.getElementById('cred-senha').value = '';
+  document.getElementById('cred-msg').textContent = '';
+  document.getElementById('cred-hint').textContent = 'Carregando...';
+  document.getElementById('modal-credenciais').classList.add('open');
+  try {
+    const c = await api('/movatak/admin/clientes/' + clienteId + '/dados');
+    document.getElementById('cred-cliente-nome').textContent = c.nome || '';
+    document.getElementById('cred-email').value = c.portal_email || '';
+    document.getElementById('cred-hint').textContent = c.portal_tem_senha
+      ? '✓ Senha já definida. Preencha o campo senha apenas se quiser trocar.'
+      : '⚠️ Nenhuma senha definida ainda. Defina uma para o cliente conseguir entrar.';
+    // Mostra quando o cliente trocou a senha por último (se trocou).
+    const msgEl = document.getElementById('cred-msg');
+    if (c.portal_senha_trocada_em) {
+      const dt = new Date(c.portal_senha_trocada_em);
+      const quando = dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      msgEl.style.color = 'var(--text2)';
+      msgEl.textContent = '🔄 O cliente trocou a senha por último em ' + quando + '.';
+    } else {
+      msgEl.textContent = '';
+    }
+  } catch (e) {
+    document.getElementById('cred-hint').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+function fecharCredenciais() {
+  document.getElementById('modal-credenciais').classList.remove('open');
+  _credClienteId = null;
+}
+async function salvarCredenciais() {
+  if (!_credClienteId) return;
+  const email = document.getElementById('cred-email').value.trim();
+  const senha = document.getElementById('cred-senha').value.trim();
+  const msg = document.getElementById('cred-msg');
+  const btn = document.getElementById('btn-cred-save');
+  if (!email) { msg.style.color = 'var(--red)'; msg.textContent = 'Informe o email de acesso.'; return; }
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const body = { portal_email: email };
+    if (senha) body.portal_senha = senha;
+    await api('/movatak/admin/clientes/' + _credClienteId + '/dados', { method: 'PATCH', body: JSON.stringify(body) });
+    msg.style.color = 'var(--green)';
+    msg.textContent = '✓ Credenciais salvas. Envie email e senha para o cliente.';
+    document.getElementById('cred-senha').value = '';
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = 'Erro: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar credenciais';
+  }
+}
+
 function abrirReset() {
   document.getElementById('reset-tel').value = '';
   document.getElementById('reset-msg').textContent = '';
@@ -8102,6 +8159,24 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
         <button class="tour-prev" id="tour-btn-prev" onclick="tourAnterior()">Voltar</button>
         <button class="tour-next" id="tour-btn-next" onclick="tourProximo()">Avançar</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-credenciais">
+  <div class="modal" style="max-width:460px">
+    <button class="modal-x" onclick="fecharCredenciais()" title="Fechar">✕</button>
+    <h3>🔑 Credenciais de acesso ao portal</h3>
+    <p style="font-size:13px;color:var(--text2);margin:8px 0 16px">Defina o email e a senha que o cliente <strong id="cred-cliente-nome"></strong> usará para acessar o portal dele. Envie essas credenciais para ele.</p>
+    <label class="fu-label" style="margin-top:0">Email de acesso</label>
+    <input type="email" class="fu-textarea" id="cred-email" style="min-height:auto;padding:11px 14px;resize:none" placeholder="cliente@empresa.com.br">
+    <label class="fu-label" style="margin-top:12px">Senha de acesso</label>
+    <input type="text" class="fu-textarea" id="cred-senha" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Deixe em branco para manter a atual">
+    <div id="cred-hint" class="fu-hint" style="margin-top:8px"></div>
+    <div id="cred-msg" style="font-size:13px;margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharCredenciais()">Cancelar</button>
+      <button class="btn-save" id="btn-cred-save" onclick="salvarCredenciais()">Salvar credenciais</button>
     </div>
   </div>
 </div>
