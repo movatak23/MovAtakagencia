@@ -1690,6 +1690,35 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 });
 
 // Editar dados de um cliente. Token e client-token só são alterados se enviados.
+// Salva APENAS as credenciais de acesso ao portal (email/senha) de um cliente.
+// Endpoint dedicado — não exige os campos do cadastro completo.
+app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (req, res) => {
+  try {
+    const portal_email = req.body ? req.body.portal_email : undefined;
+    const portal_senha = req.body ? req.body.portal_senha : undefined;
+    const campos = [], valores = [];
+    let idx = 1;
+    if (portal_email !== undefined) {
+      campos.push('portal_email = $' + idx++);
+      valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null);
+    }
+    if (portal_senha) {
+      campos.push('portal_senha_hash = $' + idx++);
+      valores.push(hashSenha(portal_senha));
+    }
+    if (!campos.length) return res.status(400).json({ error: 'Nada para salvar.' });
+    valores.push(req.params.id);
+    const r = await query(
+      `UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id`,
+      valores
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
