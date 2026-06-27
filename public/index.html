@@ -263,6 +263,9 @@ tr:hover td{background:var(--bg3)}
 
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulseLembrete{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.78;transform:scale(1.04)}}
+@keyframes pulseLeadAceso{0%,100%{box-shadow:0 0 0 0 rgba(245,166,35,.55);border-color:var(--amber)}50%{box-shadow:0 0 0 4px rgba(245,166,35,0);border-color:var(--amber)}}
+.funil-card.lead-aceso{border:2px solid var(--amber)!important;animation:pulseLeadAceso 1.6s ease-in-out infinite}
 
 .modal-fu { max-width: 1320px; width: calc(100vw - 32px); }
 .fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
@@ -699,6 +702,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
         <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
+        <button id="btn-lembrete-agenda" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span id="lembrete-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
         <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
         <button class="btn-sair" onclick="sair()">Sair</button>
@@ -4974,6 +4978,8 @@ function garantirModalAgendaFunil() {
           <label class="fu-label">Observação</label>
           <textarea id="agenda-obs" class="fu-textarea" style="min-height:64px" placeholder="Observações internas..."></textarea>
           <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="agenda-mover" checked> mover lead para a coluna do agendamento</label>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="agenda-lembrete" onchange="document.getElementById('agenda-lembrete-min').style.display=this.checked?'inline-block':'none'"> 🔔 receber lembrete visual antes do horário</label>
+          <div style="margin-top:6px"><select id="agenda-lembrete-min" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;display:none;max-width:200px"><option value="5">5 minutos antes</option><option value="15">15 minutos antes</option><option value="30">30 minutos antes</option><option value="60">1 hora antes</option></select></div>
           <div class="modal-btns" style="margin-top:12px"><button class="btn-save" onclick="salvarAgendamentoFunil()">Salvar agendamento</button></div>
           <div id="agenda-status" class="fu-hint" style="margin-top:8px"></div>
         </div>
@@ -5152,18 +5158,84 @@ async function salvarAgendamentoFunil() {
   const coluna_id = document.getElementById('agenda-coluna')?.value || '';
   const observacao = (document.getElementById('agenda-obs')?.value || '').trim();
   const mover_kanban = !!document.getElementById('agenda-mover')?.checked;
+  const lembrete_ativo = !!document.getElementById('agenda-lembrete')?.checked;
+  const lembrete_min = lembrete_ativo ? (parseInt(document.getElementById('agenda-lembrete-min')?.value, 10) || 0) : 0;
   if (!titulo || !data || !hora) { if (st) { st.style.color='var(--red)'; st.textContent='Preencha título, data e horário.'; } return; }
   if (st) { st.style.color='var(--text2)'; st.textContent='Salvando agendamento...'; }
   try {
     await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos', {
       method: 'POST',
-      body: JSON.stringify({ lead_id: lead_id || null, titulo, tipo, inicio: new Date(data + 'T' + hora + ':00').toISOString(), observacao, coluna_id: coluna_id || null, mover_kanban })
+      body: JSON.stringify({ lead_id: lead_id || null, titulo, tipo, inicio: new Date(data + 'T' + hora + ':00').toISOString(), observacao, coluna_id: coluna_id || null, mover_kanban, lembrete_min })
     });
     if (st) { st.style.color='var(--green)'; st.textContent='✓ Agendamento salvo.'; }
     document.getElementById('agenda-obs').value = '';
     await carregarAgendaFunil();
     if (mover_kanban) await carregarFunilAtendimento();
+    verificarLembretesAgenda();
   } catch (e) { if (st) { st.style.color='var(--red)'; st.textContent='Erro: ' + e.message; } }
+}
+
+// ── LEMBRETES DE AGENDAMENTO (visual no painel) ──────────────
+// Verifica os agendamentos e mostra o sino quando algum entra na janela
+// [horário - antecedência] até [horário + 5min]. Acende o lead no kanban.
+let _lembreteCache = [];        // agendamentos com lembrete ativo, do backend
+let _lembreteAtivoLeadId = null; // lead do lembrete em destaque (pro clique)
+
+async function carregarAgendamentosLembrete() {
+  if (!funilState.clienteId) return;
+  try {
+    const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=2');
+    _lembreteCache = Array.isArray(r) ? r.filter(a => Number(a.lembrete_min) > 0 && a.status !== 'cancelado' && a.lead_id) : [];
+  } catch (e) { _lembreteCache = []; }
+}
+
+function verificarLembretesAgenda() {
+  const agora = Date.now();
+  let ativo = null;
+  for (const a of _lembreteCache) {
+    const inicio = new Date(a.inicio).getTime();
+    if (isNaN(inicio)) continue;
+    const abre = inicio - (Number(a.lembrete_min) * 60 * 1000); // antecedência
+    const fecha = inicio + (5 * 60 * 1000);                     // +5min após o horário
+    if (agora >= abre && agora <= fecha) { ativo = a; break; }
+  }
+
+  const btn = document.getElementById('btn-lembrete-agenda');
+  const txt = document.getElementById('lembrete-texto');
+
+  // Limpa destaque anterior no kanban
+  document.querySelectorAll('.funil-card.lead-aceso').forEach(el => el.classList.remove('lead-aceso'));
+
+  if (ativo) {
+    _lembreteAtivoLeadId = ativo.lead_id;
+    const nome = ativo.lead_nome || 'lead';
+    if (txt) txt.textContent = 'Retornar contato · ' + nome;
+    if (btn) btn.style.display = 'inline-flex';
+    // Acende o card do lead no kanban (se estiver visível)
+    const card = document.querySelector('.funil-card[data-lead-id="' + ativo.lead_id + '"]');
+    if (card) card.classList.add('lead-aceso');
+  } else {
+    _lembreteAtivoLeadId = null;
+    if (btn) btn.style.display = 'none';
+  }
+}
+
+function abrirLembreteAtivo() {
+  if (!_lembreteAtivoLeadId) return;
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(_lembreteAtivoLeadId)) || {};
+  const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(_lembreteAtivoLeadId, nomeAbrev);
+}
+
+// Loop de verificação: roda ao abrir a tela e a cada 30s.
+let _lembreteIntervalo = null;
+function iniciarLoopLembretes() {
+  if (_lembreteIntervalo) clearInterval(_lembreteIntervalo);
+  carregarAgendamentosLembrete().then(verificarLembretesAgenda);
+  _lembreteIntervalo = setInterval(async () => {
+    await carregarAgendamentosLembrete();
+    verificarLembretesAgenda();
+  }, 30000);
 }
 
 async function iniciarPaginaFunilAtendimento() {
@@ -5559,6 +5631,8 @@ async function carregarFunilAtendimento() {
     renderInboxFunil();
     carregarMetricasFunil();
     board.dataset.carregado = '1';
+    if (primeiraCarga) iniciarLoopLembretes();
+    else verificarLembretesAgenda();
   } catch (e) {
     if (primeiraCarga) {
       board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
