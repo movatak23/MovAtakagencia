@@ -2151,9 +2151,31 @@ function renderMidiaMensagem(m) {
       + `<div id="transcricao-${m.id || 'x'}" style="display:none;font-size:12px;color:var(--text);background:rgba(255,255,255,.06);border-radius:8px;padding:8px 10px;margin-top:4px;line-height:1.4;white-space:pre-wrap"></div>`;
     return player;
   }
-  else player = `<img src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover">`;
+  else player = `<img src="${m.midia_url}" onclick="abrirLightbox('${m.midia_url}')" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover;cursor:zoom-in">`;
   return player + btnBaixar;
 }
+
+// Abre a imagem ampliada em tela cheia (lightbox). Fecha clicando fora, no ✕ ou com Esc.
+function abrirLightbox(url) {
+  const lb = document.getElementById('lightbox-img');
+  const img = document.getElementById('lightbox-img-el');
+  const baixar = document.getElementById('lightbox-baixar');
+  if (!lb || !img) return;
+  img.src = url;
+  if (baixar) baixar.href = url;
+  lb.style.display = 'flex';
+}
+function fecharLightbox() {
+  const lb = document.getElementById('lightbox-img');
+  if (lb) { lb.style.display = 'none'; document.getElementById('lightbox-img-el').src = ''; }
+}
+// Esc fecha o lightbox.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const lb = document.getElementById('lightbox-img');
+    if (lb && lb.style.display === 'flex') fecharLightbox();
+  }
+});
 
 // Baixa a mídia. Como o arquivo está em outro domínio (Supabase), um <a download>
 // simples às vezes só abre em vez de baixar — então buscamos como blob e forçamos
@@ -3147,7 +3169,7 @@ function usarMsgRapida(id) {
     const isVideo = /\.(mp4|webm|mov)/i.test(m.midia_url);
     el.innerHTML = isVideo
       ? `<video src="${m.midia_url}" style="max-width:200px;max-height:120px;border-radius:6px" controls></video>`
-      : `<img src="${m.midia_url}" style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover">`;
+      : `<img src="${m.midia_url}" onclick="abrirLightbox('${m.midia_url}')" style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover;cursor:zoom-in">`;
     el.dataset.url = m.midia_url;
   } else {
     prev.style.display = 'none';
@@ -8201,6 +8223,12 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
       <button class="btn-save" id="btn-cred-save" onclick="salvarCredenciais()">Salvar credenciais</button>
     </div>
   </div>
+</div>
+
+<div id="lightbox-img" onclick="fecharLightbox()" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);align-items:center;justify-content:center;cursor:zoom-out">
+  <button onclick="fecharLightbox()" title="Fechar" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:22px;width:42px;height:42px;border-radius:50%;cursor:pointer;line-height:1">✕</button>
+  <a id="lightbox-baixar" href="#" download onclick="event.stopPropagation()" title="Baixar imagem" style="position:absolute;top:18px;right:74px;background:rgba(255,255,255,.15);color:#fff;font-size:18px;width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
+  <img id="lightbox-img-el" src="" onclick="event.stopPropagation()" style="max-width:92vw;max-height:88vh;border-radius:8px;box-shadow:0 10px 50px rgba(0,0,0,.6);object-fit:contain">
 </div>
 
 <div class="modal-overlay" id="modal-reset">
