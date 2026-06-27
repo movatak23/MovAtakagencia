@@ -838,6 +838,7 @@ async function iniciarAppVendedor() {
                     <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
+                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 Sugerir</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
@@ -2674,6 +2675,32 @@ document.addEventListener('click', function(ev){
   const menu = document.getElementById('menu-recursos-whatsapp');
   if (menu && !menu.contains(ev.target) && !(ev.target && ev.target.closest && ev.target.closest('#btn-recursos-whatsapp'))) menu.style.display = 'none';
 });
+
+// Pede à IA uma sugestão de resposta e preenche a caixa de mensagem.
+// Nunca envia sozinha — o operador revisa e clica Enviar.
+async function sugerirRespostaIA() {
+  if (!window._painelLeadId) return;
+  const ta = document.getElementById('painel-msg-texto');
+  const st = document.getElementById('painel-msg-status');
+  const botoes = document.querySelectorAll('.btn-sugerir-ia');
+  // Não sobrescreve texto já digitado sem confirmar.
+  if (ta && ta.value.trim() && !confirm('Você já escreveu algo. Substituir pela sugestão da IA?')) return;
+  botoes.forEach(b => { b.disabled = true; b.textContent = '🤖 Pensando...'; });
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = '🤖 Gerando sugestão...'; }
+  try {
+    const r = await api('/movatak/admin/leads/' + window._painelLeadId + '/sugerir-resposta');
+    if (r && r.sugestao) {
+      if (ta) { ta.value = r.sugestao; ta.focus(); }
+      if (st) { st.style.color = 'var(--accent)'; st.textContent = '✨ Sugestão da IA — revise e clique Enviar.'; }
+    } else {
+      if (st) { st.style.color = 'var(--red)'; st.textContent = 'A IA não retornou sugestão.'; }
+    }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro na IA: ' + e.message; }
+  } finally {
+    botoes.forEach(b => { b.disabled = false; b.textContent = '🤖 Sugerir'; });
+  }
+}
 
 async function enviarMensagemPainel() {
   const texto = (document.getElementById('painel-msg-texto').value || '').trim();
@@ -5536,6 +5563,7 @@ async function iniciarPaginaFunilAtendimento() {
                     <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
+                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 Sugerir</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
