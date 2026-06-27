@@ -666,6 +666,9 @@ async function dispararAusenciaSeAplicavel(cliente, lead, telefone) {
         [lead.id, cliente.id, periodoChave]
       ).catch(() => ({ rows: [] }));
       if (reg.rows.length) {
+        // Aguarda a saudação de boas-vindas chegar e assentar primeiro (a Z-API pode
+        // entregar fora de ordem se as mensagens saem muito próximas).
+        await new Promise(r => setTimeout(r, 8000));
         const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, mensagemAus).catch(() => null);
         await registrarConversa(lead.id, cliente.id, 'saida', mensagemAus, null, null, msgId, null, 'ausencia').catch(() => null);
       }
@@ -3682,10 +3685,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Enviada antes de qualquer fluxo, se preenchida. Não afeta o follow-up.
       await enviarBoasVindasLead(cliente, telefone);
 
-      // Ausência para lead NOVO (vindo do tráfego): aguarda 5s para a saudação
-      // chegar primeiro (a Z-API pode entregar fora de ordem se enviadas juntas),
-      // e só então dispara o aviso de ausência.
-      await new Promise(r => setTimeout(r, 5000));
+      // Ausência para lead NOVO (vindo do tráfego): se a coluna de entrada tem o
+      // toggle ligado, dispara o aviso de ausência. O delay para chegar após as
+      // boas-vindas já está dentro da função dispararAusenciaSeAplicavel.
       await dispararAusenciaSeAplicavel(cliente, { id: novoLead.rows[0].id, funil_coluna_id: null }, telefone);
 
       // Menu de Atendimento "na entrada": manda as boas-vindas (FU1) e o menu,
@@ -5912,9 +5914,6 @@ function avaliarAusencia(cliente) {
     const diaSemana = agora.getUTCDay(); // 0=domingo
     const minutosAgora = agora.getUTCHours() * 60 + agora.getUTCMinutes();
 
-    console.log('[DIAG-AUS] avaliando | dataHoje=' + dataHoje + ' diaSemana=' + diaSemana + ' minutosAgora=' + minutosAgora + ' (' + agora.getUTCHours() + ':' + String(agora.getUTCMinutes()).padStart(2,'0') + ' BRT)');
-    console.log('[DIAG-AUS] config | msg_padrao=' + JSON.stringify((cliente.ausencia_msg_padrao||'').slice(0,40)) + ' horarios=' + JSON.stringify(cliente.ausencia_horarios) + ' datas=' + JSON.stringify(cliente.ausencia_datas));
-
     const paraMin = (hhmm) => {
       const [h, m] = String(hhmm || '').split(':').map(n => parseInt(n, 10));
       if (isNaN(h)) return null;
@@ -5947,13 +5946,10 @@ function avaliarAusencia(cliente) {
     const horarios = Array.isArray(cliente.ausencia_horarios) ? cliente.ausencia_horarios : [];
     for (const h of horarios) {
       const dias = Array.isArray(h.dias) ? h.dias : [];
+      if (!dias.includes(diaSemana)) continue;
       const ini = paraMin(h.inicio);
       const fim = paraMin(h.fim);
-      const diaOk = dias.includes(diaSemana);
-      const faixaOk = dentroFaixa(ini, fim);
-      console.log('[DIAG-AUS] faixa | dias=' + JSON.stringify(dias) + ' diaSemanaOk=' + diaOk + ' inicio=' + h.inicio + ' fim=' + h.fim + ' (' + ini + '-' + fim + ') faixaOk=' + faixaOk);
-      if (!diaOk) continue;
-      if (faixaOk) {
+      if (dentroFaixa(ini, fim)) {
         // Chave por dia+faixa: o período "reinicia" a cada dia, permitindo novo aviso.
         return {
           ausente: true,
@@ -5963,7 +5959,6 @@ function avaliarAusencia(cliente) {
       }
     }
 
-    console.log('[DIAG-AUS] resultado=NAO AUSENTE (nenhuma faixa/data bateu)');
     return vazio;
   } catch (e) {
     console.error('[ausencia] erro ao avaliar:', e.message);
