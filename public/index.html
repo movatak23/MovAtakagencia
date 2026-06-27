@@ -1120,6 +1120,8 @@ const TOUR_FUNIL = [
 
 let _tourIndice = 0;
 let _tourAtivo = false;
+let _tourTelaAtual = 'inicial';
+let _tourJaDisparou = {};
 
 function tourElementoVisivel(sel) {
   const el = document.querySelector(sel);
@@ -1130,10 +1132,18 @@ function tourElementoVisivel(sel) {
   return el;
 }
 
-function iniciarTour(forcado) {
-  // Detecta a tela atual: se o funil está visível, usa o tour do funil; senão, o inicial.
-  const noFunil = !!tourElementoVisivel('#funil-board') || !!tourElementoVisivel('#painel-msg-texto');
-  const conjunto = noFunil ? TOUR_FUNIL : TOUR_INICIAL;
+function iniciarTour(forcado, telaExplicita) {
+  // Não reabre se já está rodando.
+  if (_tourAtivo) return;
+
+  // Tela: usa a explícita (do disparo automático) ou detecta pela presença do funil.
+  let tela = telaExplicita;
+  if (!tela) {
+    const noFunil = !!tourElementoVisivel('#funil-board') || !!tourElementoVisivel('#painel-msg-texto');
+    tela = noFunil ? 'funil' : 'inicial';
+  }
+  _tourTelaAtual = tela;
+  const conjunto = tela === 'funil' ? TOUR_FUNIL : TOUR_INICIAL;
 
   // Só passos cujo alvo existe na tela atual.
   const passos = conjunto.filter(p => tourElementoVisivel(p.alvo));
@@ -1200,19 +1210,21 @@ function pularTour() { fecharTour(); }
 function fecharTour() {
   _tourAtivo = false;
   document.getElementById('tour-overlay').classList.remove('ativo');
-  // Marca como visto a tela onde o tour rodou (chaves separadas).
-  const noFunil = !!tourElementoVisivel('#funil-board') || !!tourElementoVisivel('#painel-msg-texto');
-  try { localStorage.setItem(noFunil ? 'movatak-tour-funil' : 'movatak-tour-inicial', '1'); } catch(e) {}
+  // Marca como visto a tela onde o tour rodou (usa a tela guardada, não redetecta).
+  const chave = _tourTelaAtual === 'funil' ? 'movatak-tour-funil' : 'movatak-tour-inicial';
+  try { localStorage.setItem(chave, '1'); } catch(e) {}
 }
 
 // Dispara automaticamente no 1º acesso de cada tela (cada uma só uma vez).
+// Guarda _tourJaDisparou evita reagendar a cada atualização da tela.
 function talvezIniciarTourAutomatico(tela) {
   const chave = tela === 'funil' ? 'movatak-tour-funil' : 'movatak-tour-inicial';
+  if (_tourJaDisparou[tela]) return; // já tentou nesta sessão, não reagenda
   let visto = '0';
   try { visto = localStorage.getItem(chave) || '0'; } catch(e) {}
-  if (visto !== '1') {
-    setTimeout(() => iniciarTour(false), 1200); // espera a tela montar
-  }
+  if (visto === '1') return; // já viu antes
+  _tourJaDisparou[tela] = true;
+  setTimeout(() => { if (!_tourAtivo) iniciarTour(false, tela); }, 1200);
 }
 
 // Reposiciona o destaque se a janela mudar de tamanho durante o tour.
