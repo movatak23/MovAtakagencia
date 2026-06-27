@@ -993,7 +993,7 @@ function renderVendInbox() {
     return `<div class="funil-inbox-item${ativo}" onclick="abrirConversaVendedor(${l.id})">
       <div style="display:flex;justify-content:space-between"><strong style="font-size:13px">${escapeHtml(l.nome||l.telefone)}</strong>
       ${l.nao_lida ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>' : ''}</div>
-      <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtml((l.ultima_msg||'').slice(0,38))}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtml(l.ultima_msg ? String(l.ultima_msg).slice(0,38) : (rotuloMidiaInbox(l.ultima_msg_midia, '') || ''))}</div>
     </div>`;
   }).join('');
 }
@@ -6728,6 +6728,22 @@ function etapaDoLead(lead) {
   return (funilState.colunas || []).find(c => Number(c.id) === Number(lead.funil_coluna_id)) || null;
 }
 
+// Rótulo da prévia do inbox quando a mensagem é mídia (sem texto).
+// Ex: áudio → "🎤 Mensagem de voz". Retorna '' se não for mídia reconhecida.
+function rotuloMidiaInbox(midiaTipo, prefixo) {
+  if (!midiaTipo) return '';
+  const t = String(midiaTipo).toLowerCase();
+  let r = '';
+  if (t.includes('audio') || t.includes('ptt') || t.includes('voice')) r = '🎤 Mensagem de voz';
+  else if (t.includes('image') || t.includes('imagem') || t.includes('foto') || t.includes('sticker') || t.includes('figurinha')) r = '📷 Foto';
+  else if (t.includes('video')) r = '🎥 Vídeo';
+  else if (t.includes('document') || t.includes('documento') || t.includes('pdf') || t.includes('file') || t.includes('arquivo')) r = '📎 Documento';
+  else if (t.includes('location') || t.includes('localiza')) r = '📍 Localização';
+  else if (t.includes('contact') || t.includes('contato') || t.includes('vcard')) r = '👤 Contato';
+  else r = '📎 Anexo';
+  return (prefixo || '') + r;
+}
+
 function renderInboxFunil() {
   renderFiltrosInbox();
   atualizarBadgeAba();
@@ -6742,7 +6758,9 @@ function renderInboxFunil() {
     const ativo = (window._painelLeadId != null && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
     const naoLida = lead.arquivado ? false : !!lead.nao_lida;
     const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
-    const preview = lead.ultima_msg ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56) : 'Sem mensagens ainda';
+    const preview = lead.ultima_msg
+      ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56)
+      : (rotuloMidiaInbox(lead.ultima_msg_midia, prefixoVoce) || 'Sem mensagens ainda');
     const col = etapaDoLead(lead);
     const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
     return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
