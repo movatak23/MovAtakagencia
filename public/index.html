@@ -526,6 +526,23 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <div id="plano-status" class="fu-hint" style="margin-top:6px"></div>
       </div>
 
+      <!-- TREINAMENTO DA IA -->
+      <div class="form-field full" id="ia-section" style="display:none">
+        <label>🤖 TREINAMENTO DA IA (RESPOSTAS SUGERIDAS)</label>
+        <div class="fu-hint" style="margin-bottom:10px">A IA usa estas informações para sugerir respostas mais precisas e no tom do seu negócio. Quanto mais detalhado, melhores as sugestões.</div>
+
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">1. O que sua empresa vende e qual o principal diferencial?</label>
+        <textarea id="f-ia-oferta" class="fu-textarea" rows="2" style="margin-bottom:12px" placeholder="Ex: Vendemos impressão DTF UV para personalização de produtos. Diferencial: entrega rápida, qualidade premium e atendimento direto com o dono."></textarea>
+
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">2. Como a empresa gosta de falar com o cliente (tom de voz)? E o que a IA NUNCA deve fazer?</label>
+        <textarea id="f-ia-tom" class="fu-textarea" rows="2" style="margin-bottom:12px" placeholder="Ex: Tom próximo e direto, sem formalidade exagerada, sempre cordial. NUNCA prometer prazo ou desconto sem confirmar, nem inventar preço."></textarea>
+
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">3. Resumo completo da empresa (contexto livre para a IA)</label>
+        <div class="fu-hint" style="margin-bottom:6px">Preencha como se estivesse explicando seu negócio para um vendedor novo no primeiro dia. Inclua: <strong>nome e ramo</strong> da empresa; <strong>produtos/serviços</strong> e faixa de <strong>preços</strong>; <strong>quem é o cliente ideal</strong>; <strong>formas de pagamento e prazos</strong> de entrega; <strong>perguntas frequentes</strong> e como respondê-las; <strong>objeções comuns</strong> (ex: "tá caro") e como contornar; <strong>políticas</strong> (troca, garantia, frete); e qualquer <strong>regra de ouro</strong> do atendimento.</div>
+        <textarea id="f-ia-resumo" class="fu-textarea" rows="6" placeholder="Ex: A DTFclub é uma gráfica de impressão DTF UV em Recife-PE. Vendemos transfers para personalização de camisetas, canecas, garrafas e brindes. Preços a partir de R$X o metro. Cliente ideal: lojistas de confecção e brindes corporativos. Pagamento via Pix, cartão ou boleto; entrega em até X dias úteis via Correios. Dúvida comum: 'serve em qualquer tecido?' → sim, DTF UV adere em algodão, poliéster e malha. Objeção 'tá caro' → explicamos a durabilidade e o acabamento premium que justificam o valor. Política: troca em caso de defeito de impressão em até 7 dias. Regra de ouro: responder rápido e nunca deixar o cliente sem retorno."></textarea>
+        <div id="ia-status" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+
       <!-- AUSÊNCIA / FORA DE HORÁRIO -->
       <div class="form-field full" id="ausencia-section" style="display:none">
         <label>🌙 MENSAGEM DE AUSÊNCIA (FORA DO HORÁRIO)</label>
@@ -1482,6 +1499,7 @@ async function abrirEdicao(id) {
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
   document.getElementById('planos-section').style.display = '';
   document.getElementById('ausencia-section').style.display = '';
+  document.getElementById('ia-section').style.display = '';
   planosClienteId = id;
   carregarPlanos(id);
   carregarAusencia(id);
@@ -1506,6 +1524,12 @@ async function abrirEdicao(id) {
     if (bvm1) bvm1.value = c.boas_vindas_lead_msg1 || '';
     if (bvm2) bvm2.value = c.boas_vindas_lead_msg2 || '';
     if (bvd)  bvd.value  = c.boas_vindas_lead_delay != null ? c.boas_vindas_lead_delay : 5;
+    const iaOferta = document.getElementById('f-ia-oferta');
+    const iaTom = document.getElementById('f-ia-tom');
+    const iaResumo = document.getElementById('f-ia-resumo');
+    if (iaOferta) iaOferta.value = c.ia_oferta || '';
+    if (iaTom) iaTom.value = c.ia_tom || '';
+    if (iaResumo) iaResumo.value = c.ia_resumo || '';
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -1541,7 +1565,10 @@ async function salvarEdicao() {
         permissoes_portal: getPermissoesPortal(),
         boas_vindas_lead_msg1: (document.getElementById('f-boasvindas-msg1')?.value || '').trim(),
         boas_vindas_lead_msg2: (document.getElementById('f-boasvindas-msg2')?.value || '').trim(),
-        boas_vindas_lead_delay: parseInt(document.getElementById('f-boasvindas-delay')?.value) || 5
+        boas_vindas_lead_delay: parseInt(document.getElementById('f-boasvindas-delay')?.value) || 5,
+        ia_oferta: (document.getElementById('f-ia-oferta')?.value || '').trim(),
+        ia_tom: (document.getElementById('f-ia-tom')?.value || '').trim(),
+        ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim()
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
