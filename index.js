@@ -3469,13 +3469,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     if (lead && lead.funil_coluna_id) {
       try {
         const av = avaliarAusencia(cliente);
-        console.log('[DIAG-AUS] webhook | lead=' + lead.id + ' coluna=' + lead.funil_coluna_id + ' av.ausente=' + av.ausente + ' temMsg=' + !!av.mensagem);
         if (av.ausente && av.mensagem) {
           const col = await query(
             'SELECT ausencia_ativa FROM movatak_funil_colunas WHERE id = $1',
             [lead.funil_coluna_id]
           ).catch(() => ({ rows: [] }));
-          console.log('[DIAG-AUS] webhook | coluna ausencia_ativa=' + (col.rows.length ? col.rows[0].ausencia_ativa : 'COLUNA NAO ENCONTRADA'));
           if (col.rows.length && col.rows[0].ausencia_ativa) {
             // Tenta registrar que avisou neste período; índice único garante "uma vez por período".
             const reg = await query(
@@ -3485,11 +3483,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
                RETURNING id`,
               [lead.id, cliente.id, av.periodoChave]
             ).catch(() => ({ rows: [] }));
-            console.log('[DIAG-AUS] webhook | dedup insert criou linha=' + (reg.rows.length > 0) + ' periodoChave=' + av.periodoChave);
             // Só envia se o INSERT criou a linha (ou seja, ainda não tinha avisado neste período).
             if (reg.rows.length) {
               const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, av.mensagem).catch(() => null);
-              console.log('[DIAG-AUS] webhook | ENVIADO! msgId=' + msgId);
               await registrarConversa(lead.id, cliente.id, 'saida', av.mensagem, null, null, msgId, null, 'ausencia').catch(() => null);
             }
           }
@@ -5192,6 +5188,46 @@ async function chamarHaiku(systemPrompt, userPrompt) {
 
 // Gera uma sugestão de resposta para o lead, imitando o estilo das respostas
 // anteriores do próprio atendente (puxadas do histórico de conversas).
+// Transcreve um áudio (URL pública) para texto usando a API Whisper da OpenAI.
+// Requer OPENAI_API_KEY no ambiente.
+app.post('/movatak/admin/transcrever-audio', authMovatak, async (req, res) => {
+  try {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return res.status(400).json({ error: 'Transcrição não configurada (falta OPENAI_API_KEY).' });
+    const url = (req.body && req.body.url) ? String(req.body.url) : '';
+    if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'URL de áudio inválida.' });
+
+    // Baixa o áudio da URL pública (Supabase/Z-API).
+    const audioResp = await fetch(url);
+    if (!audioResp.ok) return res.status(502).json({ error: 'Não foi possível baixar o áudio.' });
+    const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
+    if (audioBuffer.length > 24 * 1024 * 1024) return res.status(413).json({ error: 'Áudio muito grande para transcrever.' });
+
+    // Monta multipart/form-data para o Whisper.
+    const nomeArq = (url.split('/').pop() || 'audio.ogg').split('?')[0] || 'audio.ogg';
+    const form = new FormData();
+    form.append('file', new Blob([audioBuffer]), nomeArq);
+    form.append('model', 'whisper-1');
+    form.append('language', 'pt');
+
+    const wResp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + apiKey },
+      body: form
+    });
+    if (!wResp.ok) {
+      const t = await wResp.text().catch(() => '');
+      return res.status(502).json({ error: 'Erro na transcrição (' + wResp.status + '): ' + t.slice(0, 160) });
+    }
+    const data = await wResp.json();
+    const texto = (data.text || '').trim();
+    if (!texto) return res.status(502).json({ error: 'Transcrição vazia.' });
+    res.json({ texto });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/movatak/admin/leads/:id/sugerir-resposta', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaConversas();
@@ -5823,10 +5859,6 @@ function avaliarAusencia(cliente) {
     const diaSemana = agora.getUTCDay(); // 0=domingo
     const minutosAgora = agora.getUTCHours() * 60 + agora.getUTCMinutes();
 
-    // [DIAG-AUS] Mostra o que a função recebeu e o momento avaliado.
-    console.log('[DIAG-AUS] avaliando | dataHoje=' + dataHoje + ' diaSemana=' + diaSemana + ' minutosAgora=' + minutosAgora + ' (' + agora.getUTCHours() + ':' + String(agora.getUTCMinutes()).padStart(2,'0') + ' BRT)');
-    console.log('[DIAG-AUS] config | msg_padrao=' + JSON.stringify(cliente.ausencia_msg_padrao || null) + ' horarios=' + JSON.stringify(cliente.ausencia_horarios) + ' datas=' + JSON.stringify(cliente.ausencia_datas));
-
     const paraMin = (hhmm) => {
       const [h, m] = String(hhmm || '').split(':').map(n => parseInt(n, 10));
       if (isNaN(h)) return null;
@@ -5872,7 +5904,6 @@ function avaliarAusencia(cliente) {
       }
     }
 
-    console.log('[DIAG-AUS] resultado=NAO AUSENTE (nenhuma faixa/data bateu)');
     return vazio;
   } catch (e) {
     console.error('[ausencia] erro ao avaliar:', e.message);
