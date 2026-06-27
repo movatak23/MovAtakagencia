@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Movatak — Painel</title>
+<link id="app-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%235b7fff'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'%3EM%3C/text%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -264,6 +265,21 @@ tr:hover td{background:var(--bg3)}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
 @keyframes pulseLembrete{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.78;transform:scale(1.04)}}
+/* ── Tour guiado / onboarding ── */
+#tour-overlay{position:fixed;inset:0;z-index:9000;pointer-events:none;display:none}
+#tour-overlay.ativo{display:block}
+#tour-backdrop{position:absolute;inset:0;pointer-events:auto;transition:clip-path .3s ease}
+#tour-spot{position:absolute;border-radius:12px;box-shadow:0 0 0 4px var(--accent),0 0 0 9999px rgba(0,0,0,.72);transition:all .3s ease;pointer-events:none}
+#tour-balao{position:absolute;max-width:340px;background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.4);pointer-events:auto;z-index:9002;transition:all .25s ease}
+#tour-balao h4{margin:0 0 8px;font-size:15px;font-weight:800;color:var(--text)}
+#tour-balao p{margin:0 0 14px;font-size:13px;line-height:1.5;color:var(--text2)}
+#tour-balao .tour-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#tour-balao .tour-step{font-size:11px;color:var(--text3);font-weight:600}
+#tour-balao .tour-btns{display:flex;gap:8px}
+#tour-balao button{border-radius:8px;font-size:12px;padding:7px 14px;cursor:pointer;font-family:var(--sans);font-weight:600;border:1px solid var(--border2)}
+#tour-balao .tour-skip{background:none;color:var(--text3);border:none;padding:7px 8px}
+#tour-balao .tour-prev{background:none;color:var(--text2)}
+#tour-balao .tour-next{background:var(--accent);color:#fff;border-color:var(--accent)}
 @keyframes pulseLeadAceso{0%,100%{box-shadow:0 0 0 0 rgba(245,166,35,.55);border-color:var(--amber)}50%{box-shadow:0 0 0 4px rgba(245,166,35,0);border-color:var(--amber)}}
 .funil-card.lead-aceso{border:2px solid var(--amber)!important;animation:pulseLeadAceso 1.6s ease-in-out infinite}
 
@@ -363,6 +379,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
       <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
       <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+      <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
     </div>
@@ -729,6 +746,7 @@ async function iniciarAppVendedor() {
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
         <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+      <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
         <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
         <button class="btn-sair" onclick="sair()">Sair</button>
       </div>
@@ -1028,6 +1046,142 @@ async function enviarMsgVendedor() {
     st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message;
   }
 }
+
+// ════════════════════════════════════════════════════════════
+// TOUR GUIADO / ONBOARDING
+// Lista de passos — ajustar áreas e textos é só editar aqui.
+// 'alvo' é um seletor CSS visível; se não achar, o passo é pulado.
+// ════════════════════════════════════════════════════════════
+const TOUR_PASSOS = [
+  {
+    alvo: '.layout-label',
+    titulo: '👀 Modos de visualização',
+    texto: 'Aqui você alterna como vê seus leads: Inbox (lista de conversas), Kanban (quadro por etapas), Chat (foco na conversa) ou tudo junto. Use o que combina com seu momento.'
+  },
+  {
+    alvo: '.btn-prioridades',
+    titulo: '🔥 Prioridades',
+    texto: 'O sistema calcula quais leads precisam de atenção AGORA — quem está esperando resposta, quem esfriou. Clique e atenda do topo pra baixo. Os mais urgentes sempre no topo.'
+  },
+  {
+    alvo: '.btn-sla',
+    titulo: '📊 SLA — Tempo de resposta',
+    texto: 'Veja por setor e por vendedor quanto tempo leva pra responder os leads, separando atendimento humano do automático. É seu raio-x de performance da equipe.'
+  },
+  {
+    alvo: '#btn-agenda',
+    titulo: '📅 Agenda',
+    texto: 'Agende retornos e compromissos com os leads. Você recebe um lembrete visual antes da hora, e o lead acende no kanban pra não passar batido.'
+  },
+  {
+    alvo: '#funil-board',
+    titulo: '🗂️ Kanban de atendimento',
+    texto: 'Cada coluna é uma etapa do seu funil. Arraste os leads conforme avançam. Dentro de cada coluna você ativa a Ausência, sincroniza o WhatsApp e liga a IA de automação.'
+  },
+  {
+    alvo: '.btn-sugerir-ia',
+    titulo: '🤖 IA que sugere respostas',
+    texto: 'Na conversa, clique aqui pra IA sugerir uma resposta no tom do seu negócio, baseada no histórico. Você revisa e envia com 1 clique. Nunca envia sozinha.'
+  },
+  {
+    alvo: '#painel-msg-texto',
+    titulo: '💬 Atendimento',
+    texto: 'Aqui você conversa com o lead direto pelo WhatsApp. Use as Respostas rápidas, anexe arquivos e mantenha tudo registrado no histórico. Bom trabalho! 🚀'
+  }
+];
+
+let _tourIndice = 0;
+let _tourAtivo = false;
+
+function tourElementoVisivel(sel) {
+  const el = document.querySelector(sel);
+  if (!el) return null;
+  const r = el.getBoundingClientRect();
+  if (r.width === 0 && r.height === 0) return null;
+  if (getComputedStyle(el).display === 'none' || getComputedStyle(el).visibility === 'hidden') return null;
+  return el;
+}
+
+function iniciarTour(forcado) {
+  // Só passos cujo alvo existe na tela atual.
+  const passos = TOUR_PASSOS.filter(p => tourElementoVisivel(p.alvo));
+  if (!passos.length) {
+    if (forcado) alert('O tour funciona melhor na tela do funil de atendimento. Abra um cliente primeiro.');
+    return;
+  }
+  _tourPassosAtivos = passos;
+  _tourIndice = 0;
+  _tourAtivo = true;
+  document.getElementById('tour-overlay').classList.add('ativo');
+  mostrarPassoTour();
+}
+
+let _tourPassosAtivos = [];
+
+function mostrarPassoTour() {
+  const passo = _tourPassosAtivos[_tourIndice];
+  if (!passo) { fecharTour(); return; }
+  const el = tourElementoVisivel(passo.alvo);
+  if (!el) { tourProximo(); return; }
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  setTimeout(() => {
+    const r = el.getBoundingClientRect();
+    const pad = 6;
+    const spot = document.getElementById('tour-spot');
+    spot.style.top = (r.top - pad) + 'px';
+    spot.style.left = (r.left - pad) + 'px';
+    spot.style.width = (r.width + pad * 2) + 'px';
+    spot.style.height = (r.height + pad * 2) + 'px';
+
+    document.getElementById('tour-titulo').textContent = passo.titulo;
+    document.getElementById('tour-texto').textContent = passo.texto;
+    document.getElementById('tour-contador').textContent = (_tourIndice + 1) + ' de ' + _tourPassosAtivos.length;
+    document.getElementById('tour-btn-prev').style.visibility = _tourIndice === 0 ? 'hidden' : 'visible';
+    document.getElementById('tour-btn-next').textContent = _tourIndice === _tourPassosAtivos.length - 1 ? 'Concluir' : 'Avançar';
+
+    // Posiciona o balão: abaixo do alvo, ou acima se não couber.
+    const balao = document.getElementById('tour-balao');
+    const bw = 340, bh = balao.offsetHeight || 160;
+    let top = r.bottom + 14;
+    let left = r.left + (r.width / 2) - (bw / 2);
+    if (top + bh > window.innerHeight - 10) top = r.top - bh - 14;
+    if (top < 10) top = 10;
+    left = Math.max(10, Math.min(left, window.innerWidth - bw - 10));
+    balao.style.top = top + 'px';
+    balao.style.left = left + 'px';
+  }, 320);
+}
+
+function tourProximo() {
+  if (_tourIndice >= _tourPassosAtivos.length - 1) { fecharTour(); return; }
+  _tourIndice++;
+  mostrarPassoTour();
+}
+
+function tourAnterior() {
+  if (_tourIndice > 0) { _tourIndice--; mostrarPassoTour(); }
+}
+
+function pularTour() { fecharTour(); }
+
+function fecharTour() {
+  _tourAtivo = false;
+  document.getElementById('tour-overlay').classList.remove('ativo');
+  try { localStorage.setItem('movatak-tour-visto', '1'); } catch(e) {}
+}
+
+// Dispara automaticamente no 1º acesso (só uma vez).
+function talvezIniciarTourAutomatico() {
+  let visto = '0';
+  try { visto = localStorage.getItem('movatak-tour-visto') || '0'; } catch(e) {}
+  if (visto !== '1') {
+    setTimeout(() => iniciarTour(false), 1200); // espera a tela montar
+  }
+}
+
+// Reposiciona o destaque se a janela mudar de tamanho durante o tour.
+window.addEventListener('resize', () => { if (_tourAtivo) mostrarPassoTour(); });
 
 function iniciar() {
   document.getElementById('login-screen').classList.add('hidden');
@@ -6250,6 +6404,7 @@ async function carregarFunilAtendimento() {
     if (primeiraCarga) iniciarLoopLembretes();
     else verificarLembretesAgenda();
     atualizarBadgePrioridades();
+    if (primeiraCarga) talvezIniciarTourAutomatico();
   } catch (e) {
     if (primeiraCarga) {
       board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
@@ -6315,6 +6470,35 @@ function contagemInbox(tipo) {
   if (tipo === 'nao_lidos') return base.filter(l => !l.arquivado && l.nao_lida).length;
   if (tipo === 'nao_atribuidos') return base.filter(l => !l.arquivado && !l.vendedor_id).length;
   return 0;
+}
+
+// Atualiza o título da aba e o favicon com a quantidade de não lidas (estilo WhatsApp Web).
+function atualizarBadgeAba() {
+  let n = 0;
+  try { n = contagemInbox('nao_lidos') || 0; } catch (e) { n = 0; }
+  const base = 'Movatak — Painel';
+  document.title = n > 0 ? '(' + n + ') ' + base : base;
+
+  const fav = document.getElementById('app-favicon');
+  if (!fav) return;
+  // Logo base (M azul). Com não lidas, adiciona uma bolinha vermelha com o número.
+  let svg;
+  if (n > 0) {
+    const txt = n > 99 ? '99+' : String(n);
+    const fs = txt.length >= 3 ? 20 : (txt.length === 2 ? 24 : 28);
+    svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        + "<rect width='64' height='64' rx='14' fill='#5b7fff'/>"
+        + "<text x='50%' y='50%' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'>M</text>"
+        + "<circle cx='46' cy='18' r='17' fill='#ff3b3b' stroke='white' stroke-width='3'/>"
+        + "<text x='46' y='18' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='" + fs + "' font-weight='800' fill='white'>" + txt + "</text>"
+        + "</svg>";
+  } else {
+    svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        + "<rect width='64' height='64' rx='14' fill='#5b7fff'/>"
+        + "<text x='50%' y='50%' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'>M</text>"
+        + "</svg>";
+  }
+  fav.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
 }
 
 function leadsFiltradosInbox() {
@@ -6408,6 +6592,7 @@ function etapaDoLead(lead) {
 
 function renderInboxFunil() {
   renderFiltrosInbox();
+  atualizarBadgeAba();
   const box = document.getElementById('funil-inbox-lista');
   if (!box) return;
   const lista = leadsFiltradosInbox();
@@ -7826,6 +8011,23 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .modal-x{position:absolute;top:14px;right:16px;background:transparent;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1;padding:4px;z-index:2}
 .modal-x:hover{color:var(--text)}
 </style>
+
+<div id="tour-overlay">
+  <div id="tour-backdrop"></div>
+  <div id="tour-spot"></div>
+  <div id="tour-balao">
+    <h4 id="tour-titulo"></h4>
+    <p id="tour-texto"></p>
+    <div class="tour-actions">
+      <button class="tour-skip" onclick="pularTour()">Pular tour</button>
+      <span class="tour-step" id="tour-contador"></span>
+      <div class="tour-btns">
+        <button class="tour-prev" id="tour-btn-prev" onclick="tourAnterior()">Voltar</button>
+        <button class="tour-next" id="tour-btn-next" onclick="tourProximo()">Avançar</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <div class="modal-overlay" id="modal-reset">
   <div class="modal" style="max-width:440px">
