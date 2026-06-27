@@ -7463,6 +7463,8 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-3col-grid.hide-kanban.hide-chat .funil-inbox-col{display:flex}
 .funil-3col-grid.hide-inbox.hide-kanban{grid-template-columns:minmax(420px,1fr)}
 .funil-3col-grid.hide-inbox.hide-kanban .funil-chat-col{display:flex}
+/* Sem o kanban, a caixa de digitação ganha mais altura para escrever confortável */
+.funil-3col-grid.hide-kanban #painel-msg-texto{min-height:200px}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat{grid-template-columns:1fr}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-chat-col{display:flex}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-kanban-col,
