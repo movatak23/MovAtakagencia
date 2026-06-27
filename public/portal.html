@@ -116,8 +116,8 @@ const NOME_KEY = 'movatak-portal-nome';
 window.addEventListener('DOMContentLoaded', () => {
   const t = localStorage.getItem(TOKEN_KEY);
   if (t) {
-    // Etapa 3 vai redirecionar para portal-painel.html aqui.
-    // window.location.href = 'portal-painel.html';
+    window.location.href = 'portal-painel.html';
+    return;
   }
   // Enter envia
   document.getElementById('senha').addEventListener('keydown', e => {
@@ -158,11 +158,7 @@ async function fazerLogin() {
     localStorage.setItem(NOME_KEY, data.nome || '');
     msg.style.color = 'var(--green)';
     msg.textContent = '✓ Bem-vindo, ' + (data.nome || '') + '! Entrando...';
-    // Etapa 3: redireciona para o painel do cliente.
-    setTimeout(() => {
-      // window.location.href = 'portal-painel.html';
-      msg.textContent = '✓ Login OK. O painel será construído na próxima etapa.';
-    }, 800);
+    setTimeout(() => { window.location.href = 'portal-painel.html'; }, 600);
   } catch (e) {
     msg.style.color = 'var(--red)';
     msg.textContent = 'Erro de conexão: ' + e.message;
