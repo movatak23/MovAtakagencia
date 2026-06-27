@@ -161,6 +161,9 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS followup_msgs_v2 JSONB DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS trigger_msg TEXT,
     ADD COLUMN IF NOT EXISTS nicho TEXT,
+    ADD COLUMN IF NOT EXISTS ia_oferta TEXT,
+    ADD COLUMN IF NOT EXISTS ia_tom TEXT,
+    ADD COLUMN IF NOT EXISTS ia_resumo TEXT,
     ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
   await query(`UPDATE movatak_clientes
      SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
@@ -1514,7 +1517,8 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
     await garantirColunasClientesPortal();
     const r = await query(
       `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
-              boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay
+              boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay,
+              ia_oferta, ia_tom, ia_resumo
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -1529,7 +1533,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay } = req.body;
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance) {
       return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
@@ -1547,6 +1551,9 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
     if (boas_vindas_lead_msg1 !== undefined) { campos.push('boas_vindas_lead_msg1 = $' + idx); valores.push(boas_vindas_lead_msg1 || null); idx++; }
     if (boas_vindas_lead_msg2 !== undefined) { campos.push('boas_vindas_lead_msg2 = $' + idx); valores.push(boas_vindas_lead_msg2 || null); idx++; }
     if (boas_vindas_lead_delay !== undefined) { campos.push('boas_vindas_lead_delay = $' + idx); valores.push(parseInt(boas_vindas_lead_delay) || 5); idx++; }
+    if (ia_oferta !== undefined) { campos.push('ia_oferta = $' + idx); valores.push(ia_oferta || null); idx++; }
+    if (ia_tom !== undefined) { campos.push('ia_tom = $' + idx); valores.push(ia_tom || null); idx++; }
+    if (ia_resumo !== undefined) { campos.push('ia_resumo = $' + idx); valores.push(ia_resumo || null); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
@@ -5142,7 +5149,8 @@ app.get('/movatak/admin/leads/:id/sugerir-resposta', authMovatak, async (req, re
     const leadR = await query(
       `SELECT l.nome, l.telefone, l.etapa, l.cliente_id,
               p.nome AS plano_nome, p.valor AS plano_valor,
-              s.nome AS setor_nome, c.nome AS empresa_nome
+              s.nome AS setor_nome, c.nome AS empresa_nome,
+              c.ia_oferta, c.ia_tom, c.ia_resumo
          FROM movatak_leads l
          LEFT JOIN movatak_planos p ON p.id = l.plano_id
          LEFT JOIN movatak_setores s ON s.id = l.setor_id
@@ -5168,12 +5176,24 @@ app.get('/movatak/admin/leads/:id/sugerir-resposta', authMovatak, async (req, re
     ).join('\n');
     const exemplosTxt = estiloR.rows.map(r => '- ' + r.conteudo.replace(/\n+/g, ' ')).join('\n') || '(sem exemplos)';
 
+    // Conhecimento da empresa (preenchido no menu Editar → Treinamento da IA).
+    let baseConhecimento = '';
+    if (lead.ia_oferta || lead.ia_tom || lead.ia_resumo) {
+      baseConhecimento = `\n\nCONHECIMENTO SOBRE A EMPRESA (use como base, é a fonte da verdade):\n`;
+      if (lead.ia_oferta) baseConhecimento += `O que vende e diferencial: ${lead.ia_oferta}\n`;
+      if (lead.ia_tom) baseConhecimento += `Tom de voz e regras: ${lead.ia_tom}\n`;
+      if (lead.ia_resumo) baseConhecimento += `Resumo do negócio: ${lead.ia_resumo}\n`;
+    }
+
     const systemPrompt = `Você é um atendente de vendas da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
       `Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, em português brasileiro, no tom de WhatsApp: ` +
-      `natural, direto, cordial e objetivo. Imite o estilo dos exemplos de respostas reais da equipe abaixo. ` +
-      `Não invente preços, prazos ou condições que não estejam no contexto. Se faltar informação, faça uma pergunta ` +
-      `curta para avançar a conversa. Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.\n\n` +
-      `EXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
+      `natural, direto, cordial e objetivo. Use o CONHECIMENTO SOBRE A EMPRESA abaixo como base — siga o tom de voz, ` +
+      `as regras e as informações descritas ali. Imite também o estilo dos exemplos de respostas reais da equipe. ` +
+      `Não invente preços, prazos ou condições que não estejam no conhecimento da empresa ou na conversa. ` +
+      `Se faltar informação, faça uma pergunta curta para avançar. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
+      `Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.` +
+      baseConhecimento +
+      `\n\nEXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
 
     const userPrompt =
       `CONTEXTO DO LEAD:\n` +
