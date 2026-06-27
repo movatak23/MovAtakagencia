@@ -825,8 +825,8 @@ async function iniciarAppVendedor() {
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
                   <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-                  <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
                     <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
@@ -5819,8 +5819,8 @@ async function iniciarPaginaFunilAtendimento() {
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
                   <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
                 </div>
-                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-                  <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
                     <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
@@ -6524,13 +6524,13 @@ function renderFunilAtendimento() {
           <input type="checkbox" ${col.ausencia_ativa ? 'checked' : ''} onchange="toggleAusenciaColuna(${col.id}, this.checked)" style="cursor:pointer">
           🌙 Ausência
         </label>
-        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px;white-space:nowrap;font-family:var(--sans)">🔄 Sync Zap</button>
+        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="white-space:nowrap">Sync Zap</button>
       </div>
-      <div class="funil-col-actions" style="display:flex;gap:6px">
-        <label style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
+      <div class="funil-col-actions">
+        <label style="font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none">
           <input type="checkbox" data-select-col="${col.id}" onchange="selecionarTodosColuna(${col.id}, this.checked)" style="cursor:pointer"> Selecionar todos
         </label>
-        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="flex:1;font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--accent);border-radius:7px;padding:6px 8px;font-weight:600">
+        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;gap:4px;user-select:none;font-weight:600">
           <input type="checkbox" ${col.ia_ativa ? 'checked' : ''} onchange="toggleIAColuna(${col.id}, this.checked)" style="cursor:pointer"> 🤖 AI
         </label>
       </div>
@@ -7463,8 +7463,6 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-3col-grid.hide-kanban.hide-chat .funil-inbox-col{display:flex}
 .funil-3col-grid.hide-inbox.hide-kanban{grid-template-columns:minmax(420px,1fr)}
 .funil-3col-grid.hide-inbox.hide-kanban .funil-chat-col{display:flex}
-/* Sem o kanban, a caixa de digitação ganha mais altura para escrever confortável */
-.funil-3col-grid.hide-kanban #painel-msg-texto{min-height:200px}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat{grid-template-columns:1fr}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-chat-col{display:flex}
 .funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-kanban-col,
