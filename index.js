@@ -6808,6 +6808,63 @@ app.get('/movatak/admin/templates-followup', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Atualiza as mensagens do TEMPLATE que o cliente usa (c.template_id).
+// Como a automação lê do template, a edição vale para toda automação que o usa.
+app.patch('/movatak/admin/clientes/:id/template-followup-mensagens', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaCampanhasTemplates();
+    const recebido = req.body.followup_v2 || {};
+    const followup_v2 = {
+      fu1: {
+        msg1: String((recebido.fu1 && recebido.fu1.msg1) || '').trim(),
+        msg2: String((recebido.fu1 && recebido.fu1.msg2) || '').trim()
+      },
+      fu2: {
+        msg1: String((recebido.fu2 && recebido.fu2.msg1) || '').trim(),
+        msg2: String((recebido.fu2 && recebido.fu2.msg2) || '').trim(),
+        msg3: String((recebido.fu2 && recebido.fu2.msg3) || '').trim()
+      }
+    };
+
+    // Descobre qual template o cliente usa.
+    const cli = await query('SELECT template_id FROM movatak_clientes WHERE id = $1', [req.params.id]);
+    if (!cli.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const templateId = cli.rows[0].template_id;
+    if (!templateId) {
+      return res.status(400).json({ error: 'Este cliente não usa um template. Use "Salvar follow-up" para salvar direto no cliente.' });
+    }
+
+    // Atualiza o template (vale para todos que o usam).
+    const upd = await query(
+      `UPDATE movatak_followup_templates
+          SET followup_v2 = $1::jsonb
+        WHERE id = $2 AND ativo = true
+        RETURNING id, nome`,
+      [JSON.stringify(followup_v2), templateId]
+    );
+    if (!upd.rows.length) return res.status(404).json({ error: 'Template não encontrado.' });
+
+    // Conta em quantas campanhas/clientes esse template é usado (para informar o usuário).
+    const usoCamp = await query(
+      `SELECT COUNT(*)::int AS total FROM movatak_campanhas WHERE template_id = $1 AND ativo = true AND excluida_em IS NULL`,
+      [templateId]
+    ).catch(() => ({ rows: [{ total: 0 }] }));
+    const usoCli = await query(
+      `SELECT COUNT(*)::int AS total FROM movatak_clientes WHERE template_id = $1`,
+      [templateId]
+    ).catch(() => ({ rows: [{ total: 0 }] }));
+
+    res.json({
+      ok: true,
+      template: upd.rows[0],
+      usado_em_campanhas: usoCamp.rows[0].total,
+      usado_em_clientes: usoCli.rows[0].total
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
