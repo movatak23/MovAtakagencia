@@ -621,6 +621,60 @@ async function leadRespondeuRecentemente(leadId, horas) {
   }
 }
 
+// Dispara a mensagem de ausência para um lead, se aplicável.
+// Regra: toggle da coluna LIGADO → dispara sempre (override de horário).
+// Sem toggle → usa avaliarAusencia (horário). Lead sem coluna → usa coluna de entrada.
+// Dedup garante no máximo uma vez por período (dia, no caso do toggle).
+async function dispararAusenciaSeAplicavel(cliente, lead, telefone) {
+  try {
+    if (!lead) return;
+    let colunaAvaliar = lead.funil_coluna_id;
+    if (!colunaAvaliar) {
+      const ent = await query(
+        `SELECT id FROM movatak_funil_colunas
+          WHERE cliente_id = $1 AND ativo = true
+          ORDER BY ordem ASC, id ASC LIMIT 1`,
+        [cliente.id]
+      ).catch(() => ({ rows: [] }));
+      if (ent.rows.length) colunaAvaliar = ent.rows[0].id;
+    }
+    if (!colunaAvaliar) return;
+
+    const col = await query(
+      'SELECT ausencia_ativa FROM movatak_funil_colunas WHERE id = $1',
+      [colunaAvaliar]
+    ).catch(() => ({ rows: [] }));
+    const togglerLigado = col.rows.length && col.rows[0].ausencia_ativa;
+
+    let deveAvisar = false, mensagemAus = '', periodoChave = '';
+    if (togglerLigado) {
+      mensagemAus = (cliente.ausencia_msg_padrao || '').trim();
+      const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
+      periodoChave = 'toggle:' + hojeBRT;
+      deveAvisar = !!mensagemAus;
+    } else {
+      const av = avaliarAusencia(cliente);
+      if (av.ausente && av.mensagem) { deveAvisar = true; mensagemAus = av.mensagem; periodoChave = av.periodoChave; }
+    }
+
+    if (deveAvisar && mensagemAus) {
+      const reg = await query(
+        `INSERT INTO movatak_ausencia_enviada (lead_id, cliente_id, periodo_chave)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (lead_id, periodo_chave) DO NOTHING
+         RETURNING id`,
+        [lead.id, cliente.id, periodoChave]
+      ).catch(() => ({ rows: [] }));
+      if (reg.rows.length) {
+        const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, mensagemAus).catch(() => null);
+        await registrarConversa(lead.id, cliente.id, 'saida', mensagemAus, null, null, msgId, null, 'ausencia').catch(() => null);
+      }
+    }
+  } catch (e) {
+    console.error('[ausencia] erro ao processar:', e.message);
+  }
+}
+
 async function localizarCampanhaPorGatilho(clienteId, texto) {
   try {
     const r = await query(
@@ -3463,36 +3517,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       return;
     }
 
-    // ===== MENSAGEM DE AUSÊNCIA =====
-    // Se o lead está numa coluna do kanban com ausência ativada, e o momento atual
-    // cai num período de ausência configurado, manda o aviso — uma vez por período.
-    if (lead && lead.funil_coluna_id) {
-      try {
-        const av = avaliarAusencia(cliente);
-        if (av.ausente && av.mensagem) {
-          const col = await query(
-            'SELECT ausencia_ativa FROM movatak_funil_colunas WHERE id = $1',
-            [lead.funil_coluna_id]
-          ).catch(() => ({ rows: [] }));
-          if (col.rows.length && col.rows[0].ausencia_ativa) {
-            // Tenta registrar que avisou neste período; índice único garante "uma vez por período".
-            const reg = await query(
-              `INSERT INTO movatak_ausencia_enviada (lead_id, cliente_id, periodo_chave)
-               VALUES ($1, $2, $3)
-               ON CONFLICT (lead_id, periodo_chave) DO NOTHING
-               RETURNING id`,
-              [lead.id, cliente.id, av.periodoChave]
-            ).catch(() => ({ rows: [] }));
-            // Só envia se o INSERT criou a linha (ou seja, ainda não tinha avisado neste período).
-            if (reg.rows.length) {
-              const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, av.mensagem).catch(() => null);
-              await registrarConversa(lead.id, cliente.id, 'saida', av.mensagem, null, null, msgId, null, 'ausencia').catch(() => null);
-            }
-          }
-        }
-      } catch (e) {
-        console.error('[ausencia] erro ao processar:', e.message);
-      }
+    // ===== MENSAGEM DE AUSÊNCIA (lead já existente) =====
+    // Toggle da coluna ligado → dispara sempre; senão, por horário. Dedup por período.
+    if (lead) {
+      await dispararAusenciaSeAplicavel(cliente, lead, telefone);
     }
 
     // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
@@ -3653,6 +3681,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // PASSO ZERO: Boas-Vindas ao Lead (saudação independente, invisível ao sistema).
       // Enviada antes de qualquer fluxo, se preenchida. Não afeta o follow-up.
       await enviarBoasVindasLead(cliente, telefone);
+
+      // Ausência para lead NOVO (vindo do tráfego): se a coluna de entrada tem o
+      // toggle ligado, dispara o aviso de ausência logo após as boas-vindas.
+      await dispararAusenciaSeAplicavel(cliente, { id: novoLead.rows[0].id, funil_coluna_id: null }, telefone);
 
       // Menu de Atendimento "na entrada": manda as boas-vindas (FU1) e o menu,
       // e PARA aqui — o questionário/follow-up segue só após o lead escolher o setor.
