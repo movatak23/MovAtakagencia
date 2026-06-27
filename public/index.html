@@ -809,7 +809,7 @@ async function iniciarAppVendedor() {
                 <div style="display:flex;gap:8px;align-items:center">
                   <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
                   <div style="position:relative">
-                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋ Recursos</button>
+                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
                     <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
                       <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Enviar recurso Z-API</div>
                       <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('document')">📄 Documento/PDF</button>
@@ -838,7 +838,7 @@ async function iniciarAppVendedor() {
                     <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
-                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 Sugerir</button>
+                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 IA</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
@@ -2698,7 +2698,7 @@ async function sugerirRespostaIA() {
   } catch (e) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro na IA: ' + e.message; }
   } finally {
-    botoes.forEach(b => { b.disabled = false; b.textContent = '🤖 Sugerir'; });
+    botoes.forEach(b => { b.disabled = false; b.textContent = '🤖 IA'; });
   }
 }
 
@@ -5307,6 +5307,16 @@ function calcularScorePrioridade(lead) {
   return Math.round(score);
 }
 
+// Leads dispensados manualmente do painel de prioridades (só nesta sessão).
+let _prioridadesDispensadas = new Set();
+
+function dispensarPrioridade(ev, leadId) {
+  if (ev) ev.stopPropagation();
+  _prioridadesDispensadas.add(Number(leadId));
+  renderPainelPrioridades();
+  atualizarBadgePrioridades();
+}
+
 function leadsPriorizados() {
   const leads = (funilState.leads || []).map(l => {
     // anexa o nome da coluna para a regra de etapa quente
@@ -5315,7 +5325,7 @@ function leadsPriorizados() {
   });
   return leads
     .map(l => ({ lead: l, score: calcularScorePrioridade(l) }))
-    .filter(x => x.score > 0)
+    .filter(x => x.score > 0 && !_prioridadesDispensadas.has(Number(x.lead.id)))
     .sort((a, b) => b.score - a.score);
 }
 
@@ -5394,14 +5404,17 @@ function renderPainelPrioridades() {
     const aguardando = l.ultima_msg_direcao === 'entrada' || l.nao_lida === true;
     const tag = aguardando ? 'aguardando resposta' : 'parado';
     const nome = escapeHtml(l.nome || l.telefone || 'Lead');
-    return `<div onclick="atenderPrioridade(${l.id})" style="background:var(--bg3);border:1px solid var(--border);border-left:4px solid ${cor};border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-        <div style="font-weight:700;font-size:14px;color:var(--text)">${i + 1}. ${nome}</div>
-        <div style="font-size:11px;font-weight:700;color:${cor}">${rotuloEspera(l)}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
-        <span style="background:${cor};color:#fff;border-radius:6px;padding:1px 7px;font-weight:600">${tag}</span>
-        ${l._colunaNome ? '<span>· ' + escapeHtml(l._colunaNome) + '</span>' : ''}
+    return `<div style="position:relative;background:var(--bg3);border:1px solid var(--border);border-left:4px solid ${cor};border-radius:10px;padding:12px 14px;margin-bottom:10px;transition:border-color .2s" onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+      <button onclick="dispensarPrioridade(event, ${l.id})" title="Dispensar — mostra o próximo" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--text3);font-size:15px;line-height:1;cursor:pointer;padding:2px 5px;border-radius:6px" onmouseover="this.style.color='var(--red)';this.style.background='var(--bg4)'" onmouseout="this.style.color='var(--text3)';this.style.background='none'">✕</button>
+      <div onclick="atenderPrioridade(${l.id})" style="cursor:pointer;padding-right:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div style="font-weight:700;font-size:14px;color:var(--text)">${i + 1}. ${nome}</div>
+          <div style="font-size:11px;font-weight:700;color:${cor}">${rotuloEspera(l)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+          <span style="background:${cor};color:#fff;border-radius:6px;padding:1px 7px;font-weight:600">${tag}</span>
+          ${l._colunaNome ? '<span>· ' + escapeHtml(l._colunaNome) + '</span>' : ''}
+        </div>
       </div>
     </div>`;
   }).join('');
@@ -5534,7 +5547,7 @@ async function iniciarPaginaFunilAtendimento() {
                 <div style="display:flex;gap:8px;align-items:center">
                   <button class="btn-save" style="flex:1;padding:8px" onclick="enviarMensagemPainel()">Enviar</button>
                   <div style="position:relative">
-                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋ Recursos</button>
+                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
                     <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
                       <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Enviar recurso Z-API</div>
                       <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('document')">📄 Documento/PDF</button>
@@ -5563,7 +5576,7 @@ async function iniciarPaginaFunilAtendimento() {
                     <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
-                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 Sugerir</button>
+                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 IA</button>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
