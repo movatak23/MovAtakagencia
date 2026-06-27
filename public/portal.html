@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Portal do Cliente — Movatak</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%235b7fff'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'%3EM%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0f1118;
+  --bg2: #161922;
+  --bg3: #1c2030;
+  --bg4: #232838;
+  --border: #252a3a;
+  --border2: #333a4f;
+  --text: #eef1f8;
+  --text2: #9aa3b8;
+  --text3: #5f6982;
+  --accent: #5b7fff;
+  --green: #00d084;
+  --red: #ff5a5a;
+  --sans: 'Inter', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--sans);
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  /* atmosfera: leve glow azul no fundo */
+  background-image: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(91,127,255,.12), transparent 60%);
+}
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--bg2);
+  border: 1px solid var(--border2);
+  border-radius: 18px;
+  padding: 36px 32px;
+  box-shadow: 0 24px 60px rgba(0,0,0,.4);
+}
+.logo {
+  width: 56px; height: 56px;
+  border-radius: 14px;
+  background: var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 30px; font-weight: 800; color: #fff;
+  margin: 0 auto 20px;
+}
+h1 { font-size: 20px; font-weight: 800; text-align: center; margin-bottom: 4px; }
+.sub { font-size: 13px; color: var(--text2); text-align: center; margin-bottom: 28px; }
+label { font-size: 12px; color: var(--text2); font-weight: 600; display: block; margin-bottom: 6px; }
+input {
+  width: 100%;
+  background: var(--bg3);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  padding: 12px 14px;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  margin-bottom: 16px;
+  transition: border-color .15s;
+}
+input:focus { outline: none; border-color: var(--accent); }
+.btn {
+  width: 100%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 13px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--sans);
+  cursor: pointer;
+  transition: opacity .15s;
+}
+.btn:hover { opacity: .92; }
+.btn:disabled { opacity: .6; cursor: default; }
+.msg { font-size: 13px; margin-top: 14px; text-align: center; min-height: 18px; }
+.foot { text-align: center; font-size: 11px; color: var(--text3); margin-top: 22px; }
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="logo">M</div>
+    <h1>Portal do Cliente</h1>
+    <div class="sub">Acesse para gerenciar sua operação</div>
+
+    <label for="email">Email</label>
+    <input type="email" id="email" placeholder="voce@empresa.com.br" autocomplete="username">
+
+    <label for="senha">Senha</label>
+    <input type="password" id="senha" placeholder="Sua senha" autocomplete="current-password">
+
+    <button class="btn" id="btn-login" onclick="fazerLogin()">Entrar</button>
+    <div class="msg" id="msg"></div>
+
+    <div class="foot">Movatak · Marketing Sem Agência</div>
+  </div>
+
+<script>
+const API_BASE = 'https://movatakagencia-production.up.railway.app';
+const TOKEN_KEY = 'movatak-portal-token';
+const NOME_KEY = 'movatak-portal-nome';
+
+// Se já está logado, vai direto pro painel (próxima etapa).
+// Por ora, apenas mantém o token; o redirecionamento será ativado na Etapa 3.
+window.addEventListener('DOMContentLoaded', () => {
+  const t = localStorage.getItem(TOKEN_KEY);
+  if (t) {
+    // Etapa 3 vai redirecionar para portal-painel.html aqui.
+    // window.location.href = 'portal-painel.html';
+  }
+  // Enter envia
+  document.getElementById('senha').addEventListener('keydown', e => {
+    if (e.key === 'Enter') fazerLogin();
+  });
+  document.getElementById('email').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('senha').focus();
+  });
+});
+
+async function fazerLogin() {
+  const email = document.getElementById('email').value.trim();
+  const senha = document.getElementById('senha').value;
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('btn-login');
+  if (!email || !senha) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Preencha email e senha.';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Entrando...';
+  msg.style.color = 'var(--text2)'; msg.textContent = '';
+  try {
+    const resp = await fetch(API_BASE + '/movatak/app/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      msg.style.color = 'var(--red)';
+      msg.textContent = data.error || 'Não foi possível entrar.';
+      btn.disabled = false; btn.textContent = 'Entrar';
+      return;
+    }
+    // Guarda o token e o nome para as próximas telas.
+    localStorage.setItem(TOKEN_KEY, data.app_token);
+    localStorage.setItem(NOME_KEY, data.nome || '');
+    msg.style.color = 'var(--green)';
+    msg.textContent = '✓ Bem-vindo, ' + (data.nome || '') + '! Entrando...';
+    // Etapa 3: redireciona para o painel do cliente.
+    setTimeout(() => {
+      // window.location.href = 'portal-painel.html';
+      msg.textContent = '✓ Login OK. O painel será construído na próxima etapa.';
+    }, 800);
+  } catch (e) {
+    msg.style.color = 'var(--red)';
+    msg.textContent = 'Erro de conexão: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Entrar';
+  }
+}
+</script>
+</body>
+</html>
