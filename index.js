@@ -6823,6 +6823,9 @@ app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
 app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
+    // Desvincula os leads que usam este plano (evita o bloqueio da foreign key).
+    // Os leads continuam existindo, apenas sem plano associado.
+    await query('UPDATE movatak_leads SET plano_id = NULL, atualizado_em = NOW() WHERE plano_id = $1', [req.params.id]).catch(() => null);
     await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]).catch(() => null);
     await query('DELETE FROM movatak_planos WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -7615,6 +7618,7 @@ async function garantirEstruturaAgenda() {
     ADD COLUMN IF NOT EXISTS observacao TEXT,
     ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER,
     ADD COLUMN IF NOT EXISTS cancelado_em TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS lembrete_min INTEGER DEFAULT 0,
     ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_cliente_inicio ON movatak_agendamentos(cliente_id, inicio)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_lead ON movatak_agendamentos(lead_id)`).catch(() => null);
@@ -8053,15 +8057,16 @@ app.post('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, re
   try {
     await garantirEstruturaAgenda();
     const clienteId = parseInt(req.params.id, 10);
-    const { lead_id, titulo, tipo, inicio, fim, status, observacao, coluna_id, mover_kanban } = req.body || {};
+    const { lead_id, titulo, tipo, inicio, fim, status, observacao, coluna_id, mover_kanban, lembrete_min } = req.body || {};
     if (!titulo || !inicio) return res.status(400).json({ error: 'Título e data/horário são obrigatórios.' });
     const tipoNorm = String(tipo || 'atendimento').trim().toLowerCase();
+    const lembreteNorm = [5, 15, 30, 60].includes(Number(lembrete_min)) ? Number(lembrete_min) : 0;
     const colunaDestino = await buscarColunaAgenda(clienteId, tipoNorm, coluna_id || null);
     const ins = await query(
-      `INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      `INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id, lembrete_min)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
        RETURNING *`,
-      [clienteId, lead_id || null, titulo, tipoNorm, status || 'agendado', inicio, fim || null, observacao || null, colunaDestino]
+      [clienteId, lead_id || null, titulo, tipoNorm, status || 'agendado', inicio, fim || null, observacao || null, colunaDestino, lembreteNorm]
     );
     if (lead_id && colunaDestino && mover_kanban !== false) {
       await moverLeadParaColunaFunil(lead_id, colunaDestino, true).catch(e => console.error('[agenda][mover-kanban]', e.message));
