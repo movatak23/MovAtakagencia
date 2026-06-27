@@ -31,6 +31,8 @@
   --msg-text-in: #e8e8f8;
   --msg-time-out: #93c5fd;
   --msg-time-in: #888;
+  --msg-acao-out: rgba(255,255,255,.92);
+  --msg-acao-in: #d8d8e8;
 }
 
 html.light-mode {
@@ -53,6 +55,8 @@ html.light-mode {
   --msg-text-in: #1a1a2e;
   --msg-time-out: #93c5fd;
   --msg-time-in: #8b8b9f;
+  --msg-acao-out: rgba(255,255,255,.92);
+  --msg-acao-in: #1a1a2e;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
@@ -2279,22 +2283,22 @@ function renderBolhaMensagemPainel(m) {
   const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
   const podeApagar = m.id && m.fonte !== 'zapi';
   const btnResponder = m.id
-    ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↩</button>`
+    ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">↩</button>`
     : '';
   const btnReagir = (m.id && m.msg_id)
-    ? `<button onclick="reagirMensagemPainel(${Number(m.id)})" title="Reagir com emoji" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">😊</button>`
+    ? `<button onclick="reagirMensagemPainel(${Number(m.id)})" title="Reagir com emoji" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">😊</button>`
     : '';
   const btnEncaminhar = (m.id && m.msg_id)
-    ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">↪</button>`
+    ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">↪</button>`
     : '';
   const btnEditar = (saida && m.id && m.msg_id && !m.midia_url)
-    ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:rgba(255,255,255,.70);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
+    ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:var(--msg-acao-out);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
     : '';
   const btnLidaZap = (!saida && m.id && m.msg_id)
-    ? `<button onclick="marcarMensagemZapComoLida(${Number(m.id)})" title="Marcar esta mensagem como lida no WhatsApp" style="background:none;border:none;color:var(--text2);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✓</button>`
+    ? `<button onclick="marcarMensagemZapComoLida(${Number(m.id)})" title="Marcar esta mensagem como lida no WhatsApp" style="background:none;border:none;color:var(--msg-acao-in);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✓</button>`
     : '';
   const btnApagar = podeApagar
-    ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'rgba(255,255,255,.55)' : 'var(--msg-time-in)'};cursor:pointer;font-size:11px;padding:0;margin-left:6px">🗑</button>`
+    ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:12px;padding:0;margin-left:6px">🗑</button>`
     : '';
   const statusTxt = saida && m.msg_status ? `<span class="zap-msg-status" title="Status WhatsApp: ${escapeHtml(m.msg_status)}"> · ${escapeHtml(formatarStatusZap(m.msg_status))}</span>` : '';
   return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
