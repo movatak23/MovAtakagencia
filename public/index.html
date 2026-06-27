@@ -359,6 +359,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
       <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
+      <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
       <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
       <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
@@ -703,6 +704,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
         <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
+        <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
         <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
         <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
@@ -5240,6 +5242,152 @@ function iniciarLoopLembretes() {
   }, 30000);
 }
 
+// ── PRIORIDADES — score de urgência por lead ─────────────────
+// Combina 3 fatores com dado que a query do funil já entrega:
+//  1) Aguardando resposta (última msg foi do lead) — peso forte, cresce com a espera
+//  2) Tempo parado (dias desde a última interação)
+//  3) Etapa avançada esfriando (negociação parada pesa mais)
+// A lista mostra os 5 mais urgentes; ao atender, o lead sai e entra o próximo.
+
+function calcularScorePrioridade(lead) {
+  if (lead.arquivado) return 0;
+  if (lead.etapa === 'cliente' || lead.convertido_em) return 0; // já convertido, fora
+  const agora = Date.now();
+  const ultimaInteracao = new Date(lead.ultima_msg_em || lead.atualizado_em || lead.criado_em).getTime();
+  const horasParado = isNaN(ultimaInteracao) ? 0 : (agora - ultimaInteracao) / 3600000;
+  let score = 0;
+
+  // 1) Aguardando resposta: última mensagem foi do lead (entrada) e ninguém respondeu.
+  const aguardando = lead.ultima_msg_direcao === 'entrada' || lead.nao_lida === true;
+  if (aguardando) {
+    score += 100;                          // base forte
+    score += Math.min(horasParado * 8, 120); // cresce com a espera (teto)
+  } else {
+    // Sem aguardar resposta: peso só pelo tempo parado, bem menor.
+    score += Math.min(horasParado * 1.5, 60);
+  }
+
+  // 2) Tempo parado em dias (reforço para leads esquecidos).
+  const dias = horasParado / 24;
+  if (dias >= 1) score += Math.min(dias * 6, 60);
+
+  // 3) Etapa avançada esfriando: negociação/proposta parada = dinheiro escapando.
+  const etapaQuente = /negocia|proposta|fechamento|pagamento/i.test(
+    (lead.etapa || '') + ' ' + (lead._colunaNome || '')
+  );
+  if (etapaQuente && horasParado > 1) score += 50;
+
+  return Math.round(score);
+}
+
+function leadsPriorizados() {
+  const leads = (funilState.leads || []).map(l => {
+    // anexa o nome da coluna para a regra de etapa quente
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(l.funil_coluna_id));
+    return { ...l, _colunaNome: col ? col.nome : '' };
+  });
+  return leads
+    .map(l => ({ lead: l, score: calcularScorePrioridade(l) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+}
+
+function atualizarBadgePrioridades() {
+  const lista = leadsPriorizados();
+  const total = lista.length;
+  document.querySelectorAll('.btn-prioridades').forEach(btn => {
+    btn.style.display = total > 0 ? 'inline-flex' : 'none';
+  });
+  document.querySelectorAll('.badge-prioridades').forEach(b => {
+    b.textContent = total;
+    b.style.display = total > 0 ? 'inline-block' : 'none';
+  });
+  // Se o painel estiver aberto, re-renderiza (renovação do top 5).
+  const painel = document.getElementById('painel-prioridades');
+  if (painel && painel.dataset.aberto === '1') renderPainelPrioridades();
+}
+
+function corUrgencia(score) {
+  if (score >= 150) return 'var(--red)';
+  if (score >= 90) return 'var(--amber)';
+  return 'var(--accent)';
+}
+
+function rotuloEspera(lead) {
+  const agora = Date.now();
+  const t = new Date(lead.ultima_msg_em || lead.atualizado_em || lead.criado_em).getTime();
+  if (isNaN(t)) return '';
+  const min = Math.floor((agora - t) / 60000);
+  if (min < 60) return min + ' min';
+  const h = Math.floor(min / 60);
+  if (h < 24) return h + 'h';
+  return Math.floor(h / 24) + 'd';
+}
+
+function abrirPainelPrioridades() {
+  let painel = document.getElementById('painel-prioridades');
+  if (!painel) {
+    painel = document.createElement('div');
+    painel.id = 'painel-prioridades';
+    painel.style.cssText = 'position:fixed;top:0;right:0;width:360px;max-width:92vw;height:100vh;background:var(--bg2);border-left:1px solid var(--border2);box-shadow:-8px 0 30px rgba(0,0,0,.25);z-index:2000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s ease';
+    painel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-size:16px;font-weight:800;color:var(--text)">🔥 Prioridades</div>
+          <div style="font-size:12px;color:var(--text2)">Atenda do topo pra baixo</div>
+        </div>
+        <button onclick="fecharPainelPrioridades()" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:5px 10px;cursor:pointer">✕</button>
+      </div>
+      <div id="painel-prioridades-lista" style="flex:1;overflow-y:auto;padding:14px"></div>`;
+    document.body.appendChild(painel);
+  }
+  painel.dataset.aberto = '1';
+  renderPainelPrioridades();
+  requestAnimationFrame(() => { painel.style.transform = 'translateX(0)'; });
+}
+
+function fecharPainelPrioridades() {
+  const painel = document.getElementById('painel-prioridades');
+  if (!painel) return;
+  painel.dataset.aberto = '0';
+  painel.style.transform = 'translateX(100%)';
+}
+
+function renderPainelPrioridades() {
+  const box = document.getElementById('painel-prioridades-lista');
+  if (!box) return;
+  const top = leadsPriorizados().slice(0, 5);
+  if (!top.length) {
+    box.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;margin-top:40px">✅ Tudo em dia!<br>Nenhum lead urgente agora.</div>';
+    return;
+  }
+  box.innerHTML = top.map((x, i) => {
+    const l = x.lead;
+    const cor = corUrgencia(x.score);
+    const aguardando = l.ultima_msg_direcao === 'entrada' || l.nao_lida === true;
+    const tag = aguardando ? 'aguardando resposta' : 'parado';
+    const nome = escapeHtml(l.nome || l.telefone || 'Lead');
+    return `<div onclick="atenderPrioridade(${l.id})" style="background:var(--bg3);border:1px solid var(--border);border-left:4px solid ${cor};border-radius:10px;padding:12px 14px;margin-bottom:10px;cursor:pointer;transition:border-color .2s" onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div style="font-weight:700;font-size:14px;color:var(--text)">${i + 1}. ${nome}</div>
+        <div style="font-size:11px;font-weight:700;color:${cor}">${rotuloEspera(l)}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+        <span style="background:${cor};color:#fff;border-radius:6px;padding:1px 7px;font-weight:600">${tag}</span>
+        ${l._colunaNome ? '<span>· ' + escapeHtml(l._colunaNome) + '</span>' : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function atenderPrioridade(leadId) {
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId)) || {};
+  const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId, nomeAbrev);
+  // Mantém o painel aberto; a lista se renova quando o funil recarregar.
+}
+
+
 async function iniciarPaginaFunilAtendimento() {
   const params = new URLSearchParams(window.location.search);
   const id = Number(params.get('clienteId'));
@@ -5635,6 +5783,7 @@ async function carregarFunilAtendimento() {
     board.dataset.carregado = '1';
     if (primeiraCarga) iniciarLoopLembretes();
     else verificarLembretesAgenda();
+    atualizarBadgePrioridades();
   } catch (e) {
     if (primeiraCarga) {
       board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
