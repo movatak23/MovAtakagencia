@@ -4039,7 +4039,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
               COALESCE(l.nao_lida,false) AS nao_lida,
               COALESCE(l.arquivado,false) AS arquivado,
               s.nome AS setor_nome, s.cor AS setor_cor,
-              l.criado_em, l.atualizado_em, l.convertido_em,
+              l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
               v.nome AS vendedor_nome,
               p.nome AS plano_nome, p.valor AS plano_valor,
               NULL::text AS ultima_msg,
@@ -5216,16 +5216,35 @@ app.post('/movatak/admin/transcrever-audio', authMovatak, async (req, res) => {
       body: form
     });
     if (!wResp.ok) {
-      const t = await wResp.text().catch(() => '');
-      return res.status(502).json({ error: 'Erro na transcrição (' + wResp.status + '): ' + t.slice(0, 160) });
+      // Loga o detalhe técnico para você, mas mostra mensagem amigável ao usuário.
+      const detalhe = await wResp.text().catch(() => '');
+      console.error('[transcricao] OpenAI ' + wResp.status + ': ' + detalhe.slice(0, 200));
+      let amigavel = 'Transcrição temporariamente indisponível. Tente novamente em instantes.';
+      if (wResp.status === 429) amigavel = 'Transcrição temporariamente indisponível.';
+      else if (wResp.status === 401) amigavel = 'Transcrição indisponível (configuração).';
+      else if (wResp.status === 413) amigavel = 'Áudio muito longo para transcrever.';
+      return res.status(502).json({ error: amigavel });
     }
     const data = await wResp.json();
     const texto = (data.text || '').trim();
-    if (!texto) return res.status(502).json({ error: 'Transcrição vazia.' });
+    if (!texto) return res.status(502).json({ error: 'Não foi possível transcrever este áudio.' });
     res.json({ texto });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Dispensa o lead das prioridades. Ele só reaparece se mandar nova mensagem
+// (mensagem com data posterior à dispensa).
+app.post('/movatak/admin/leads/:id/dispensar-prioridade', authMovatak, async (req, res) => {
+  try {
+    const r = await query(
+      'UPDATE movatak_leads SET prioridade_dispensada_em = NOW() WHERE id = $1 RETURNING id',
+      [req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/movatak/admin/leads/:id/sugerir-resposta', authMovatak, async (req, res) => {
@@ -7685,6 +7704,9 @@ async function garantirEstruturaFunil() {
 
   await query(`ALTER TABLE movatak_leads
     ADD COLUMN IF NOT EXISTS convertido_em TIMESTAMPTZ`).catch(() => null);
+
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS prioridade_dispensada_em TIMESTAMPTZ`).catch(() => null);
 
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_funil_colunas_cliente_slug ON movatak_funil_colunas(cliente_id, slug)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
