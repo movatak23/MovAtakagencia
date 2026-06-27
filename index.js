@@ -5092,8 +5092,104 @@ app.get('/movatak/admin/leads/:id/conversas', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ── IA — Sugestão de resposta (Claude Haiku) ─────────────────
+// Chama a API da Anthropic. Requer ANTHROPIC_API_KEY no ambiente.
+async function chamarHaiku(systemPrompt, userPrompt) {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error('IA não configurada (falta ANTHROPIC_API_KEY).');
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userPrompt }]
+    })
+  });
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => '');
+    throw new Error('Erro na IA (' + resp.status + '): ' + t.slice(0, 200));
+  }
+  const data = await resp.json();
+  const texto = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+  return texto;
+}
 
-// Apaga uma mensagem enviada pelo painel — tenta apagar no WhatsApp do lead
+// Gera uma sugestão de resposta para o lead, imitando o estilo das respostas
+// anteriores do próprio atendente (puxadas do histórico de conversas).
+app.get('/movatak/admin/leads/:id/sugerir-resposta', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaConversas();
+    const leadId = req.params.id;
+
+    // 1) Conversa atual (últimas 15 mensagens, em ordem cronológica).
+    const convR = await query(
+      `SELECT * FROM (
+         SELECT direcao, conteudo, criado_em FROM movatak_conversas
+          WHERE lead_id = $1 AND conteudo IS NOT NULL AND conteudo <> ''
+          ORDER BY criado_em DESC LIMIT 15
+       ) sub ORDER BY criado_em ASC`,
+      [leadId]
+    );
+    if (!convR.rows.length) return res.status(400).json({ error: 'Sem mensagens nesta conversa para basear a sugestão.' });
+
+    // 2) Dados do lead + cliente (contexto).
+    const leadR = await query(
+      `SELECT l.nome, l.telefone, l.etapa, l.cliente_id,
+              p.nome AS plano_nome, p.valor AS plano_valor,
+              s.nome AS setor_nome, c.nome AS empresa_nome
+         FROM movatak_leads l
+         LEFT JOIN movatak_planos p ON p.id = l.plano_id
+         LEFT JOIN movatak_setores s ON s.id = l.setor_id
+         LEFT JOIN movatak_clientes c ON c.id = l.cliente_id
+        WHERE l.id = $1`,
+      [leadId]
+    );
+    const lead = leadR.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
+
+    // 3) Exemplos de estilo: respostas de SAÍDA recentes a OUTROS leads do mesmo cliente
+    //    (mostra como a casa costuma responder, pra IA imitar o tom).
+    const estiloR = await query(
+      `SELECT conteudo FROM movatak_conversas
+        WHERE cliente_id = $1 AND direcao = 'saida'
+          AND lead_id <> $2 AND conteudo IS NOT NULL AND LENGTH(conteudo) BETWEEN 15 AND 400
+        ORDER BY criado_em DESC LIMIT 8`,
+      [lead.cliente_id, leadId]
+    ).catch(() => ({ rows: [] }));
+
+    const conversaTxt = convR.rows.map(m =>
+      (m.direcao === 'entrada' ? 'CLIENTE: ' : 'ATENDENTE: ') + (m.conteudo || '')
+    ).join('\n');
+    const exemplosTxt = estiloR.rows.map(r => '- ' + r.conteudo.replace(/\n+/g, ' ')).join('\n') || '(sem exemplos)';
+
+    const systemPrompt = `Você é um atendente de vendas da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
+      `Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, em português brasileiro, no tom de WhatsApp: ` +
+      `natural, direto, cordial e objetivo. Imite o estilo dos exemplos de respostas reais da equipe abaixo. ` +
+      `Não invente preços, prazos ou condições que não estejam no contexto. Se faltar informação, faça uma pergunta ` +
+      `curta para avançar a conversa. Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.\n\n` +
+      `EXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
+
+    const userPrompt =
+      `CONTEXTO DO LEAD:\n` +
+      `Nome: ${lead.nome || '—'}\n` +
+      `Etapa no funil: ${lead.etapa || '—'}${lead.setor_nome ? ' / ' + lead.setor_nome : ''}\n` +
+      (lead.plano_nome ? `Plano de interesse: ${lead.plano_nome}${lead.plano_valor ? ' (R$ ' + lead.plano_valor + ')' : ''}\n` : '') +
+      `\nCONVERSA ATÉ AGORA:\n${conversaTxt}\n\n` +
+      `Escreva a próxima mensagem do ATENDENTE:`;
+
+    const sugestao = await chamarHaiku(systemPrompt, userPrompt);
+    if (!sugestao) return res.status(502).json({ error: 'A IA não retornou sugestão. Tente novamente.' });
+    res.json({ sugestao });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // (delete for everyone, só funciona pra mensagens que a gente mandou e dentro
 // da janela de tempo que o WhatsApp permite) e remove do nosso histórico de
 // qualquer forma, pra não ficar uma mensagem "travada" caso o lado do WhatsApp falhe.
