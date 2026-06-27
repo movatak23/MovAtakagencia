@@ -57,11 +57,26 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
   border-radius: 10px; padding: 9px 16px; font-size: 13px; cursor: pointer; font-family: var(--sans); font-weight: 600;
 }
 .tab.ativo { background: var(--accent); color: #fff; border-color: var(--accent); }
-.chart-bars { display: flex; align-items: flex-end; gap: 4px; height: 140px; padding-top: 10px; }
-.chart-bars .bar { flex: 1; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 3px; position: relative; opacity: .85; }
+.chart-bars { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 10px; }
+.chart-bars .bar { width: 28px; flex: 0 0 28px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 3px; position: relative; opacity: .85; }
 .chart-bars .bar:hover { opacity: 1; }
 .loading { text-align: center; color: var(--text2); padding: 40px; font-size: 14px; }
 .hidden { display: none; }
+.fld-label { font-size: 12px; color: var(--text2); font-weight: 600; display: block; margin-bottom: 6px; margin-top: 14px; }
+.fld {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 10px;
+  padding: 11px 14px; color: var(--text); font-family: var(--sans); font-size: 14px; resize: vertical;
+}
+.fld:focus { outline: none; border-color: var(--accent); }
+.fld:disabled { opacity: .6; cursor: not-allowed; }
+.btn-save {
+  background: var(--accent); color: #fff; border: none; border-radius: 10px;
+  padding: 11px 20px; font-size: 14px; font-weight: 700; font-family: var(--sans); cursor: pointer;
+}
+.btn-save:hover { opacity: .92; }
+.btn-save:disabled { opacity: .6; cursor: default; }
+.aviso-perm { font-size: 12px; color: var(--amber); margin-top: 8px; }
+.cfg-msg { font-size: 13px; margin-top: 12px; }
 </style>
 </head>
 <body>
@@ -98,12 +113,9 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
       <div id="dash-conteudo"><div class="loading">Carregando métricas...</div></div>
     </div>
 
-    <!-- ABA CONFIGURAÇÕES (Etapa 4) -->
+    <!-- ABA CONFIGURAÇÕES -->
     <div id="aba-config" class="hidden">
-      <div class="secao">
-        <h2>⚙️ Configurações</h2>
-        <p style="color:var(--text2);font-size:13px">As configurações editáveis (follow-up, boas-vindas, campanhas) serão liberadas na próxima etapa.</p>
-      </div>
+      <div id="config-conteudo"><div class="loading">Carregando configurações...</div></div>
     </div>
   </div>
 
@@ -137,7 +149,120 @@ function trocarAba(qual) {
   document.getElementById('aba-config').classList.toggle('hidden', qual !== 'config');
   document.getElementById('tab-dashboard').classList.toggle('ativo', qual === 'dashboard');
   document.getElementById('tab-config').classList.toggle('ativo', qual === 'config');
+  if (qual === 'config' && !_configCarregada) carregarConfig();
 }
+
+let _configCarregada = false;
+let _configPerms = {};
+
+async function carregarConfig() {
+  const box = document.getElementById('config-conteudo');
+  box.innerHTML = '<div class="loading">Carregando configurações...</div>';
+  try {
+    const d = await apiPortal('/movatak/app/configuracoes');
+    _configPerms = d.permissoes || {};
+    renderConfig(d);
+    _configCarregada = true;
+  } catch (e) {
+    box.innerHTML = '<div class="loading" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderConfig(d) {
+  const c = d.cliente || {};
+  const fu = c.followup_msgs_v2 || {};
+  const fu1 = fu.fu1 || {}; const fu2 = fu.fu2 || {};
+  const podeEditar = !!d.permissoes.editar_followup;
+  const dis = podeEditar ? '' : 'disabled';
+
+  const box = document.getElementById('config-conteudo');
+  box.innerHTML = `
+    <div class="secao">
+      <h2>👋 Mensagem de boas-vindas</h2>
+      ${!podeEditar ? '<div class="aviso-perm">Somente leitura — peça ao seu gestor para liberar a edição.</div>' : ''}
+      <label class="fld-label">Saudação enviada ao novo lead</label>
+      <textarea class="fld" id="cfg-boasvindas" rows="2" ${dis} placeholder="Ex: Olá! Seja bem-vindo...">${esc(c.boas_vindas_msg)}</textarea>
+    </div>
+
+    <div class="secao">
+      <h2>💬 Follow-up 1 (imediato)</h2>
+      <label class="fld-label">Mensagem 1</label>
+      <textarea class="fld" id="cfg-fu1-msg1" rows="2" ${dis}>${esc(fu1.msg1)}</textarea>
+      <label class="fld-label">Mensagem 2</label>
+      <textarea class="fld" id="cfg-fu1-msg2" rows="2" ${dis}>${esc(fu1.msg2)}</textarea>
+    </div>
+
+    <div class="secao">
+      <h2>🔁 Follow-up 2 (reativação)</h2>
+      <label class="fld-label">Mensagem 1 (imediata)</label>
+      <textarea class="fld" id="cfg-fu2-msg1" rows="2" ${dis}>${esc(fu2.msg1)}</textarea>
+      <label class="fld-label">Mensagem 2 (D+1)</label>
+      <textarea class="fld" id="cfg-fu2-msg2" rows="2" ${dis}>${esc(fu2.msg2)}</textarea>
+      <label class="fld-label">Mensagem 3 (D+3)</label>
+      <textarea class="fld" id="cfg-fu2-msg3" rows="2" ${dis}>${esc(fu2.msg3)}</textarea>
+      ${podeEditar ? '<div style="display:flex;align-items:center;gap:12px;margin-top:16px"><button class="btn-save" id="btn-cfg-save" onclick="salvarConfig()">💾 Salvar mensagens</button><span class="cfg-msg" id="cfg-msg"></span></div>' : ''}
+    </div>
+
+    <div class="secao">
+      <h2>🔐 Trocar minha senha</h2>
+      <label class="fld-label">Senha atual</label>
+      <input type="password" class="fld" id="sn-atual" placeholder="Sua senha atual">
+      <label class="fld-label">Nova senha</label>
+      <input type="password" class="fld" id="sn-nova" placeholder="Mínimo 4 caracteres">
+      <label class="fld-label">Confirmar nova senha</label>
+      <input type="password" class="fld" id="sn-conf" placeholder="Repita a nova senha">
+      <div style="display:flex;align-items:center;gap:12px;margin-top:16px">
+        <button class="btn-save" id="btn-senha-save" onclick="trocarSenha()">Trocar senha</button>
+        <span class="cfg-msg" id="senha-msg"></span>
+      </div>
+    </div>`;
+}
+
+async function salvarConfig() {
+  const msg = document.getElementById('cfg-msg');
+  const btn = document.getElementById('btn-cfg-save');
+  const followup_v2 = {
+    fu1: { msg1: val('cfg-fu1-msg1'), msg2: val('cfg-fu1-msg2') },
+    fu2: { msg1: val('cfg-fu2-msg1'), msg2: val('cfg-fu2-msg2'), msg3: val('cfg-fu2-msg3') }
+  };
+  const boas_vindas_msg = val('cfg-boasvindas');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  msg.style.color = 'var(--text2)'; msg.textContent = '';
+  try {
+    await apiPortal('/movatak/app/followup', { method: 'PATCH', body: JSON.stringify({ followup_v2, boas_vindas_msg }) });
+    msg.style.color = 'var(--green)'; msg.textContent = '✓ Salvo!';
+    setTimeout(() => { msg.textContent = ''; }, 4000);
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 Salvar mensagens';
+  }
+}
+
+async function trocarSenha() {
+  const msg = document.getElementById('senha-msg');
+  const btn = document.getElementById('btn-senha-save');
+  const atual = val('sn-atual'), nova = val('sn-nova'), conf = val('sn-conf');
+  if (!nova || nova.length < 4) { msg.style.color = 'var(--red)'; msg.textContent = 'A nova senha precisa de ao menos 4 caracteres.'; return; }
+  if (nova !== conf) { msg.style.color = 'var(--red)'; msg.textContent = 'As senhas não conferem.'; return; }
+  btn.disabled = true; btn.textContent = 'Trocando...';
+  msg.style.color = 'var(--text2)'; msg.textContent = '';
+  try {
+    await apiPortal('/movatak/app/trocar-senha', { method: 'PATCH', body: JSON.stringify({ senha_atual: atual, senha_nova: nova }) });
+    msg.style.color = 'var(--green)'; msg.textContent = '✓ Senha alterada com sucesso!';
+    document.getElementById('sn-atual').value = '';
+    document.getElementById('sn-nova').value = '';
+    document.getElementById('sn-conf').value = '';
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Trocar senha';
+  }
+}
+
+function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
 
 function setPeriodo(dias) {
   _periodo = dias;
