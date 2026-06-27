@@ -5182,22 +5182,27 @@ let _lembreteCache = [];        // agendamentos com lembrete ativo, do backend
 let _lembreteAtivoLeadId = null; // lead do lembrete em destaque (pro clique)
 
 async function carregarAgendamentosLembrete() {
-  if (!funilState.clienteId) return;
+  if (!funilState.clienteId) { console.log('[DIAG-LEMB] sem clienteId — abortou'); return; }
   try {
     const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=2');
+    console.log('[DIAG-LEMB] agendamentos recebidos:', Array.isArray(r) ? r.length : 'NAO-ARRAY', r);
     _lembreteCache = Array.isArray(r) ? r.filter(a => Number(a.lembrete_min) > 0 && a.status !== 'cancelado' && a.lead_id) : [];
-  } catch (e) { _lembreteCache = []; }
+    console.log('[DIAG-LEMB] apos filtro (lembrete_min>0, nao-cancelado, com lead):', _lembreteCache.length, _lembreteCache);
+  } catch (e) { console.log('[DIAG-LEMB] erro ao buscar:', e.message); _lembreteCache = []; }
 }
 
 function verificarLembretesAgenda() {
   const agora = Date.now();
   let ativo = null;
+  console.log('[DIAG-LEMB] verificando | agora=' + new Date(agora).toISOString() + ' | cache=' + _lembreteCache.length);
   for (const a of _lembreteCache) {
     const inicio = new Date(a.inicio).getTime();
-    if (isNaN(inicio)) continue;
+    if (isNaN(inicio)) { console.log('[DIAG-LEMB] inicio invalido:', a.inicio); continue; }
     const abre = inicio - (Number(a.lembrete_min) * 60 * 1000); // antecedência
     const fecha = inicio + (5 * 60 * 1000);                     // +5min após o horário
-    if (agora >= abre && agora <= fecha) { ativo = a; break; }
+    const dentro = agora >= abre && agora <= fecha;
+    console.log('[DIAG-LEMB] ag=' + a.id + ' lead=' + (a.lead_nome||a.lead_id) + ' inicio=' + new Date(inicio).toISOString() + ' janela=[' + new Date(abre).toISOString() + ' ate ' + new Date(fecha).toISOString() + '] DENTRO=' + dentro);
+    if (dentro) { ativo = a; break; }
   }
 
   const btn = document.getElementById('btn-lembrete-agenda');
@@ -5230,6 +5235,7 @@ function abrirLembreteAtivo() {
 // Loop de verificação: roda ao abrir a tela e a cada 30s.
 let _lembreteIntervalo = null;
 function iniciarLoopLembretes() {
+  console.log('[DIAG-LEMB] iniciarLoopLembretes chamado | clienteId=' + funilState.clienteId);
   if (_lembreteIntervalo) clearInterval(_lembreteIntervalo);
   carregarAgendamentosLembrete().then(verificarLembretesAgenda);
   _lembreteIntervalo = setInterval(async () => {
