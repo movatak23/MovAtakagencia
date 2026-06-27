@@ -359,6 +359,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
       <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
+      <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
       <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
@@ -702,7 +703,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
         <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
-        <button id="btn-lembrete-agenda" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span id="lembrete-texto">Retornar contato</span></button>
+        <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
         <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
         <button class="btn-sair" onclick="sair()">Sair</button>
@@ -5182,31 +5183,27 @@ let _lembreteCache = [];        // agendamentos com lembrete ativo, do backend
 let _lembreteAtivoLeadId = null; // lead do lembrete em destaque (pro clique)
 
 async function carregarAgendamentosLembrete() {
-  if (!funilState.clienteId) { console.log('[DIAG-LEMB] sem clienteId — abortou'); return; }
+  if (!funilState.clienteId) return;
   try {
     const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=2');
-    console.log('[DIAG-LEMB] agendamentos recebidos:', Array.isArray(r) ? r.length : 'NAO-ARRAY', r);
     _lembreteCache = Array.isArray(r) ? r.filter(a => Number(a.lembrete_min) > 0 && a.status !== 'cancelado' && a.lead_id) : [];
-    console.log('[DIAG-LEMB] apos filtro (lembrete_min>0, nao-cancelado, com lead):', _lembreteCache.length, _lembreteCache);
-  } catch (e) { console.log('[DIAG-LEMB] erro ao buscar:', e.message); _lembreteCache = []; }
+  } catch (e) { _lembreteCache = []; }
 }
 
 function verificarLembretesAgenda() {
   const agora = Date.now();
   let ativo = null;
-  console.log('[DIAG-LEMB] verificando | agora=' + new Date(agora).toISOString() + ' | cache=' + _lembreteCache.length);
   for (const a of _lembreteCache) {
     const inicio = new Date(a.inicio).getTime();
-    if (isNaN(inicio)) { console.log('[DIAG-LEMB] inicio invalido:', a.inicio); continue; }
+    if (isNaN(inicio)) continue;
     const abre = inicio - (Number(a.lembrete_min) * 60 * 1000); // antecedência
     const fecha = inicio + (5 * 60 * 1000);                     // +5min após o horário
-    const dentro = agora >= abre && agora <= fecha;
-    console.log('[DIAG-LEMB] ag=' + a.id + ' lead=' + (a.lead_nome||a.lead_id) + ' inicio=' + new Date(inicio).toISOString() + ' janela=[' + new Date(abre).toISOString() + ' ate ' + new Date(fecha).toISOString() + '] DENTRO=' + dentro);
-    if (dentro) { ativo = a; break; }
+    if (agora >= abre && agora <= fecha) { ativo = a; break; }
   }
 
-  const btn = document.getElementById('btn-lembrete-agenda');
-  const txt = document.getElementById('lembrete-texto');
+  // Atualiza TODOS os sinos (header admin e vendedor usam a mesma classe).
+  const sinos = document.querySelectorAll('.btn-lembrete-sino');
+  const textos = document.querySelectorAll('.lembrete-sino-texto');
 
   // Limpa destaque anterior no kanban
   document.querySelectorAll('.funil-card.lead-aceso').forEach(el => el.classList.remove('lead-aceso'));
@@ -5214,14 +5211,14 @@ function verificarLembretesAgenda() {
   if (ativo) {
     _lembreteAtivoLeadId = ativo.lead_id;
     const nome = ativo.lead_nome || 'lead';
-    if (txt) txt.textContent = 'Retornar contato · ' + nome;
-    if (btn) btn.style.display = 'inline-flex';
+    textos.forEach(t => { t.textContent = 'Retornar contato · ' + nome; });
+    sinos.forEach(b => { b.style.display = 'inline-flex'; });
     // Acende o card do lead no kanban (se estiver visível)
     const card = document.querySelector('.funil-card[data-lead-id="' + ativo.lead_id + '"]');
     if (card) card.classList.add('lead-aceso');
   } else {
     _lembreteAtivoLeadId = null;
-    if (btn) btn.style.display = 'none';
+    sinos.forEach(b => { b.style.display = 'none'; });
   }
 }
 
@@ -5235,7 +5232,6 @@ function abrirLembreteAtivo() {
 // Loop de verificação: roda ao abrir a tela e a cada 30s.
 let _lembreteIntervalo = null;
 function iniciarLoopLembretes() {
-  console.log('[DIAG-LEMB] iniciarLoopLembretes chamado | clienteId=' + funilState.clienteId);
   if (_lembreteIntervalo) clearInterval(_lembreteIntervalo);
   carregarAgendamentosLembrete().then(verificarLembretesAgenda);
   _lembreteIntervalo = setInterval(async () => {
