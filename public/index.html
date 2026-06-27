@@ -3454,30 +3454,37 @@ async function salvarFollowupComFeedback() {
       msg3: document.getElementById('fu2-msg3')?.value.trim() || ''
     }
   };
+  // Qual template está selecionado no dropdown (pode estar vazio).
+  const templateSel = document.getElementById('fu-template-select')?.value || '';
   try {
-    // 1) Salva no cliente (sempre)
+    // 1) Sempre salva no cliente (o que de fato dispara para os leads dele).
     await salvarFU();
-    // 2) Tenta atualizar o template vinculado (se houver)
+
+    // 2) Se há um template selecionado, tenta atualizá-lo também.
     let infoTemplate = '';
-    try {
-      const r = await api('/movatak/admin/clientes/' + fuId + '/template-followup-mensagens', {
-        method: 'PATCH',
-        body: JSON.stringify({ followup_v2 })
-      });
-      if (r && r.ok) {
-        const total = Math.max(r.usado_em_clientes || 0, 1);
-        infoTemplate = total > 1
-          ? ' (template atualizado — aplica em ' + total + ' automações)'
-          : ' (template atualizado)';
+    if (templateSel) {
+      try {
+        const r = await api('/movatak/admin/clientes/' + fuId + '/template-followup-mensagens', {
+          method: 'PATCH',
+          body: JSON.stringify({ template: templateSel, followup_v2 })
+        });
+        if (r && r.ok) infoTemplate = ' + template atualizado';
+      } catch (e) {
+        const msg = (e.message || '');
+        if (msg.includes('TEMPLATE_PADRAO')) {
+          infoTemplate = ' (template padrão não é editável — salvo só no cliente)';
+        } else if (msg.includes('SEM_TEMPLATE')) {
+          infoTemplate = '';
+        } else {
+          infoTemplate = ' (cliente salvo; template falhou)';
+        }
       }
-    } catch (e) {
-      // Cliente sem template: o salvamento direto no cliente já basta. Sem erro visível.
     }
     if (st) {
-      st.style.color = 'var(--green)';
-      st.textContent = '✓ Follow-up salvo!' + infoTemplate;
+      st.style.color = infoTemplate.includes('não é editável') || infoTemplate.includes('falhou') ? 'var(--amber)' : 'var(--green)';
+      st.textContent = '✓ Salvo!' + infoTemplate;
       clearTimeout(st._t);
-      st._t = setTimeout(() => { st.textContent = ''; }, 5000);
+      st._t = setTimeout(() => { st.textContent = ''; }, 6000);
     }
   } catch (e) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar'; }
@@ -3497,7 +3504,7 @@ async function salvarFU() {
     const verba_diaria = document.getElementById('fu-verba').value.trim();
     const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
     const trigger_msg = document.getElementById('fu-trigger').value.trim();
-    
+
     // Salvar follow up com estrutura dos 2 blocos
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
