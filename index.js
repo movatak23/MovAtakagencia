@@ -3682,8 +3682,10 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       // Enviada antes de qualquer fluxo, se preenchida. Não afeta o follow-up.
       await enviarBoasVindasLead(cliente, telefone);
 
-      // Ausência para lead NOVO (vindo do tráfego): se a coluna de entrada tem o
-      // toggle ligado, dispara o aviso de ausência logo após as boas-vindas.
+      // Ausência para lead NOVO (vindo do tráfego): aguarda 5s para a saudação
+      // chegar primeiro (a Z-API pode entregar fora de ordem se enviadas juntas),
+      // e só então dispara o aviso de ausência.
+      await new Promise(r => setTimeout(r, 5000));
       await dispararAusenciaSeAplicavel(cliente, { id: novoLead.rows[0].id, funil_coluna_id: null }, telefone);
 
       // Menu de Atendimento "na entrada": manda as boas-vindas (FU1) e o menu,
