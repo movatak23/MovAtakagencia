@@ -866,7 +866,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
           WHERE id = $1`,
         [row.id]
       );
-      registrarConversa(leadId, row.cliente_id, 'saida', msg || '', null).catch(() => null);
+      registrarConversa(leadId, row.cliente_id, 'saida', msg || '', null, null, null, null, 'followup').catch(() => null);
       await registrarEventoLead(
         leadId,
         row.cliente_id,
@@ -1142,7 +1142,7 @@ cron.schedule('*/10 * * * *', async () => {
             WHERE id = $1`,
           [row.id]
         );
-        registrarConversa(row.lead_id, row.cliente_id, 'saida', msg || '', null).catch(() => null);
+        registrarConversa(row.lead_id, row.cliente_id, 'saida', msg || '', null, null, null, null, 'followup').catch(() => null);
         await registrarEventoLead(row.lead_id, row.cliente_id, 'mensagem_enviada', `FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada pelo cron`, { followup_id: row.id });
 
         console.log(`[cron] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviado → lead ${row.lead_id}`);
@@ -3198,7 +3198,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
              RETURNING id`,
             [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
           );
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload).catch(() => null);
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web').catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
         return;
@@ -3231,7 +3231,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         }
         if (!jaRegistrada) {
           const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info).catch(() => null);
+          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web').catch(() => null);
         } else {
           logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
         }
@@ -3431,7 +3431,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
             if (reg.rows.length) {
               const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, av.mensagem).catch(() => null);
               console.log('[DIAG-AUS] webhook | ENVIADO! msgId=' + msgId);
-              await registrarConversa(lead.id, cliente.id, 'saida', av.mensagem, null, null, msgId).catch(() => null);
+              await registrarConversa(lead.id, cliente.id, 'saida', av.mensagem, null, null, msgId, null, 'ausencia').catch(() => null);
             }
           }
         }
@@ -5817,10 +5817,10 @@ async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
       msgId = await zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
     }
     // Passa o msg_id: sem ele, o webhook fromMe regravaria a mesma mensagem (duplicava na caixa).
-    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', midia, null, msgId).catch(() => null);
+    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', midia, null, msgId, null, 'questionario').catch(() => null);
   } else {
     msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
-    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', null, null, msgId).catch(() => null);
+    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', null, null, msgId, null, 'questionario').catch(() => null);
   }
   return msgId;
 }
@@ -6137,7 +6137,7 @@ async function enviarMenuAtendimento(cliente, lead) {
     const texto = (cliente.menu_atend_texto || '').trim();
     if (!texto) return false;
     await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, texto);
-    await registrarConversa(lead.id, cliente.id, 'saida', texto, null).catch(() => null);
+    await registrarConversa(lead.id, cliente.id, 'saida', texto, null, null, null, null, 'menu').catch(() => null);
     // Pausa o follow-up enquanto o lead decide o setor
     await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]).catch(() => null);
     // Cria/atualiza o estado de menu (encerra estados antigos do mesmo lead)
@@ -7158,7 +7158,9 @@ async function garantirEstruturaConversas() {
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status_em TIMESTAMPTZ`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS zapi_status_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS origem TEXT DEFAULT 'humano'`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_conversas_sla ON movatak_conversas(cliente_id, criado_em)`).catch(() => null);
   // Garante que a mesma mensagem do WhatsApp (mesmo lead + mesmo messageId) nunca
   // seja gravada duas vezes — fecha a corrida entre o envio pelo painel e o webhook fromMe.
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_conversas_lead_msgid ON movatak_conversas(lead_id, msg_id) WHERE msg_id IS NOT NULL`).catch(() => null);
@@ -7185,7 +7187,7 @@ function normalizarReplyInfoConversa(replyInfo) {
   };
 }
 
-async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId, replyInfo = null) {
+async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId, replyInfo = null, origem = 'humano') {
   if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
   // Evita duplicar a mesma mensagem do WhatsApp: se já existe uma conversa com esse
@@ -7202,12 +7204,13 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
     `INSERT INTO movatak_conversas
        (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id,
         reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
-        reply_to_midia_url, reply_to_midia_tipo, reply_payload)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb) RETURNING id`,
+        reply_to_midia_url, reply_to_midia_tipo, reply_payload, origem)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15) RETURNING id`,
     [
       leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null,
       reply.reply_to_conversa_id, reply.reply_to_msg_id, reply.reply_to_direcao, reply.reply_to_conteudo,
-      reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {})
+      reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {}),
+      direcao === 'entrada' ? 'lead' : (origem || 'humano')
     ]
   ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
   if (!ins || !ins.rows.length) return null;
@@ -7947,6 +7950,148 @@ app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res)
       eventos: eventos.rows,
       followups: followups.rows
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── DASHBOARD SLA — tempo de resposta por setor e vendedor ───
+// Cruza cada mensagem de ENTRADA (lead) com a próxima SAÍDA, calcula o gap,
+// e agrega por setor → vendedor. Separa respostas humanas de automáticas.
+app.get('/movatak/admin/clientes/:id/sla', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaConversas();
+    const clienteId = parseInt(req.params.id, 10);
+    const dias = Math.max(1, Math.min(parseInt(req.query.dias || '30', 10), 180));
+
+    // Para cada mensagem de entrada, acha a próxima saída do mesmo lead (a "resposta").
+    // gap_seg = segundos entre a entrada e essa resposta.
+    // primeira = true se é a primeira resposta após uma sequência de entradas (1ª resposta).
+    const r = await query(
+      `WITH msgs AS (
+         SELECT c.id, c.lead_id, c.direcao, c.origem, c.criado_em,
+                l.setor_id, l.vendedor_id
+           FROM movatak_conversas c
+           JOIN movatak_leads l ON l.id = c.lead_id
+          WHERE c.cliente_id = $1
+            AND c.criado_em >= NOW() - ($2 || ' days')::INTERVAL
+       ),
+       entradas AS (
+         SELECT m.*,
+                LAG(direcao) OVER (PARTITION BY lead_id ORDER BY criado_em) AS dir_anterior
+           FROM msgs m
+       ),
+       respostas AS (
+         SELECT e.lead_id, e.setor_id, e.vendedor_id, e.criado_em AS entrada_em,
+                (e.dir_anterior IS DISTINCT FROM 'entrada') AS primeira_da_sequencia,
+                (SELECT s.criado_em FROM msgs s
+                   WHERE s.lead_id = e.lead_id AND s.direcao = 'saida' AND s.criado_em > e.criado_em
+                   ORDER BY s.criado_em ASC LIMIT 1) AS resposta_em,
+                (SELECT s.origem FROM msgs s
+                   WHERE s.lead_id = e.lead_id AND s.direcao = 'saida' AND s.criado_em > e.criado_em
+                   ORDER BY s.criado_em ASC LIMIT 1) AS resposta_origem
+           FROM entradas e
+          WHERE e.direcao = 'entrada'
+       )
+       SELECT setor_id, vendedor_id,
+              resposta_origem,
+              primeira_da_sequencia,
+              COUNT(*) FILTER (WHERE resposta_em IS NOT NULL)::int AS respondidas,
+              COUNT(*) FILTER (WHERE resposta_em IS NULL)::int AS sem_resposta,
+              AVG(EXTRACT(EPOCH FROM (resposta_em - entrada_em))) FILTER (WHERE resposta_em IS NOT NULL) AS gap_medio_seg
+         FROM respostas
+        GROUP BY setor_id, vendedor_id, resposta_origem, primeira_da_sequencia`,
+      [clienteId, dias]
+    );
+
+    // Nomes de setores e vendedores
+    const setoresR = await query('SELECT id, nome, cor FROM movatak_setores WHERE cliente_id=$1', [clienteId]).catch(() => ({ rows: [] }));
+    const vendedoresR = await query('SELECT id, nome FROM movatak_vendedores WHERE cliente_id=$1', [clienteId]).catch(() => ({ rows: [] }));
+    const setorNome = new Map(setoresR.rows.map(s => [Number(s.id), s]));
+    const vendNome = new Map(vendedoresR.rows.map(v => [Number(v.id), v.nome]));
+
+    // Quantos leads estão esperando AGORA (última msg foi do lead, sem resposta).
+    const esperandoR = await query(
+      `WITH ult AS (
+         SELECT DISTINCT ON (c.lead_id) c.lead_id, c.direcao, l.setor_id, l.vendedor_id
+           FROM movatak_conversas c
+           JOIN movatak_leads l ON l.id = c.lead_id
+          WHERE c.cliente_id = $1 AND COALESCE(l.arquivado,false) = false
+          ORDER BY c.lead_id, c.criado_em DESC
+       )
+       SELECT setor_id, vendedor_id, COUNT(*)::int AS esperando
+         FROM ult WHERE direcao = 'entrada'
+        GROUP BY setor_id, vendedor_id`,
+      [clienteId]
+    ).catch(() => ({ rows: [] }));
+
+    // Monta estrutura hierárquica: setor → vendedores → métricas.
+    const ehAuto = (o) => ['followup', 'ausencia', 'menu', 'questionario', 'recomendacao', 'bot'].includes(o);
+    const setores = {};
+    function getSetor(sid) {
+      const k = sid == null ? 0 : Number(sid);
+      if (!setores[k]) {
+        const s = setorNome.get(k);
+        setores[k] = { setor_id: k, setor_nome: s ? s.nome : 'Sem setor', setor_cor: s ? s.cor : null, vendedores: {} };
+      }
+      return setores[k];
+    }
+    function getVend(setor, vid) {
+      const k = vid == null ? 0 : Number(vid);
+      if (!setor.vendedores[k]) {
+        setor.vendedores[k] = {
+          vendedor_id: k, vendedor_nome: vid ? (vendNome.get(k) || 'Vendedor') : 'Sem vendedor',
+          primeira_humano_seg: null, primeira_humano_n: 0,
+          primeira_auto_seg: null, primeira_auto_n: 0,
+          geral_humano_seg: null, geral_humano_n: 0,
+          geral_auto_seg: null, geral_auto_n: 0,
+          sem_resposta: 0, esperando: 0
+        };
+      }
+      return setor.vendedores[k];
+    }
+    function acumular(alvoSeg, alvoN, gap, n) {
+      // média ponderada incremental
+      const totalN = alvoN + n;
+      if (totalN === 0) return [alvoSeg, alvoN];
+      const somaAtual = (alvoSeg || 0) * alvoN;
+      const novaSoma = somaAtual + gap * n;
+      return [novaSoma / totalN, totalN];
+    }
+
+    for (const row of r.rows) {
+      const setor = getSetor(row.setor_id);
+      const v = getVend(setor, row.vendedor_id);
+      const auto = ehAuto(row.resposta_origem);
+      const gap = row.gap_medio_seg != null ? Number(row.gap_medio_seg) : null;
+      const n = Number(row.respondidas) || 0;
+      v.sem_resposta += Number(row.sem_resposta) || 0;
+      if (gap != null && n > 0) {
+        if (row.primeira_da_sequencia) {
+          if (auto) { [v.primeira_auto_seg, v.primeira_auto_n] = acumular(v.primeira_auto_seg, v.primeira_auto_n, gap, n); }
+          else { [v.primeira_humano_seg, v.primeira_humano_n] = acumular(v.primeira_humano_seg, v.primeira_humano_n, gap, n); }
+        }
+        if (auto) { [v.geral_auto_seg, v.geral_auto_n] = acumular(v.geral_auto_seg, v.geral_auto_n, gap, n); }
+        else { [v.geral_humano_seg, v.geral_humano_n] = acumular(v.geral_humano_seg, v.geral_humano_n, gap, n); }
+      }
+    }
+    for (const row of esperandoR.rows) {
+      const setor = getSetor(row.setor_id);
+      const v = getVend(setor, row.vendedor_id);
+      v.esperando += Number(row.esperando) || 0;
+    }
+
+    // Converte para arrays e arredonda.
+    const out = Object.values(setores).map(s => {
+      const vends = Object.values(s.vendedores).map(v => ({
+        ...v,
+        primeira_humano_seg: v.primeira_humano_seg != null ? Math.round(v.primeira_humano_seg) : null,
+        primeira_auto_seg: v.primeira_auto_seg != null ? Math.round(v.primeira_auto_seg) : null,
+        geral_humano_seg: v.geral_humano_seg != null ? Math.round(v.geral_humano_seg) : null,
+        geral_auto_seg: v.geral_auto_seg != null ? Math.round(v.geral_auto_seg) : null
+      }));
+      return { ...s, vendedores: vends };
+    });
+
+    res.json({ dias, setores: out });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
