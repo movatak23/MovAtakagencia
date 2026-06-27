@@ -1124,28 +1124,37 @@ let _tourTelaAtual = 'inicial';
 let _tourJaDisparou = {};
 
 function tourElementoVisivel(sel) {
-  const el = document.querySelector(sel);
-  if (!el) return null;
-  const r = el.getBoundingClientRect();
-  if (r.width === 0 && r.height === 0) return null;
-  if (getComputedStyle(el).display === 'none' || getComputedStyle(el).visibility === 'hidden') return null;
-  return el;
+  // Procura entre TODOS os elementos que casam (pode haver duplicados escondidos
+  // em modais/seções) e retorna o primeiro REALMENTE visível na tela.
+  const els = document.querySelectorAll(sel);
+  for (const el of els) {
+    // offsetParent é null se o elemento ou qualquer ancestral está display:none.
+    if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+    return el;
+  }
+  return null;
 }
 
 function iniciarTour(forcado, telaExplicita) {
   // Não reabre se já está rodando.
   if (_tourAtivo) return;
 
-  // Tela: usa a explícita (do disparo automático) ou detecta pela presença do funil.
+  // Tela: usa a explícita (do disparo automático) ou detecta.
+  // Detecção confiável: a tela inicial tem a lista de clientes (.clientes-section) visível.
+  // Se ela NÃO está visível, estamos no funil.
   let tela = telaExplicita;
   if (!tela) {
-    const noFunil = !!tourElementoVisivel('#funil-board') || !!tourElementoVisivel('#painel-msg-texto');
-    tela = noFunil ? 'funil' : 'inicial';
+    const naInicial = !!tourElementoVisivel('.clientes-section');
+    tela = naInicial ? 'inicial' : 'funil';
   }
   _tourTelaAtual = tela;
   const conjunto = tela === 'funil' ? TOUR_FUNIL : TOUR_INICIAL;
 
-  // Só passos cujo alvo existe na tela atual.
+  // Só passos cujo alvo existe E está visível na tela atual.
   const passos = conjunto.filter(p => tourElementoVisivel(p.alvo));
   if (!passos.length) {
     if (forcado) alert('Nada para mostrar nesta tela no momento.');
