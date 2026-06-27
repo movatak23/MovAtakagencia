@@ -4245,7 +4245,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
     const colBySlug = new Map(colunas.map(c => [c.slug, c]));
 
     const leadsRes = await query(
-      `SELECT lb.*, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
+      `SELECT lb.*, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em, ult.midia_tipo AS ultima_msg_midia
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
               COALESCE(l.nao_lida,false) AS nao_lida,
@@ -4266,7 +4266,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
         LIMIT 500
          ) lb
          LEFT JOIN LATERAL (
-           SELECT direcao, criado_em FROM movatak_conversas c
+           SELECT direcao, criado_em, midia_tipo FROM movatak_conversas c
             WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
          ) ult ON true`,
       params
@@ -8530,7 +8530,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
       filtroSetorSql = ' AND l.setor_id = $2';
     }
     const leads = await query(
-      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em
+      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em, ult.midia_tipo AS ultima_msg_midia
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
                   l.nao_lida, l.arquivado, l.foto_url,
@@ -8549,7 +8549,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
             GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
          ) lb
          LEFT JOIN LATERAL (
-           SELECT conteudo, direcao, criado_em FROM movatak_conversas c
+           SELECT conteudo, direcao, criado_em, midia_tipo FROM movatak_conversas c
             WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
          ) ult ON true
         ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
