@@ -8535,7 +8535,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
                   l.nao_lida, l.arquivado, l.foto_url,
                   s.nome AS setor_nome, s.cor AS setor_cor,
-                  l.criado_em, l.atualizado_em, l.convertido_em,
+                  l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
                   v.nome AS vendedor_nome,
                   p.nome AS plano_nome, p.valor AS plano_valor,
                   COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
