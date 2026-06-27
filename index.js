@@ -164,6 +164,8 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS ia_oferta TEXT,
     ADD COLUMN IF NOT EXISTS ia_tom TEXT,
     ADD COLUMN IF NOT EXISTS ia_resumo TEXT,
+    ADD COLUMN IF NOT EXISTS portal_email TEXT,
+    ADD COLUMN IF NOT EXISTS portal_senha_hash TEXT,
     ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
   await query(`UPDATE movatak_clientes
      SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
@@ -1468,6 +1470,29 @@ app.post('/movatak/webhook/resposta', async (req, res) => {
 // ============================================================
 
 // Dashboard — métricas do período
+// ── PORTAL DO CLIENTE — Login por email e senha ──────────────
+// Valida email+senha do cliente e devolve o app_token (usado nas demais chamadas).
+app.post('/movatak/app/login', async (req, res) => {
+  try {
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const senha = String((req.body && req.body.senha) || '');
+    if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
+
+    const r = await query(
+      'SELECT id, nome, app_token, portal_senha_hash FROM movatak_clientes WHERE LOWER(portal_email) = $1 AND ativo = true',
+      [email]
+    );
+    if (!r.rows.length) return res.status(401).json({ error: 'Email ou senha inválidos.' });
+    const cli = r.rows[0];
+    if (!cli.portal_senha_hash || cli.portal_senha_hash !== hashSenha(senha)) {
+      return res.status(401).json({ error: 'Email ou senha inválidos.' });
+    }
+    res.json({ app_token: cli.app_token, nome: cli.nome });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
   try {
     const { dias = 30 } = req.query;
@@ -1627,7 +1652,8 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
     const r = await query(
       `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
               boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay,
-              ia_oferta, ia_tom, ia_resumo
+              ia_oferta, ia_tom, ia_resumo, portal_email,
+              CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -1642,7 +1668,7 @@ app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
 app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo } = req.body;
+    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha } = req.body;
 
     if (!nome || !whatsapp || !zapi_instance) {
       return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
@@ -1663,6 +1689,8 @@ app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => 
     if (ia_oferta !== undefined) { campos.push('ia_oferta = $' + idx); valores.push(ia_oferta || null); idx++; }
     if (ia_tom !== undefined) { campos.push('ia_tom = $' + idx); valores.push(ia_tom || null); idx++; }
     if (ia_resumo !== undefined) { campos.push('ia_resumo = $' + idx); valores.push(ia_resumo || null); idx++; }
+    if (portal_email !== undefined) { campos.push('portal_email = $' + idx); valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null); idx++; }
+    if (portal_senha) { campos.push('portal_senha_hash = $' + idx); valores.push(hashSenha(portal_senha)); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
