@@ -1957,10 +1957,10 @@ async function transcreverAudio(ev, msgId, urlEnc) {
     if (r && r.texto) {
       if (box) { box.textContent = '📝 ' + r.texto; box.style.color = 'var(--text)'; box.dataset.pronto = '1'; }
     } else {
-      if (box) { box.textContent = 'Não foi possível transcrever.'; box.style.color = 'var(--red)'; }
+      if (box) { box.textContent = 'Não foi possível transcrever este áudio.'; box.style.color = 'var(--text2)'; }
     }
   } catch (e) {
-    if (box) { box.textContent = 'Erro ao transcrever: ' + e.message; box.style.color = 'var(--red)'; }
+    if (box) { box.textContent = e.message || 'Transcrição indisponível no momento.'; box.style.color = 'var(--text2)'; }
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '📝 Transcrever'; }
   }
@@ -5374,6 +5374,15 @@ function calcularScorePrioridade(lead) {
   if (lead.etapa === 'cliente' || lead.convertido_em) return 0; // já convertido, fora
   const agora = Date.now();
   const ultimaInteracao = new Date(lead.ultima_msg_em || lead.atualizado_em || lead.criado_em).getTime();
+
+  // Dispensa: se foi dispensado e NÃO houve mensagem nova depois disso, fica fora.
+  // Se o lead voltou a falar (msg posterior à dispensa), reaparece normalmente.
+  if (lead.prioridade_dispensada_em) {
+    const dispensaEm = new Date(lead.prioridade_dispensada_em).getTime();
+    const ultimaMsg = new Date(lead.ultima_msg_em || 0).getTime();
+    if (!isNaN(dispensaEm) && !(ultimaMsg > dispensaEm)) return 0;
+  }
+
   const horasParado = isNaN(ultimaInteracao) ? 0 : (agora - ultimaInteracao) / 3600000;
   let score = 0;
 
@@ -5403,11 +5412,23 @@ function calcularScorePrioridade(lead) {
 // Leads dispensados manualmente do painel de prioridades (só nesta sessão).
 let _prioridadesDispensadas = new Set();
 
-function dispensarPrioridade(ev, leadId) {
+// Dispensa permanente: o lead some das prioridades e só volta se mandar nova
+// mensagem. Persiste no backend (não é mais só visual da sessão).
+async function dispensarPrioridade(ev, leadId) {
   if (ev) ev.stopPropagation();
   _prioridadesDispensadas.add(Number(leadId));
+  // Atualiza o estado local pra sumir na hora, mesmo antes do refresh.
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId));
+  if (lead) lead.prioridade_dispensada_em = new Date().toISOString();
   renderPainelPrioridades();
   atualizarBadgePrioridades();
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/dispensar-prioridade', { method: 'POST' });
+  } catch (e) {
+    // Falhou no servidor: mantém escondido na sessão, mas avisa.
+    const status = document.getElementById('funil-status');
+    if (status) { status.style.color = 'var(--amber)'; status.textContent = 'Prioridade dispensada localmente (erro ao salvar: ' + e.message + ')'; }
+  }
 }
 
 function leadsPriorizados() {
