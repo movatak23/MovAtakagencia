@@ -3438,6 +3438,52 @@ function fecharFU() {
   document.getElementById('modal-fu').classList.remove('open');
   fuId = null;
 }
+// Salva o follow-up: grava no cliente E, se houver template vinculado,
+// atualiza o template (aplica em toda automação que usa ele).
+async function salvarFollowupComFeedback() {
+  const st = document.getElementById('fu-salvo-status');
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando...'; }
+  const followup_v2 = {
+    fu1: {
+      msg1: document.getElementById('fu1-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu1-msg2')?.value.trim() || ''
+    },
+    fu2: {
+      msg1: document.getElementById('fu2-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu2-msg2')?.value.trim() || '',
+      msg3: document.getElementById('fu2-msg3')?.value.trim() || ''
+    }
+  };
+  try {
+    // 1) Salva no cliente (sempre)
+    await salvarFU();
+    // 2) Tenta atualizar o template vinculado (se houver)
+    let infoTemplate = '';
+    try {
+      const r = await api('/movatak/admin/clientes/' + fuId + '/template-followup-mensagens', {
+        method: 'PATCH',
+        body: JSON.stringify({ followup_v2 })
+      });
+      if (r && r.ok) {
+        const total = Math.max(r.usado_em_clientes || 0, 1);
+        infoTemplate = total > 1
+          ? ' (template atualizado — aplica em ' + total + ' automações)'
+          : ' (template atualizado)';
+      }
+    } catch (e) {
+      // Cliente sem template: o salvamento direto no cliente já basta. Sem erro visível.
+    }
+    if (st) {
+      st.style.color = 'var(--green)';
+      st.textContent = '✓ Follow-up salvo!' + infoTemplate;
+      clearTimeout(st._t);
+      st._t = setTimeout(() => { st.textContent = ''; }, 5000);
+    }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar'; }
+  }
+}
+
 async function salvarFU() {
   const fu1_msg1 = document.getElementById('fu1-msg1').value.trim();
   const fu1_msg2 = document.getElementById('fu1-msg2').value.trim();
@@ -7384,8 +7430,9 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
     </div>
 
-    <div style="display:flex;justify-content:flex-end;margin:-8px 0 20px">
-      <button class="btn-save" onclick="salvarFU()" title="Salvar as mensagens de follow-up deste cliente">💾 Salvar follow-up</button>
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:-8px 0 20px">
+      <span id="fu-salvo-status" style="font-size:13px;font-weight:600"></span>
+      <button class="btn-save" onclick="salvarFollowupComFeedback()" title="Salvar as mensagens de follow-up deste cliente">💾 Salvar follow-up</button>
     </div>
 
     <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
