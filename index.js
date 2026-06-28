@@ -167,6 +167,8 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS portal_email TEXT,
     ADD COLUMN IF NOT EXISTS portal_senha_hash TEXT,
     ADD COLUMN IF NOT EXISTS portal_senha_trocada_em TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS quest_lembrete_msg TEXT,
+    ADD COLUMN IF NOT EXISTS quest_lembrete_minutos INTEGER,
     ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
   await query(`UPDATE movatak_clientes
      SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
@@ -6759,13 +6761,15 @@ async function processarQuestionariosParados() {
     await garantirEstruturaQuestionario();
     const r = await query(
       `SELECT q.*, c.zapi_instance, c.zapi_token, c.zapi_client_token,
-              c.questionario_passos, l.nome AS lead_nome, l.etapa AS lead_etapa
+              c.questionario_passos, c.quest_lembrete_msg, c.quest_lembrete_minutos,
+              l.nome AS lead_nome, l.etapa AS lead_etapa
          FROM movatak_questionario_estado q
          JOIN movatak_clientes c ON c.id = q.cliente_id
          JOIN movatak_leads l ON l.id = q.lead_id
         WHERE q.status = 'em_andamento'
-          AND q.atualizado_em < NOW() - make_interval(hours => $1::int)`,
-      [MOVATAK_QUEST_LEMBRETE_HORAS]
+          AND q.atualizado_em < NOW() - make_interval(mins =>
+                COALESCE(NULLIF(c.quest_lembrete_minutos, 0), $1::int))`,
+      [MOVATAK_QUEST_LEMBRETE_HORAS * 60]
     );
     for (const est of r.rows) {
       try {
@@ -6781,12 +6785,11 @@ async function processarQuestionariosParados() {
         const passo = passos[est.passo_idx || 0];
 
         if ((est.lembretes || 0) < MOVATAK_QUEST_MAX_LEMBRETES) {
-          if (passo) {
-            await enviarMsgQuestionario(
-              cliente, lead.telefone,
-              'E aí, conseguiu escolher a estampa que mais atende sua necessidade?',
-              null
-            );
+          // Mensagem configurada pelo cliente. Se vazia, não envia lembrete
+          // (mas ainda marca como processado para seguir o fluxo de abandono depois).
+          const msgLembrete = (est.quest_lembrete_msg || '').trim();
+          if (msgLembrete) {
+            await enviarMsgQuestionario(cliente, lead.telefone, msgLembrete, null);
           }
           await query(`UPDATE movatak_questionario_estado SET lembretes = COALESCE(lembretes,0) + 1, atualizado_em = NOW() WHERE id = $1`, [est.id]);
           await registrarEventoLead(lead.id, est.cliente_id, 'questionario_lembrete', 'Lembrete enviado por inatividade no questionário', { passo_idx: est.passo_idx });
@@ -7369,7 +7372,8 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
               questionario_intro_imagem, questionario_final_imagem,
               questionario_passos, questionario_recomendacao,
               questionario_comando_parar, questionario_comando_ativar,
-              acao_arquivar_ao_final, acao_marcar_nao_lido
+              acao_arquivar_ao_final, acao_marcar_nao_lido,
+              quest_lembrete_msg, quest_lembrete_minutos
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -7389,7 +7393,9 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
       planos: rp.rows,
       cobertura_total: cob.rows[0].total,
       acao_arquivar_ao_final: !!r.rows[0].acao_arquivar_ao_final,
-      acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido
+      acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido,
+      quest_lembrete_msg: r.rows[0].quest_lembrete_msg || '',
+      quest_lembrete_minutos: r.rows[0].quest_lembrete_minutos || null
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7397,7 +7403,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
 app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
-    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar, acao_arquivar_ao_final, acao_marcar_nao_lido } = req.body || {};
+    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar, acao_arquivar_ao_final, acao_marcar_nao_lido, quest_lembrete_msg, quest_lembrete_minutos } = req.body || {};
     await query(
       `UPDATE movatak_clientes
           SET questionario_ativo = COALESCE($1, questionario_ativo),
@@ -7410,8 +7416,10 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
               acao_arquivar_ao_final = COALESCE($8, acao_arquivar_ao_final),
               acao_marcar_nao_lido = COALESCE($9, acao_marcar_nao_lido),
               questionario_comando_parar = $10,
-              questionario_comando_ativar = $11
-        WHERE id = $12`,
+              questionario_comando_ativar = $11,
+              quest_lembrete_msg = $12,
+              quest_lembrete_minutos = $13
+        WHERE id = $14`,
       [
         typeof ativo === 'boolean' ? ativo : null,
         intro || null,
@@ -7424,6 +7432,8 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
         typeof acao_marcar_nao_lido === 'boolean' ? acao_marcar_nao_lido : null,
         (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
         (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null,
+        (typeof quest_lembrete_msg === 'string' && quest_lembrete_msg.trim()) ? quest_lembrete_msg.trim() : null,
+        (Number.isInteger(quest_lembrete_minutos) && quest_lembrete_minutos > 0) ? quest_lembrete_minutos : null,
         req.params.id
       ]
     );
