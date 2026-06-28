@@ -1372,13 +1372,11 @@ if (_vendTokenSalvo) {
 // e os botões de recurso só da operação dele. O backend isola tudo pelo token.
 async function iniciarFunilPortalCliente() {
   try {
-    console.log('[DIAG-PORTAL] iniciando modo portal, token=' + (_appTokenPortal ? _appTokenPortal.slice(0,12) + '...' : 'VAZIO'));
     document.body.classList.add('modo-portal-cliente'); // ativa o CSS que esconde itens do admin
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.add('visible');
     // Descobre quem é o cliente pelo token.
     const me = await api('/movatak/app/me');
-    console.log('[DIAG-PORTAL] /app/me respondeu:', JSON.stringify(me));
     if (!me || !me.id) throw new Error('Sessão inválida. Faça login novamente no portal.');
     // Persiste o token para sobreviver a refresh da página.
     try { localStorage.setItem('movatak-portal-token', _appTokenPortal); } catch (e) {}
@@ -1473,7 +1471,6 @@ async function api(path, opts = {}, raw = false) {
     clearTimeout(timer);
   }
   if (res.status === 401 && !raw) {
-    console.log('[DIAG-PORTAL] 401 na rota: ' + pathFinal + ' | modoPortal=' + (!!_appTokenPortal));
     if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
       const st = document.getElementById('funil-status');
       if (st) st.innerHTML = '<span style="color:var(--red)">Sessão expirada. Feche esta janela, faça login no painel e abra o funil novamente.</span>';
