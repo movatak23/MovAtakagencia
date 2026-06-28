@@ -277,6 +277,24 @@ const exigeMsgRapida = [authMovatakOuApp, async (req, res, next) => {
   }
   next();
 }];
+const exigePlano = [authMovatakOuApp, async (req, res, next) => {
+  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_planos', req.params.id))) {
+    return res.status(403).json({ error: 'Acesso negado a este plano.' });
+  }
+  next();
+}];
+const exigeTemplateFU = [authMovatakOuApp, async (req, res, next) => {
+  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_followup_templates', req.params.id))) {
+    return res.status(403).json({ error: 'Acesso negado a este template.' });
+  }
+  next();
+}];
+const exigeQuestTemplate = [authMovatakOuApp, async (req, res, next) => {
+  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_questionario_templates', req.params.tid))) {
+    return res.status(403).json({ error: 'Acesso negado a este template.' });
+  }
+  next();
+}];
 
 // Para rotas /clientes/:id/... — se for cliente, força o :id ser o dele.
 // Assim ele nunca lista/acessa dados de outro cliente, mesmo trocando a URL.
@@ -1614,6 +1632,11 @@ app.post('/movatak/app/login', async (req, res) => {
   }
 });
 
+// Retorna a identidade do cliente autenticado (para o portal montar o funil).
+app.get('/movatak/app/me', authCliente, async (req, res) => {
+  res.json({ id: req.clienteId, nome: req.clienteNome, permissoes: req.clientePermissoes });
+});
+
 app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
   try {
     const { dias = 30 } = req.query;
@@ -2065,7 +2088,7 @@ app.patch('/movatak/admin/leads/:id/plano', ...exigeLead, async (req, res) => {
 
 
 // Listar vendedores de um cliente
-app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/vendedores', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
     const r = await query(
@@ -2110,7 +2133,7 @@ app.get('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) 
 });
 
 // Cadastrar vendedor e criar etiqueta na Z-API
-app.post('/movatak/admin/clientes/:id/vendedores', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/vendedores', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
     const { nome, email_acesso, senha_acesso, comando } = req.body;
@@ -2170,7 +2193,7 @@ app.get('/movatak/admin/clientes/:id/setores', ...forcaClienteIdNaUrl, async (re
 });
 
 // Criar setor novo
-app.post('/movatak/admin/clientes/:id/setores', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/setores', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const { nome, cor, mensagem_saudacao, ordem_bot, vendedor_ids } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
@@ -5404,7 +5427,7 @@ async function chamarHaiku(systemPrompt, userPrompt) {
 // anteriores do próprio atendente (puxadas do histórico de conversas).
 // Transcreve um áudio (URL pública) para texto usando a API Whisper da OpenAI.
 // Requer OPENAI_API_KEY no ambiente.
-app.post('/movatak/admin/transcrever-audio', authMovatak, async (req, res) => {
+app.post('/movatak/admin/transcrever-audio', authMovatakOuApp, async (req, res) => {
   try {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return res.status(400).json({ error: 'Transcrição não configurada (falta OPENAI_API_KEY).' });
@@ -6875,7 +6898,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (
   }
 });
 
-app.post('/movatak/admin/clientes/:id/campanhas', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id } = req.body || {};
@@ -6951,7 +6974,7 @@ app.delete('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
   }
 });
 
-app.delete('/movatak/admin/templates-followup/:id', authMovatak, async (req, res) => {
+app.delete('/movatak/admin/templates-followup/:id', ...exigeTemplateFU, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const templateId = String(req.params.id || '').replace(/\D/g, '');
@@ -6996,10 +7019,11 @@ async function listarTemplatesCustom(clienteId) {
   return r.rows;
 }
 
-app.get('/movatak/admin/templates-followup', authMovatak, async (req, res) => {
+app.get('/movatak/admin/templates-followup', authMovatakOuApp, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const clienteId = req.query.cliente_id || req.query.clienteId || null;
+    // Cliente só vê os próprios templates: força o cliente_id do token.
+    const clienteId = req.ehCliente ? req.clienteId : (req.query.cliente_id || req.query.clienteId || null);
     const padroes = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({
       id,
       nome: t.nome,
@@ -7275,7 +7299,7 @@ app.get('/movatak/admin/clientes/:id/planos', ...forcaClienteIdNaUrl, async (req
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/planos', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/planos', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
     const { nome, valor, nota_minima } = req.body || {};
@@ -7288,7 +7312,7 @@ app.post('/movatak/admin/clientes/:id/planos', authMovatak, async (req, res) => 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/planos/:id', ...exigePlano, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
     const { nome, valor, nota_minima, template_ids } = req.body || {};
@@ -7319,7 +7343,7 @@ app.patch('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
+app.delete('/movatak/admin/planos/:id', ...exigePlano, async (req, res) => {
   try {
     await garantirEstruturaPlanos();
     // Desvincula os leads que usam este plano (evita o bloqueio da foreign key).
@@ -7334,7 +7358,7 @@ app.delete('/movatak/admin/planos/:id', authMovatak, async (req, res) => {
 // ============================================================
 // API — Questionário consultivo (config por cliente + cobertura CEP)
 // ============================================================
-app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
+app.post('/movatak/admin/upload-imagem', authMovatakOuApp, async (req, res) => {
   try {
     const dataUrl = (req.body && req.body.dataUrl) || '';
     // O navegador pode mandar parâmetros extras no content-type (ex: "audio/webm;codecs=opus")
@@ -7364,7 +7388,7 @@ app.post('/movatak/admin/upload-imagem', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const r = await query(
@@ -7400,7 +7424,7 @@ app.get('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar, acao_arquivar_ao_final, acao_marcar_nao_lido, quest_lembrete_msg, quest_lembrete_minutos } = req.body || {};
@@ -7445,7 +7469,7 @@ app.patch('/movatak/admin/clientes/:id/questionario', authMovatak, async (req, r
 // ============================================================
 // API — Templates de autoatendimento (questionário) por campanha
 // ============================================================
-app.get('/movatak/admin/clientes/:id/questionario-templates', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/questionario-templates', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const r = await query(
@@ -7460,7 +7484,7 @@ app.get('/movatak/admin/clientes/:id/questionario-templates', authMovatak, async
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, res) => {
+app.get('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const r = await query(`SELECT * FROM movatak_questionario_templates WHERE id = $1`, [req.params.tid]);
@@ -7481,7 +7505,7 @@ app.get('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, r
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/questionario-templates', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/questionario-templates', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const { nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar } = req.body || {};
@@ -7502,7 +7526,7 @@ app.post('/movatak/admin/clientes/:id/questionario-templates', authMovatak, asyn
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.patch('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const { nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar } = req.body || {};
@@ -7528,7 +7552,7 @@ app.patch('/movatak/admin/questionario-templates/:tid', authMovatak, async (req,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/movatak/admin/questionario-templates/:tid', authMovatak, async (req, res) => {
+app.delete('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     // Desvincula das campanhas que o usavam (elas voltam ao questionário do cliente).
@@ -7675,7 +7699,7 @@ app.get('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl,
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/mensagens-rapidas', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
     const { titulo, texto, midia_url, itens, template_id } = req.body || {};
@@ -8630,7 +8654,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
 
 // Métricas do rodapé do Funil de Atendimento (Total de leads, Novas mensagens,
 // Em negociação, Conversão do mês). Aceita o mesmo filtro ?setor= do board.
-app.get('/movatak/admin/clientes/:id/funil/metricas', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/funil/metricas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
     const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
@@ -8679,7 +8703,7 @@ app.get('/movatak/admin/nichos-templates', authMovatak, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/funil/aplicar-nicho', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/funil/aplicar-nicho', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
     const nicho = normalizarNichoCliente(req.body?.nicho);
@@ -8710,7 +8734,7 @@ app.get('/movatak/admin/clientes/:id/agendamentos', ...forcaClienteIdNaUrl, asyn
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/agendamentos', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/agendamentos', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaAgenda();
     const clienteId = parseInt(req.params.id, 10);
@@ -8796,7 +8820,7 @@ app.delete('/movatak/admin/agendamentos/:id', ...exigeAgendamento, async (req, r
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/funil/colunas', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/funil/colunas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
     await garantirFunilPadraoCliente(clienteId);
@@ -8932,7 +8956,7 @@ app.delete('/movatak/admin/funil/colunas/:id', ...exigeColuna, async (req, res) 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/funil/colunas/reordenar', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/funil/colunas/reordenar', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaFunil();
     const clienteId = parseInt(req.params.id, 10);
@@ -9061,21 +9085,29 @@ app.delete('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res
 });
 
 // Reset de lead para testes: apaga o lead e tudo ligado a ele, por telefone.
-app.post('/movatak/admin/reset-lead', authMovatak, async (req, res) => {
+app.post('/movatak/admin/reset-lead', authMovatakOuApp, async (req, res) => {
   try {
     const tel = String((req.body && req.body.telefone) || '').replace(/\D/g, '');
     if (tel.length < 8) return res.status(400).json({ error: 'Telefone inválido.' });
-    const sel = `SELECT id FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1`;
-    const found = await query(sel, [tel]);
+
+    // Segurança: o cliente só pode resetar leads da PRÓPRIA operação.
+    // Para admin, opera em todos. Para cliente, restringe ao cliente_id do token.
+    const filtroCliente = req.ehCliente ? ' AND cliente_id = $2' : '';
+    const paramsBase = req.ehCliente ? [tel, req.clienteId] : [tel];
+
+    const sel = `SELECT id FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1${filtroCliente}`;
+    const found = await query(sel, paramsBase);
     const removidos = found.rows.length;
     if (removidos) {
-      await query(`DELETE FROM movatak_followup WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
-      await query(`DELETE FROM movatak_mensagens WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
-      await query(`DELETE FROM movatak_lead_eventos WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
-      await query(`DELETE FROM movatak_etiqueta_log WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
-      await query(`DELETE FROM movatak_questionario_estado WHERE lead_id IN (${sel})`, [tel]).catch(() => null);
-      await query(`DELETE FROM movatak_questionario_estado WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1`, [tel]).catch(() => null);
-      await query(`DELETE FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1`, [tel]);
+      // Apaga dependências dos leads encontrados (já restritos ao cliente, se for o caso).
+      const ids = found.rows.map(r => r.id);
+      const phIds = ids.map((_, i) => '$' + (i + 1)).join(',');
+      await query(`DELETE FROM movatak_followup WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      await query(`DELETE FROM movatak_mensagens WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      await query(`DELETE FROM movatak_lead_eventos WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      await query(`DELETE FROM movatak_etiqueta_log WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      await query(`DELETE FROM movatak_questionario_estado WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      await query(`DELETE FROM movatak_leads WHERE id IN (${phIds})`, ids);
     }
     res.json({ ok: true, removidos });
   } catch (e) { res.status(500).json({ error: e.message }); }
