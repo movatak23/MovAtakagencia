@@ -1917,7 +1917,7 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
 });
 
 // Leads de um cliente específico
-app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/leads', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       `SELECT l.*, p.nome AS plano_nome, s.nome AS setor_nome, s.cor AS setor_cor
@@ -1936,7 +1936,7 @@ app.get('/movatak/admin/clientes/:id/leads', authMovatak, async (req, res) => {
 });
 
 // Buscar mensagens de follow up de um cliente
-app.get('/movatak/admin/clientes/:id/ausencia', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/ausencia', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       `SELECT ausencia_msg_padrao, ausencia_horarios, ausencia_datas FROM movatak_clientes WHERE id = $1`,
@@ -1952,7 +1952,7 @@ app.get('/movatak/admin/clientes/:id/ausencia', authMovatak, async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.patch('/movatak/admin/clientes/:id/ausencia', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/ausencia', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const { ausencia_msg_padrao, ausencia_horarios, ausencia_datas } = req.body || {};
     const horarios = Array.isArray(ausencia_horarios) ? ausencia_horarios : [];
@@ -1967,7 +1967,7 @@ app.patch('/movatak/admin/clientes/:id/ausencia', authMovatak, async (req, res) 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg, comandos
@@ -2041,7 +2041,7 @@ app.get('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) =>
 });
 
 // Atualizar mensagens de follow up de um cliente (novo formato: 2 blocos)
-app.patch('/movatak/admin/clientes/:id/followup', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const { boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
 
@@ -2447,7 +2447,7 @@ app.patch('/movatak/admin/leads/:id/arquivar', ...exigeLead, async (req, res) =>
 });
 
 // Ranking de vendedores
-app.get('/movatak/admin/clientes/:id/ranking', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/ranking', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       `SELECT v.nome, COUNT(l.id) AS vendas, COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos
@@ -2787,7 +2787,7 @@ app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
 });
 
 // Atualizar whatsapp_dono
-app.patch('/movatak/admin/clientes/:id/dono', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/dono', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const { whatsapp_dono } = req.body;
     await query('UPDATE movatak_clientes SET whatsapp_dono = $1 WHERE id = $2', [whatsapp_dono, req.params.id]);
@@ -3978,7 +3978,7 @@ function extrairComandosDoBody(body) {
 }
 
 // Buscar comandos de um cliente
-app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/comandos', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       'SELECT comandos FROM movatak_clientes WHERE id = $1', [req.params.id]
@@ -3989,7 +3989,7 @@ app.get('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) =>
 });
 
 // Atualizar comandos de um cliente
-app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/comandos', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     // O painel envia os comandos como texto: "#vendido, #fechou".
     // A versão anterior só aceitava arrays, por isso a tela parecia salvar, mas voltava ao padrão.
@@ -4032,7 +4032,7 @@ app.patch('/movatak/admin/clientes/:id/comandos', authMovatak, async (req, res) 
 // ============================================================
 
 // Ler a configuração do menu de um cliente
-app.get('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/menu-atendimento', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       `SELECT menu_atend_ativo, menu_atend_texto, menu_atend_posicao, menu_atend_mapa, menu_atend_marcar_nao_lido
@@ -4055,7 +4055,7 @@ app.get('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req,
 });
 
 // Salvar a configuração do menu
-app.patch('/movatak/admin/clientes/:id/menu-atendimento', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/menu-atendimento', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const { ativo, texto, posicao, mapa, marcar_nao_lido } = req.body || {};
     const posicaoValida = ['apos_boas_vindas', 'apos_questionario'].includes(posicao) ? posicao : 'apos_boas_vindas';
@@ -5166,7 +5166,7 @@ app.delete('/movatak/vendedor/leads/:id', authVendedor, async (req, res) => {
 // ============================================================
 // API — Resumo de um cliente (cards do topo do dashboard)
 // ============================================================
-app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/resumo', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const id = req.params.id;
     // Período em dias: 0 = hoje, 7, 30, 90. Default 30.
@@ -5235,7 +5235,7 @@ app.get('/movatak/admin/clientes/:id/resumo', authMovatak, async (req, res) => {
 // ============================================================
 // API — Operação e fila de follow-up
 // ============================================================
-app.get('/movatak/admin/clientes/:id/operacao', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/operacao', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const clienteId = req.params.id;
 
@@ -5311,7 +5311,7 @@ app.get('/movatak/admin/clientes/:id/operacao', authMovatak, async (req, res) =>
   }
 });
 
-app.get('/movatak/admin/clientes/:id/fila-followup', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/fila-followup', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const status = String(req.query.status || '').trim();
     const limit = Math.min(Math.max(parseInt(req.query.limit || '80'), 1), 200);
@@ -5868,7 +5868,7 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
 });
 
 // Lista operacional de leads do cliente
-app.get('/movatak/admin/clientes/:id/leads-operacao', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/leads-operacao', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const limit = Math.min(Math.max(parseInt(req.query.limit || '80'), 1), 200);
     const etapa = String(req.query.etapa || '').trim();
@@ -5898,7 +5898,7 @@ app.get('/movatak/admin/clientes/:id/leads-operacao', authMovatak, async (req, r
 });
 
 // Exportação CSV simples para reunião/prestação de contas
-app.get('/movatak/admin/clientes/:id/leads.csv', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/leads.csv', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
       `SELECT l.id, l.nome, l.telefone, l.etapa, v.nome AS vendedor_nome, l.criado_em, l.atualizado_em
@@ -5921,7 +5921,7 @@ app.get('/movatak/admin/clientes/:id/leads.csv', authMovatak, async (req, res) =
 });
 
 // Envio manual do relatório diário para teste/implantação
-app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const rel = await montarRelatorioDiarioCliente(req.params.id);
     if (!rel) return res.status(404).json({ error: 'Cliente nao encontrado.' });
@@ -7074,7 +7074,7 @@ app.get('/movatak/admin/templates-followup', authMovatakOuApp, async (req, res) 
 
 // Atualiza as mensagens de um TEMPLATE específico (o selecionado no dropdown).
 // Só templates personalizados (custom:ID) podem ser editados — os padrão são fixos.
-app.patch('/movatak/admin/clientes/:id/template-followup-mensagens', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/template-followup-mensagens', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const templateRef = String(req.body.template || '').trim();
@@ -7122,7 +7122,7 @@ app.patch('/movatak/admin/clientes/:id/template-followup-mensagens', authMovatak
   }
 });
 
-app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/templates-followup', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const body = req.body || {};
@@ -7153,7 +7153,7 @@ app.post('/movatak/admin/clientes/:id/templates-followup', authMovatak, async (r
   }
 });
 
-app.get('/movatak/admin/clientes/:id/template-conteudo', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/template-conteudo', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const templateId = String(req.query.template || '').trim();
@@ -7192,7 +7192,7 @@ app.get('/movatak/admin/clientes/:id/template-conteudo', authMovatak, async (req
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/aplicar-template', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/aplicar-template', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const templateId = String((req.body || {}).template || '').trim();
@@ -8339,7 +8339,7 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
 // Reconcilia o setor dos leads com o setor das colunas onde eles estão. Útil para
 // corrigir leads movidos antes do fix (que ficaram com setor_id de um setor mas em
 // coluna de outro). Atualiza só quando há divergência.
-app.post('/movatak/admin/clientes/:id/reconciliar-setores', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/reconciliar-setores', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
     const r = await query(
@@ -8357,7 +8357,7 @@ app.post('/movatak/admin/clientes/:id/reconciliar-setores', authMovatak, async (
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/diagnostico', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const clienteId = parseInt(req.params.id, 10);
     const telefoneRaw = String(req.query.telefone || '').trim();
@@ -8414,7 +8414,7 @@ app.get('/movatak/admin/clientes/:id/diagnostico', authMovatak, async (req, res)
 // ── DASHBOARD SLA — tempo de resposta por setor e vendedor ───
 // Cruza cada mensagem de ENTRADA (lead) com a próxima SAÍDA, calcula o gap,
 // e agrega por setor → vendedor. Separa respostas humanas de automáticas.
-app.get('/movatak/admin/clientes/:id/sla', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/sla', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaConversas();
     const clienteId = parseInt(req.params.id, 10);
@@ -9067,7 +9067,7 @@ app.patch('/movatak/admin/leads/:id/funil', ...exigeLead, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const r = await query('SELECT cep FROM movatak_cobertura_cep WHERE cliente_id = $1 ORDER BY cep ASC', [req.params.id]);
@@ -9075,7 +9075,7 @@ app.get('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) =
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
+app.post('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     const modo = (req.body && req.body.modo) || 'substituir';
@@ -9101,7 +9101,7 @@ app.post('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.delete('/movatak/admin/clientes/:id/cobertura', authMovatak, async (req, res) => {
+app.delete('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
     await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
