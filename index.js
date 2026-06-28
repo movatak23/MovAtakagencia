@@ -1,9158 +1,8505 @@
-'use strict';
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Movatak — Painel</title>
+<link id="app-favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%235b7fff'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'%3EM%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Tema Escuro */
+  --bg:      #080810;
+  --bg2:     #0f0f1c;
+  --bg3:     #16162a;
+  --bg4:     #1c1c32;
+  --border:  rgba(255,255,255,0.07);
+  --border2: rgba(255,255,255,0.12);
+  --text:    #eeeef8;
+  --text2:   #7777a0;
+  --text3:   #3a3a58;
+  --accent:  #5b7fff;
+  --green:   #00d084;
+  --amber:   #f5a623;
+  --red:     #ff5a5a;
+  --mono:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --sans:    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --msg-out: #2563eb;
+  --msg-in:  #2a2f3d;
+  --msg-text-out: #f0f0f0;
+  --msg-text-in: #e8e8f8;
+  --msg-time-out: #93c5fd;
+  --msg-time-in: #888;
+  --msg-acao-out: rgba(255,255,255,.92);
+  --msg-acao-in: #d8d8e8;
+}
 
-// ============================================================
-// VERSÃO — incrementar a cada atualização
-// ============================================================
-const MOVATAK_VERSION = 'v2.7.3-grupos-inbox';
+html.light-mode {
+  --bg:      #f8f8fa;
+  --bg2:     #ffffff;
+  --bg3:     #f0f0f5;
+  --bg4:     #e8e8f0;
+  --border:  rgba(0,0,0,0.07);
+  --border2: rgba(0,0,0,0.12);
+  --text:    #1a1a2e;
+  --text2:   #6b6b8a;
+  --text3:   #a0a0b8;
+  --accent:  #5b7fff;
+  --green:   #00b873;
+  --amber:   #d97706;
+  --red:     #dc2626;
+  --msg-out: #2563eb;
+  --msg-in:  #e8e8f0;
+  --msg-text-out: #ffffff;
+  --msg-text-in: #1a1a2e;
+  --msg-time-out: #93c5fd;
+  --msg-time-in: #8b8b9f;
+  --msg-acao-out: rgba(255,255,255,.92);
+  --msg-acao-in: #1a1a2e;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;overflow-x:hidden}
 
-const express = require('express');
-const { Pool } = require('pg');
-const cron = require('node-cron');
-const axios = require('axios');
-const crypto = require('crypto');
-const http = require('http');
-const { Server: SocketIOServer } = require('socket.io');
+/* Login */
+#login-screen{
+  position:fixed;inset:0;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;
+  z-index:100;transition:opacity .4s;
+}
+#login-screen.hidden{opacity:0;pointer-events:none}
+.login-box{
+  background:var(--bg2);border:1px solid var(--border2);
+  border-radius:20px;padding:48px 40px;width:100%;max-width:400px;
+  animation:fadeUp .5s ease both;
+}
+.login-logo{
+  width:56px;height:56px;background:var(--accent);border-radius:14px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;font-weight:800;color:#fff;margin:0 auto 20px;
+}
+.login-box h1{font-size:26px;font-weight:800;text-align:center;margin-bottom:6px}
+.login-box p{font-size:14px;color:var(--text2);text-align:center;margin-bottom:36px}
+.field label{font-size:12px;color:var(--text2);letter-spacing:.5px;display:block;margin-bottom:8px}
+.field input{
+  width:100%;background:var(--bg3);border:1px solid var(--border2);
+  border-radius:10px;padding:14px 16px;font-size:15px;color:var(--text);
+  font-family:var(--mono);outline:none;transition:border-color .2s;
+}
+.field input:focus{border-color:var(--accent)}
+.login-err{font-size:13px;color:var(--red);margin-top:8px;min-height:20px}
+.btn-primary{
+  width:100%;margin-top:20px;padding:16px;border-radius:10px;
+  background:var(--accent);border:none;color:#fff;font-size:16px;
+  font-weight:700;font-family:var(--sans);cursor:pointer;
+  transition:opacity .2s,transform .1s;
+}
+.btn-primary:hover{opacity:.9}
+.btn-primary:active{transform:scale(.98)}
 
-const path = require('path');
-const app = express();
-app.use(express.json({ limit: '30mb' }));
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token, x-vendedor-token');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
-  if (req.method === 'OPTIONS') return res.sendStatus(200);
-  next();
-});
-app.use(express.static(path.join(__dirname, 'public')));
+/* Layout */
+.app{display:none;min-height:100vh}
+.app.visible{display:block}
+header{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:10px 32px;border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--bg);z-index:10;
+}
+.header-left{display:flex;align-items:center;gap:12px}
+.header-logo{
+  width:30px;height:30px;background:var(--accent);border-radius:8px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;font-weight:800;color:#fff;
+}
+.header-title{font-size:16px;font-weight:800}
+.header-sub{font-size:11px;color:var(--text2);margin-top:0}
+.header-right{display:flex;align-items:center;gap:16px}
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: all .2s;
+  font-size: 16px;
+}
+.theme-toggle:hover {
+  border-color: var(--border2);
+  background: var(--bg2);
+  color: var(--text);
+}
+.btn-sair{
+  background:transparent;border:1px solid var(--border2);border-radius:8px;
+  padding:6px 14px;color:var(--text2);font-size:12px;font-family:var(--sans);
+  cursor:pointer;transition:all .2s;
+}
+.btn-sair:hover{border-color:var(--border2);color:var(--text);background:var(--bg2)}
 
-// ============================================================
-// Socket.io — tela de atendimento em tempo real
-// Mantém app.listen funcionando igual antes: criamos um servidor HTTP
-// explícito só para poder amarrar o socket nele, sem mudar nenhuma rota.
-// ============================================================
-const httpServer = http.createServer(app);
-const io = new SocketIOServer(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
-});
+main{padding:32px}
 
-io.use(async (socket, next) => {
-  const auth = socket.handshake.auth || {};
-  const secret = auth.secret;
-  if (secret && secret === process.env.MOVATAK_SECRET) {
-    socket.data.role = 'admin';
-    return next();
+/* Período */
+.periodo-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;flex-wrap:wrap;gap:12px}
+.periodo-bar h2{font-size:22px;font-weight:800}
+.periodo-btns{display:flex;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:4px;gap:2px}
+.periodo-btns button{
+  padding:8px 20px;border-radius:7px;border:none;background:transparent;
+  color:var(--text2);font-size:14px;font-weight:600;font-family:var(--sans);
+  cursor:pointer;transition:all .2s;
+}
+.periodo-btns button.active{background:var(--accent);color:#fff}
+
+/* Grid de métricas */
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:28px}
+.metric-card{
+  background:var(--bg2);border:1px solid var(--border);border-radius:16px;
+  padding:20px;transition:border-color .2s;
+}
+.metric-card:hover{border-color:var(--border2)}
+.metric-label{font-size:12px;color:var(--text2);letter-spacing:.4px;margin-bottom:10px;text-transform:uppercase}
+.metric-value{font-size:32px;font-weight:800;line-height:1;margin-bottom:4px}
+.metric-sub{font-size:12px;color:var(--text3)}
+.metric-card.accent .metric-value{color:var(--accent)}
+.metric-card.green .metric-value{color:var(--green)}
+.metric-card.amber .metric-value{color:var(--amber)}
+.metric-card.red-val .metric-value{color:var(--red)}
+
+/* Grid de painéis */
+.panels{display:grid;grid-template-columns:1fr 340px;gap:20px;margin-bottom:28px}
+@media(max-width:900px){.panels{grid-template-columns:1fr}}
+
+.panel{background:var(--bg2);border:1px solid var(--border);border-radius:16px;padding:24px}
+.panel-title{font-size:14px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:20px}
+
+/* Gráfico de barras */
+.chart-wrap{display:flex;align-items:flex-end;gap:4px;height:120px}
+.bar-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px}
+.bar{width:100%;border-radius:4px 4px 0 0;background:var(--bg4);transition:height .4s ease}
+.bar.today{background:var(--accent)}
+.bar-lbl{font-size:10px;color:var(--text3);font-family:var(--mono)}
+
+/* Funil */
+.funil-step{margin-bottom:18px}
+.funil-step:last-child{margin-bottom:0}
+.funil-row{display:flex;justify-content:space-between;margin-bottom:6px}
+.funil-name{font-size:14px;color:var(--text2)}
+.funil-num{font-size:14px;font-weight:700}
+.funil-bar-bg{height:8px;background:var(--bg4);border-radius:4px;overflow:hidden}
+.funil-bar-fill{height:100%;border-radius:4px;transition:width .6s ease}
+.funil-pct{font-size:11px;color:var(--text3);text-align:right;margin-top:3px;font-family:var(--mono)}
+
+/* Tabela de clientes */
+.clientes-section{margin-bottom:28px}
+/* Modo portal do cliente: esconde itens exclusivos do admin/gestor. */
+body.modo-portal-cliente .so-admin{display:none !important}
+body.modo-portal-cliente .so-portal{display:inline !important}
+/* Esconde o botão "Credenciais" no header do app (não há gestão de acesso aqui). */
+body.modo-portal-cliente #btn-credenciais-header{display:none !important}
+.section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.section-title{font-size:16px;font-weight:700}
+.badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
+.badge-green{background:rgba(0,208,132,.12);color:var(--green)}
+.badge-gray{background:var(--bg4);color:var(--text2)}
+
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;text-transform:uppercase;padding:10px 16px;text-align:left;border-bottom:1px solid var(--border)}
+td{font-size:14px;padding:14px 16px;border-bottom:1px solid var(--border);color:var(--text)}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:var(--bg3)}
+.td-mono{font-family:var(--mono);font-size:13px;color:var(--text2)}
+.td-green{color:var(--green);font-weight:700}
+.td-amber{color:var(--amber);font-weight:700}
+
+/* Modal cadastro */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.7);
+  display:flex;align-items:center;justify-content:center;
+  z-index:200;opacity:0;pointer-events:none;transition:opacity .3s;
+}
+.modal-overlay.open{opacity:1;pointer-events:all}
+.modal{
+  background:var(--bg2);border:1px solid var(--border2);
+  border-radius:20px;padding:36px;width:100%;max-width:520px;
+  max-height:90vh;overflow-y:auto;
+  transform:translateY(20px);transition:transform .3s;
+}
+.modal-overlay.open .modal{transform:translateY(0)}
+.modal h3{font-size:20px;font-weight:800;margin-bottom:24px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+/* Config. Inicial (cadastro/edição do cliente): modal largo em 3 colunas,
+   pra reduzir a rolagem vertical. Campos .full continuam ocupando a linha toda. */
+.modal-cliente{max-width:1100px}
+.modal-cliente .form-grid{grid-template-columns:1fr 1fr 1fr}
+@media (max-width:900px){ .modal-cliente .form-grid{grid-template-columns:1fr 1fr} }
+@media (max-width:600px){ .modal-cliente .form-grid{grid-template-columns:1fr} }
+.form-field{display:flex;flex-direction:column;gap:6px}
+.form-field.full{grid-column:1/-1}
+.form-field label{font-size:12px;color:var(--text2);letter-spacing:.4px}
+.form-field input{
+  background:var(--bg3);border:1px solid var(--border2);border-radius:8px;
+  padding:12px 14px;font-size:14px;color:var(--text);font-family:var(--mono);
+  outline:none;transition:border-color .2s;
+}
+.form-field input:focus{border-color:var(--accent)}
+.modal-btns{display:flex;gap:12px;margin-top:24px;justify-content:flex-end}
+.btn-cancel{
+  padding:12px 20px;border-radius:8px;border:1px solid var(--border2);
+  background:transparent;color:var(--text2);font-size:14px;font-family:var(--sans);cursor:pointer;
+}
+.btn-save{
+  padding:12px 24px;border-radius:8px;border:none;background:var(--accent);
+  color:#fff;font-size:14px;font-weight:700;font-family:var(--sans);cursor:pointer;
+}
+.token-box{
+  background:var(--bg3);border:1px solid var(--green);border-radius:10px;
+  padding:16px;margin-top:16px;
+}
+.token-label{font-size:12px;color:var(--green);margin-bottom:8px}
+.token-val{font-family:var(--mono);font-size:15px;color:var(--text);word-break:break-all}
+.btn-copy{
+  margin-top:12px;padding:8px 16px;border-radius:6px;border:1px solid var(--border2);
+  background:transparent;color:var(--text2);font-size:13px;font-family:var(--sans);cursor:pointer;
+}
+
+/* Estado vazio / loading */
+.state-row{text-align:center;padding:40px;color:var(--text2);font-size:14px}
+.spinner{
+  width:28px;height:28px;border:2px solid var(--border2);
+  border-top-color:var(--accent);border-radius:50%;
+  animation:spin .7s linear infinite;margin:0 auto 12px;
+}
+
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulseLembrete{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.78;transform:scale(1.04)}}
+/* ── Tour guiado / onboarding ── */
+#tour-overlay{position:fixed;inset:0;z-index:9000;pointer-events:none;display:none}
+#tour-overlay.ativo{display:block}
+#tour-backdrop{position:absolute;inset:0;pointer-events:auto;transition:clip-path .3s ease}
+#tour-spot{position:absolute;border-radius:12px;box-shadow:0 0 0 4px var(--accent),0 0 0 9999px rgba(0,0,0,.72);transition:all .3s ease;pointer-events:none}
+#tour-balao{position:absolute;max-width:340px;background:var(--bg2);border:1px solid var(--border2);border-radius:14px;padding:18px 20px;box-shadow:0 12px 40px rgba(0,0,0,.4);pointer-events:auto;z-index:9002;transition:all .25s ease}
+#tour-balao h4{margin:0 0 8px;font-size:15px;font-weight:800;color:var(--text)}
+#tour-balao p{margin:0 0 14px;font-size:13px;line-height:1.5;color:var(--text2)}
+#tour-balao .tour-actions{display:flex;align-items:center;justify-content:space-between;gap:8px}
+#tour-balao .tour-step{font-size:11px;color:var(--text3);font-weight:600}
+#tour-balao .tour-btns{display:flex;gap:8px}
+#tour-balao button{border-radius:8px;font-size:12px;padding:7px 14px;cursor:pointer;font-family:var(--sans);font-weight:600;border:1px solid var(--border2)}
+#tour-balao .tour-skip{background:none;color:var(--text3);border:none;padding:7px 8px}
+#tour-balao .tour-prev{background:none;color:var(--text2)}
+#tour-balao .tour-next{background:var(--accent);color:#fff;border-color:var(--accent)}
+@keyframes pulseLeadAceso{0%,100%{box-shadow:0 0 0 0 rgba(245,166,35,.55);border-color:var(--amber)}50%{box-shadow:0 0 0 4px rgba(245,166,35,0);border-color:var(--amber)}}
+.funil-card.lead-aceso{border:2px solid var(--amber)!important;animation:pulseLeadAceso 1.6s ease-in-out infinite}
+
+.modal-fu { max-width: 1320px; width: calc(100vw - 32px); }
+.fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
+.fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
+.fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
+.fu-textarea:focus { border-color: var(--accent); }
+.fu-hint { font-size: 11px; color: var(--text3); margin-top: 4px; }
+
+.vendedor-list { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.vendedor-item { display: flex; justify-content: space-between; align-items: center; background: var(--bg3); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
+.vendedor-nome { color: var(--text); }
+.vendedor-tag { font-size: 11px; color: var(--text2); font-family: var(--mono); }
+.btn-remove { background: transparent; border: none; color: var(--red); cursor: pointer; font-size: 16px; padding: 0 4px; }
+.add-vendedor-row { display: flex; gap: 8px; margin-top: 8px; }
+.add-vendedor-row input { flex: 1; }
+.btn-add-small { padding: 8px 16px; border-radius: 8px; border: none; background: var(--accent); color: #fff; font-size: 13px; font-family: var(--sans); cursor: pointer; }
+.ranking-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 0.5px solid var(--border); }
+.ranking-item:last-child { border-bottom: none; }
+.ranking-pos { font-size: 18px; width: 28px; }
+.ranking-nome { font-size: 14px; flex: 1; }
+.ranking-num { font-size: 20px; font-weight: 700; color: var(--green); }
+
+/* Gráfico dividido */
+.chart-split{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media(max-width:700px){.chart-split{grid-template-columns:1fr}}
+.chart-half{min-width:0}
+.chart-half-right{border-left:1px solid var(--border);padding-left:24px}
+@media(max-width:700px){.chart-half-right{border-left:none;padding-left:0;border-top:1px solid var(--border);padding-top:20px}}
+.half-title{font-size:12px;color:var(--text2);letter-spacing:.4px;text-transform:uppercase;margin-bottom:16px}
+/* Gráfico por hora */
+.chart-hours{display:flex;align-items:flex-end;gap:2px;height:140px}
+.hour-col{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;min-width:0}
+.hour-bar{width:100%;border-radius:2px 2px 0 0;background:var(--bg4);min-height:3px;transition:height .4s ease}
+.hour-bar.has-leads{background:var(--accent)}
+.hour-lbl{font-size:8px;color:var(--text3);font-family:var(--mono)}
+.hour-val{font-size:9px;color:var(--text2);font-family:var(--mono);font-weight:600}
+/* Vendas por vendedor no dashboard */
+.vv-item{margin-bottom:14px}
+.vv-row{display:flex;justify-content:space-between;margin-bottom:5px}
+.vv-nome{font-size:13px;color:var(--text)}
+.vv-num{font-size:13px;font-weight:700}
+.vv-bar-bg{height:8px;background:var(--bg4);border-radius:4px;overflow:hidden}
+.vv-bar-fill{height:100%;border-radius:4px;transition:width .5s ease}
+/* Linha de cliente selecionada */
+tr.cliente-row{cursor:pointer}
+tr.cliente-row.selecionado td{background:var(--bg4)}
+tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
+
+.perm-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:8px}
+.perm-item{display:flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:12px;color:var(--text2)}
+.perm-item input{width:auto;accent-color:var(--accent)}
+.vend-access-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%}
+@media(max-width:700px){.perm-grid,.vend-access-grid{grid-template-columns:1fr}}
+
+</style>
+<script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">M</div>
+    <h1>Movatak</h1>
+    <p>Painel de gestão — acesso restrito</p>
+    <div class="field">
+      <label>EMAIL (vendedores) — deixe vazio se for gestor</label>
+      <input type="email" id="login-email" placeholder="email do vendedor (opcional)" autocomplete="off">
+    </div>
+    <div class="field">
+      <label>SENHA DE ACESSO</label>
+      <input type="password" id="login-input" placeholder="sua senha" autocomplete="off">
+      <div class="login-err" id="login-err"></div>
+    </div>
+    <button class="btn-primary" onclick="fazerLogin()">Entrar</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app" id="app">
+  <header>
+    <div class="header-left">
+      <div class="header-logo">M</div>
+      <div>
+        <div class="header-title">Movatak</div>
+        <div class="header-sub">Marketing Sem Agência 2.0</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <span id="header-status" style="font-size:12px;color:var(--text2)"></span>
+      <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
+      <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
+      <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()">📅 Agenda</button>
+      <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
+      <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
+      <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
+      <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+      <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
+      <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
+      <button class="btn-sair" onclick="sair()">Sair</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Período -->
+    <div class="periodo-bar">
+      <h2>Visão geral</h2>
+      <div class="periodo-btns">
+        <button onclick="setPeriodo(0)" id="p0" class="active">Hoje</button>
+        <button onclick="setPeriodo(7)" id="p7">7 dias</button>
+        <button onclick="setPeriodo(30)" id="p30">30 dias</button>
+        <button onclick="setPeriodo(90)" id="p90">90 dias</button>
+      </div>
+    </div>
+
+    <!-- Métricas globais -->
+    <div class="metrics-grid" id="metrics-grid">
+      <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando...</div>
+    </div>
+
+    <!-- Painéis: gráfico por hora dividido + vendedores -->
+    <div class="panels">
+      <div class="panel">
+        <div class="panel-title" id="chart-title">Leads por hora — hoje</div>
+        <div class="chart-split">
+          <div class="chart-half">
+            <div class="chart-hours" id="chart-hours">
+              <div class="state-row" style="width:100%"><div class="spinner"></div></div>
+            </div>
+          </div>
+          <div class="chart-half chart-half-right">
+            <div class="half-title">Vendas por vendedor</div>
+            <div id="vendedores-vendas">
+              <div class="state-row" style="font-size:13px">Selecione um cliente abaixo</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">Funil consolidado</div>
+        <div id="funil-wrap">
+          <div class="state-row"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabela de clientes -->
+    <div class="clientes-section">
+      <div class="section-header">
+        <div class="section-title"><span class="so-admin">Clientes ativos</span><span class="so-portal" style="display:none">Minha Operação</span></div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn-cancel" style="width:auto;margin:0;padding:10px 16px;font-size:13px" onclick="abrirReset()" title="Apagar um lead de teste pelo número, para ele voltar a entrar como novo">♻️ Resetar lead</button>
+          <button class="btn-primary so-admin" style="width:auto;margin:0;padding:10px 20px;font-size:14px" onclick="abrirModal()">+ Novo cliente</button>
+        </div>
+      </div>
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;overflow:hidden">
+        <table>
+          <thead>
+            <tr>
+              <th>Cliente</th>
+              <th>Leads</th>
+              <th>Convertidos</th>
+              <th>Follow up</th>
+              <th>Taxa</th>
+              <th>Status</th><th>CPL</th><th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="clientes-tbody">
+            <tr><td colspan="6" class="state-row"><div class="spinner"></div>Carregando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
+      Movatak <span id="versao-painel">v2.7.3-avatar</span> · backend <span id="versao-backend">—</span>
+    </div>
+  </main>
+</div>
+
+<!-- MODAL NOVO CLIENTE -->
+<div class="modal-overlay" id="modal">
+  <div class="modal modal-cliente">
+    <h3 id="modal-titulo">Config. Inicial</h3>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label>NOME DA EMPRESA</label>
+        <input type="text" id="f-nome" placeholder="Ex: Auto Center Silva">
+      </div>
+      <div class="form-field">
+        <label>NICHO DO CLIENTE</label>
+        <select id="f-nicho" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none">
+          <option value="">— selecione —</option>
+          <option value="estetica">Clínica de estética</option>
+          <option value="barbearia">Barbearia</option>
+          <option value="salao">Salão de beleza</option>
+          <option value="odontologia">Clínica odontológica</option>
+          <option value="provedor">Provedor de internet</option>
+          <option value="assistencia">Assistência técnica</option>
+          <option value="grafica_dtf">DTF / Gráfica</option>
+          <option value="generico">Comercial genérico</option>
+        </select>
+      </div>
+      <div class="form-field so-admin">
+        <label>WHATSAPP BUSINESS</label>
+        <input type="text" id="f-whatsapp" placeholder="5581999990000">
+      </div>
+      <input type="hidden" id="f-trigger" value="">
+      <div class="form-field so-admin">
+        <label>Z-API INSTANCE ID</label>
+        <input type="text" id="f-instance" placeholder="ID da instância">
+      </div>
+      <div class="form-field so-admin">
+        <label id="lbl-token">Z-API TOKEN</label>
+        <input type="text" id="f-token" placeholder="token da instância">
+      </div>
+      <div class="form-field so-admin">
+        <label id="lbl-client-token">Z-API CLIENT TOKEN</label>
+        <input type="text" id="f-client-token" placeholder="client-token">
+      </div>
+      <div class="form-field so-admin">
+        <label>TETO DE CPL (R$)</label>
+        <input type="number" id="f-cpl" placeholder="25.00">
+      </div>
+      <div class="form-field">
+        <label>PLANOS (separados por vírgula)</label>
+        <input type="text" id="f-planos" placeholder="Basic, Pro, Premium">
+      </div>
+      <div class="form-field full so-admin" id="permissoes-cliente-box">
+        <label>ACESSOS DO CLIENTE NO PORTAL</label>
+        <div class="perm-grid">
+          <label class="perm-item"><input type="checkbox" id="perm-ver-cpl" checked> Ver CPL</label>
+          <label class="perm-item"><input type="checkbox" id="perm-ver-vendedores" checked> Ver vendedores</label>
+          <label class="perm-item"><input type="checkbox" id="perm-ver-campanhas" checked> Ver campanhas</label>
+          <label class="perm-item"><input type="checkbox" id="perm-ver-eventos" checked> Ver movimentações</label>
+          <label class="perm-item"><input type="checkbox" id="perm-editar-vendedores"> Editar/cadastrar vendedores</label>
+          <label class="perm-item"><input type="checkbox" id="perm-editar-followup"> Ajustar mensagens de follow-up</label>
+          <label class="perm-item"><input type="checkbox" id="perm-editar-campanhas"> Cadastrar campanhas/origens</label>
+          <label class="perm-item"><input type="checkbox" id="perm-exportar-csv" checked> Exportar CSV</label>
+        </div>
+        <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
+      </div>
+      <div class="form-field full">
+        <label>BOAS-VINDAS AO LEAD</label>
+        <div class="fu-hint" style="margin-bottom:8px">Saudação enviada assim que o lead chega, antes do follow-up. Se deixar em branco, nada é enviado. Não gera marcação no funil.</div>
+        <textarea id="f-boasvindas-msg1" class="fu-textarea" rows="2" placeholder="Mensagem 1 (ex: Olá! Seja bem-vindo à DTFclub.)"></textarea>
+        <textarea id="f-boasvindas-msg2" class="fu-textarea" rows="2" style="margin-top:8px" placeholder="Mensagem 2 (opcional)"></textarea>
+        <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
+          <label style="font-size:12px;color:var(--text2);white-space:nowrap">Intervalo entre as mensagens (segundos):</label>
+          <input type="number" id="f-boasvindas-delay" min="1" max="60" value="5" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;width:80px">
+        </div>
+      </div>
+      <div class="form-field full" id="planos-section" style="display:none">
+        <label>PLANOS / PACOTES (usados na recomendação)</label>
+        <div class="fu-hint" style="margin-bottom:8px">A recomendação soma a pontuação das perguntas de "opções numeradas" e sugere o plano de maior <strong>nota mínima</strong> que o lead alcançar. Cadastre do menor (nota baixa) para o maior (nota alta).</div>
+        <div id="planos-lista"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
+          <input type="text" id="plano-novo-nome" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2;min-width:140px" placeholder="Nome do plano">
+          <input type="text" id="plano-novo-valor" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="R$ 99,90" inputmode="decimal">
+          <input type="number" id="plano-novo-nota" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="Nota mín.">
+          <button class="btn-add-small" onclick="adicionarPlano()">Adicionar plano</button>
+        </div>
+        <div id="plano-status" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+
+      <!-- TREINAMENTO DA IA -->
+      <div class="form-field full" id="ia-section" style="display:none">
+        <label>🤖 TREINAMENTO DA IA (RESPOSTAS SUGERIDAS)</label>
+        <div class="fu-hint" style="margin-bottom:10px">A IA usa estas informações para sugerir respostas mais precisas e no tom do seu negócio. Quanto mais detalhado, melhores as sugestões.</div>
+
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">1. O que sua empresa vende e qual o principal diferencial?</label>
+        <textarea id="f-ia-oferta" class="fu-textarea" rows="2" style="margin-bottom:12px" placeholder="Ex: Vendemos impressão DTF UV para personalização de produtos. Diferencial: entrega rápida, qualidade premium e atendimento direto com o dono."></textarea>
+
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">2. Como a empresa gosta de falar com o cliente (tom de voz)? E o que a IA NUNCA deve fazer?</label>
+        <textarea id="f-ia-tom" class="fu-textarea" rows="2" style="margin-bottom:12px" placeholder="Ex: Tom próximo e direto, sem formalidade exagerada, sempre cordial. NUNCA prometer prazo ou desconto sem confirmar, nem inventar preço."></textarea>
+
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">3. Resumo completo da empresa (contexto livre para a IA)</label>
+        <div class="fu-hint" style="margin-bottom:6px">Preencha como se estivesse explicando seu negócio para um vendedor novo no primeiro dia. Inclua: <strong>nome e ramo</strong> da empresa; <strong>produtos/serviços</strong> e faixa de <strong>preços</strong>; <strong>quem é o cliente ideal</strong>; <strong>formas de pagamento e prazos</strong> de entrega; <strong>perguntas frequentes</strong> e como respondê-las; <strong>objeções comuns</strong> (ex: "tá caro") e como contornar; <strong>políticas</strong> (troca, garantia, frete); e qualquer <strong>regra de ouro</strong> do atendimento.</div>
+        <textarea id="f-ia-resumo" class="fu-textarea" rows="6" placeholder="Ex: A DTFclub é uma gráfica de impressão DTF UV em Recife-PE. Vendemos transfers para personalização de camisetas, canecas, garrafas e brindes. Preços a partir de R$X o metro. Cliente ideal: lojistas de confecção e brindes corporativos. Pagamento via Pix, cartão ou boleto; entrega em até X dias úteis via Correios. Dúvida comum: 'serve em qualquer tecido?' → sim, DTF UV adere em algodão, poliéster e malha. Objeção 'tá caro' → explicamos a durabilidade e o acabamento premium que justificam o valor. Política: troca em caso de defeito de impressão em até 7 dias. Regra de ouro: responder rápido e nunca deixar o cliente sem retorno."></textarea>
+        <div id="ia-status" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+
+      <!-- ACESSO AO PORTAL DO CLIENTE -->
+      <div class="form-field full so-admin" id="portal-section" style="display:none">
+        <label>🔑 ACESSO DO CLIENTE AO PORTAL</label>
+        <div class="fu-hint" style="margin-bottom:10px">Defina o email e a senha que o cliente usará para acessar o portal dele (onde ele vê e edita as próprias configurações). Envie essas credenciais para ele.</div>
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Email de acesso</label>
+        <input type="email" id="f-portal-email" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none;margin-bottom:12px" placeholder="cliente@empresa.com.br">
+        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Senha de acesso</label>
+        <input type="text" id="f-portal-senha" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Deixe em branco para manter a senha atual">
+        <div id="portal-senha-hint" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+
+      <!-- AUSÊNCIA / FORA DE HORÁRIO -->
+      <div class="form-field full" id="ausencia-section" style="display:none">
+        <label>🌙 MENSAGEM DE AUSÊNCIA (FORA DO HORÁRIO)</label>
+        <div class="fu-hint" style="margin-bottom:8px">Quando um lead fala e o momento cai num horário de ausência, ele recebe um aviso automático — uma vez por período. Ative o aviso em cada coluna do kanban pelo seletor 🌙 dentro dela.</div>
+
+        <textarea id="aus-msg-padrao" class="fu-textarea" rows="2" placeholder="Mensagem padrão de ausência (ex: Olá! No momento estamos fora do horário de atendimento. Retornaremos assim que possível.)"></textarea>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);margin:14px 0 6px">Horários recorrentes de ausência</div>
+        <div class="fu-hint" style="margin-bottom:8px">Marque os dias e a faixa de horário em que você NÃO atende. Pode adicionar várias faixas.</div>
+        <div id="aus-horarios-lista"></div>
+        <button class="btn-add-small" type="button" onclick="addHorarioAusencia()" style="margin-top:8px">+ Adicionar faixa de horário</button>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);margin:16px 0 6px">Datas específicas (feriados/recessos)</div>
+        <div class="fu-hint" style="margin-bottom:8px">Mensagem própria para datas específicas. Tem prioridade sobre o horário recorrente naquele dia.</div>
+        <div id="aus-datas-lista"></div>
+        <button class="btn-add-small" type="button" onclick="addDataAusencia()" style="margin-top:8px">+ Adicionar data específica</button>
+
+        <div style="margin-top:14px">
+          <button class="btn-add-small" type="button" onclick="salvarAusencia()">Salvar configuração de ausência</button>
+          <span id="aus-status" class="fu-hint" style="margin-left:10px"></span>
+        </div>
+      </div>
+    </div>
+    <div id="token-resultado" style="display:none">
+      <div class="token-box">
+        <div class="token-label">TOKEN DO APP GERADO</div>
+        <div class="token-val" id="token-gerado"></div>
+        <button class="btn-copy" onclick="copiarToken()">Copiar token</button>
+      </div>
+    </div>
+    <div class="login-err" id="modal-err"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharModal()">Cancelar</button>
+      <button class="btn-save" id="btn-salvar" onclick="salvarCliente()">Cadastrar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE   = 'https://movatakagencia-production.up.railway.app';
+const PAINEL_VERSION = 'v2.7.3-avatar';
+const SENHA_KEY  = 'mvtk_painel_secret';
+const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
+try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
+
+let secret = '';
+let periodoAtual = 0;
+let tokenGerado  = '';
+let templatesFollowupCache = [];
+
+// Tema claro/escuro
+function initTheme() {
+  const saved = localStorage.getItem('movatak-theme') || 'dark';
+  setTheme(saved);
+}
+
+function setTheme(mode) {
+  if (mode === 'light') {
+    document.documentElement.classList.add('light-mode');
+    localStorage.setItem('movatak-theme', 'light');
+    document.getElementById('theme-toggle').textContent = '☀️';
+  } else {
+    document.documentElement.classList.remove('light-mode');
+    localStorage.setItem('movatak-theme', 'dark');
+    document.getElementById('theme-toggle').textContent = '🌙';
   }
-  const vendedorToken = auth.vendedorToken;
-  if (vendedorToken) {
-    try {
-      const r = await query(
-        `SELECT v.id, v.cliente_id
-           FROM movatak_vendedores v
-           JOIN movatak_clientes c ON c.id = v.cliente_id
-          WHERE v.acesso_token = $1 AND v.ativo = true AND c.ativo = true
-          LIMIT 1`,
-        [vendedorToken]
-      );
-      if (r.rows.length) {
-        socket.data.role = 'vendedor';
-        socket.data.vendedorId = r.rows[0].id;
-        socket.data.clienteId = r.rows[0].cliente_id;
-        return next();
-      }
-    } catch (e) {
-      return next(new Error('Não autorizado.'));
-    }
-  }
-  return next(new Error('Não autorizado.'));
-});
-
-io.on('connection', (socket) => {
-  // Cada painel entra na "sala" do cliente que está vendo, para não
-  // receber eventos de outros ISPs clientes do Movatak. Vendedores só entram
-  // na sala do próprio cliente, mesmo se tentarem informar outro ID no front.
-  socket.on('entrar-cliente', (clienteId) => {
-    if (!clienteId) return;
-    if (socket.data.role === 'vendedor' && Number(clienteId) !== Number(socket.data.clienteId)) return;
-    socket.join(`cliente-${clienteId}`);
-  });
-});
-
-// Chame esta função em qualquer ponto do código que precise avisar o
-// painel em tempo real sobre uma mensagem nova de um lead.
-function emitirMensagemLead(clienteId, leadId, mensagem) {
-  if (!clienteId) return;
-  io.to(`cliente-${clienteId}`).emit('mensagem:nova', { leadId, mensagem });
 }
 
-function emitirMensagemApagada(clienteId, leadId, conversaId) {
-  if (!clienteId) return;
-  io.to(`cliente-${clienteId}`).emit('mensagem:apagada', { leadId, conversaId });
+function toggleTheme() {
+  const current = localStorage.getItem('movatak-theme') || 'dark';
+  const next = current === 'dark' ? 'light' : 'dark';
+  setTheme(next);
 }
 
-function emitirStatusMensagem(clienteId, leadId, conversaId, status) {
-  if (!clienteId) return;
-  io.to(`cliente-${clienteId}`).emit('mensagem:status', { leadId, conversaId, status });
-}
+// Inicializar tema ao carregar
+document.addEventListener('DOMContentLoaded', initTheme);
+window.addEventListener('load', initTheme);
 
-// Logs completos somente quando necessário. Em produção, deixe MOVATAK_DEBUG=false
-// para não poluir o Railway com payloads grandes da Z-API/Rastreiobot.
-const MOVATAK_DEBUG = String(process.env.MOVATAK_DEBUG || '').toLowerCase() === 'true';
-function logDebug(...args) {
-  if (MOVATAK_DEBUG) console.log(...args);
-}
-
-// Regras anti-spam e segurança operacional.
-// Ajustáveis via Railway sem mexer no código.
-const MOVATAK_REENTRADA_FU1_HORAS = parseInt(process.env.MOVATAK_REENTRADA_FU1_HORAS || '6', 10);
-const MOVATAK_MAX_AUTO_MSG_DIA = parseInt(process.env.MOVATAK_MAX_AUTO_MSG_DIA || '6', 10);
-const MOVATAK_QUEST_LEMBRETE_HORAS = parseInt(process.env.MOVATAK_QUEST_LEMBRETE_HORAS || '6', 10);
-const MOVATAK_QUEST_MAX_LEMBRETES = parseInt(process.env.MOVATAK_QUEST_MAX_LEMBRETES || '1', 10);
-
-const DEFAULT_CLIENTE_PERMISSOES = {
-  ver_dashboard: true,
-  ver_cpl: true,
-  ver_vendedores: true,
-  ver_campanhas: true,
-  ver_eventos: true,
-  editar_vendedores: false,
-  editar_followup: false,
-  editar_campanhas: false,
-  exportar_csv: true
-};
-
-function normalizarPermissoes(permissoes) {
-  return { ...DEFAULT_CLIENTE_PERMISSOES, ...(permissoes || {}) };
-}
-
-function hashSenha(senha) {
-  if (!senha) return null;
-  return crypto.createHash('sha256').update(String(senha) + ':' + (process.env.MOVATAK_SECRET || 'movatak')).digest('hex');
-}
-
-function gerarToken(prefixo) {
-  return prefixo + '_' + Date.now() + '_' + crypto.randomBytes(8).toString('hex');
-}
-
-
-// ============================================================
-// Banco de dados
-// ============================================================
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
-});
-
-async function query(sql, params) {
-  const client = await pool.connect();
-  try {
-    const res = await client.query(sql, params);
-    return res;
-  } finally {
-    client.release();
-  }
-}
-
-
-// Garante colunas usadas pelo portal do cliente e permissões do cadastro.
-async function garantirColunasClientesPortal() {
-  await query(`ALTER TABLE movatak_clientes
-    ADD COLUMN IF NOT EXISTS permissoes_portal JSONB DEFAULT '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb,
-    ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS followup_msgs_v2 JSONB DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS trigger_msg TEXT,
-    ADD COLUMN IF NOT EXISTS nicho TEXT,
-    ADD COLUMN IF NOT EXISTS ia_oferta TEXT,
-    ADD COLUMN IF NOT EXISTS ia_tom TEXT,
-    ADD COLUMN IF NOT EXISTS ia_resumo TEXT,
-    ADD COLUMN IF NOT EXISTS portal_email TEXT,
-    ADD COLUMN IF NOT EXISTS portal_senha_hash TEXT,
-    ADD COLUMN IF NOT EXISTS portal_senha_trocada_em TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS quest_lembrete_msg TEXT,
-    ADD COLUMN IF NOT EXISTS quest_lembrete_minutos INTEGER,
-    ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
-  await query(`UPDATE movatak_clientes
-     SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
-   WHERE permissoes_portal IS NULL`, []);
-}
-
-// Garante colunas usadas pelo portal individual do vendedor.
-// Mantém compatibilidade quando o deploy sobe antes da migração completa.
-async function garantirColunasVendedoresPortal() {
-  await query(`ALTER TABLE movatak_vendedores
-    ADD COLUMN IF NOT EXISTS comando TEXT,
-    ADD COLUMN IF NOT EXISTS email_acesso TEXT,
-    ADD COLUMN IF NOT EXISTS senha_hash TEXT,
-    ADD COLUMN IF NOT EXISTS acesso_token TEXT`, []);
-  await query(`UPDATE movatak_vendedores
-       SET acesso_token = 'vend_' || EXTRACT(EPOCH FROM NOW())::bigint || '_' || id || '_' || substr(md5(random()::text), 1, 10)
-     WHERE acesso_token IS NULL OR acesso_token = ''`, []);
-}
-
-// ============================================================
-// Autenticação do painel Movatak (suas rotas internas)
-// ============================================================
-// ── PONTE DE AUTENTICAÇÃO: admin OU cliente (portal) ──────────
-// Aceita o segredo admin (acesso total) OU o app_token do cliente (acesso
-// restrito à própria operação). Quando é cliente, força o cliente_id do token
-// e marca req.ehCliente para bloquear ações sensíveis e validar posse de recursos.
-async function authMovatakOuApp(req, res, next) {
-  const secret = req.headers['x-movatak-secret'];
-  // Caminho admin: segredo correto = acesso total (comportamento original).
-  if (secret && secret === process.env.MOVATAK_SECRET) {
-    req.ehCliente = false;
-    return next();
-  }
-  // Caminho cliente: valida o app_token.
-  const token = req.headers['x-app-token'];
-  if (!token) return res.status(401).json({ error: 'Não autorizado.' });
-  try {
-    const r = await query(
-      'SELECT id, nome, permissoes_portal FROM movatak_clientes WHERE app_token = $1 AND ativo = true',
-      [token]
-    );
-    if (!r.rows.length) return res.status(401).json({ error: 'Token inválido.' });
-    req.ehCliente = true;
-    req.clienteId = r.rows[0].id;
-    req.clienteNome = r.rows[0].nome;
-    req.clientePermissoes = normalizarPermissoes(r.rows[0].permissoes_portal);
-    next();
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-}
-
-// Verifica que um recurso (lead, coluna, conversa, etc.) pertence ao cliente.
-// Para admin (ehCliente=false) sempre libera. Para cliente, consulta a tabela.
-async function recursoPertenceAoCliente(req, tabela, recursoId, colunaCliente) {
-  if (!req.ehCliente) return true; // admin tem acesso total
-  if (!recursoId) return false;
-  const col = colunaCliente || 'cliente_id';
-  try {
-    const r = await query(
-      `SELECT 1 FROM ${tabela} WHERE id = $1 AND ${col} = $2 LIMIT 1`,
-      [recursoId, req.clienteId]
-    );
-    return r.rows.length > 0;
-  } catch (e) {
-    return false;
-  }
-}
-
-// Middlewares de cadeia: autentica (admin OU cliente) e, se for cliente,
-// valida que o recurso da URL (:id) pertence a ele. Bloqueia com 403 se não.
-// Uso: app.get('/.../leads/:id/...', ...exigeLead, handler)
-const exigeLead = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_leads', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a este lead.' });
-  }
-  next();
-}];
-const exigeColuna = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_funil_colunas', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a esta coluna.' });
-  }
-  next();
-}];
-const exigeConversa = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_conversas', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a esta conversa.' });
-  }
-  next();
-}];
-const exigeSetor = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_setores', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a este setor.' });
-  }
-  next();
-}];
-const exigeAgendamento = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_agendamentos', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a este agendamento.' });
-  }
-  next();
-}];
-const exigeMsgRapida = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_mensagens_rapidas', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a esta mensagem rápida.' });
-  }
-  next();
-}];
-const exigePlano = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_planos', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a este plano.' });
-  }
-  next();
-}];
-const exigeTemplateFU = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_followup_templates', req.params.id))) {
-    return res.status(403).json({ error: 'Acesso negado a este template.' });
-  }
-  next();
-}];
-const exigeQuestTemplate = [authMovatakOuApp, async (req, res, next) => {
-  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_questionario_templates', req.params.tid))) {
-    return res.status(403).json({ error: 'Acesso negado a este template.' });
-  }
-  next();
-}];
-
-// Para rotas /clientes/:id/... — se for cliente, força o :id ser o dele.
-// Assim ele nunca lista/acessa dados de outro cliente, mesmo trocando a URL.
-const forcaClienteIdNaUrl = [authMovatakOuApp, (req, res, next) => {
-  if (req.ehCliente) req.params.id = String(req.clienteId);
-  next();
-}];
-
-function authMovatak(req, res, next) {
-  const secret = req.headers['x-movatak-secret'];
-  if (secret !== process.env.MOVATAK_SECRET) {
-    return res.status(401).json({ error: 'Nao autorizado.' });
-  }
-  next();
-}
-
-// Autenticação do app do cliente (acesso somente leitura)
-async function authCliente(req, res, next) {
-  const token = req.headers['x-app-token'];
-  if (!token) return res.status(401).json({ error: 'Token ausente.' });
-  try {
-    const r = await query(
-      'SELECT id, nome, permissoes_portal FROM movatak_clientes WHERE app_token = $1 AND ativo = true',
-      [token]
-    );
-    if (!r.rows.length) return res.status(401).json({ error: 'Token invalido.' });
-    req.clienteId = r.rows[0].id;
-    req.clienteNome = r.rows[0].nome;
-    req.clientePermissoes = normalizarPermissoes(r.rows[0].permissoes_portal);
-    next();
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-}
-
-
-
-async function authVendedor(req, res, next) {
-  const token = req.headers['x-vendedor-token'];
-  if (!token) return res.status(401).json({ error: 'Token do vendedor ausente.' });
-  try {
-    const r = await query(
-      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, c.nome AS cliente_nome
-         FROM movatak_vendedores v
-         JOIN movatak_clientes c ON c.id = v.cliente_id
-        WHERE v.acesso_token = $1 AND v.ativo = true AND c.ativo = true`,
-      [token]
-    );
-    if (!r.rows.length) return res.status(401).json({ error: 'Token do vendedor invalido.' });
-    req.vendedor = r.rows[0];
-    // Carrega os setores que este vendedor pode acessar. Tudo que o vendedor vê/edita
-    // é filtrado por esta lista no backend — é aqui que mora o controle de acesso real.
-    const setoresR = await query(
-      `SELECT s.id, s.nome, s.cor FROM movatak_setor_vendedores sv
-         JOIN movatak_setores s ON s.id = sv.setor_id AND COALESCE(s.ativo, true) = true
-        WHERE sv.vendedor_id = $1
-        ORDER BY s.ordem_bot NULLS LAST, s.nome`,
-      [req.vendedor.id]
-    ).catch(() => ({ rows: [] }));
-    req.vendedor.setores = setoresR.rows;
-    req.vendedor.setorIds = setoresR.rows.map(s => Number(s.id));
-    next();
-  } catch (e) { res.status(500).json({ error: e.message }); }
-}
-
-// Garante que um setor pertence ao escopo do vendedor logado. Use em todo endpoint
-// que recebe setor_id do vendedor, pra recusar acesso a setores de outros.
-function vendedorPodeSetor(req, setorId) {
-  if (!req.vendedor || !Array.isArray(req.vendedor.setorIds)) return false;
-  return req.vendedor.setorIds.includes(Number(setorId));
-}
-
-// Valida que um lead pertence a um setor que o vendedor acessa. Retorna o lead
-// (com cliente_id/setor_id) se ok, ou null se fora do escopo. SEMPRE usar antes
-// de deixar o vendedor ler/operar um lead específico.
-async function vendedorPodeLead(req, leadId) {
-  if (!req.vendedor) return null;
-  const r = await query(
-    `SELECT id, cliente_id, setor_id, telefone, nome FROM movatak_leads WHERE id = $1 AND cliente_id = $2`,
-    [leadId, req.vendedor.cliente_id]
-  ).catch(() => ({ rows: [] }));
-  if (!r.rows.length) return null;
-  const lead = r.rows[0];
-  if (!vendedorPodeSetor(req, lead.setor_id)) return null;
-  return lead;
-}
-
-// ============================================================
-// Z-API — helpers
-// ============================================================
-const ZAPI_BASE = 'https://api.z-api.io/instances';
-
-// Todas retornam o ID da mensagem que o Z-API devolve no envio. Pra APAGAR depois,
-// o que o WhatsApp exige é o messageId (ID da mensagem no WhatsApp) — o zaapId é só
-// o ID interno do Z-API e NÃO serve pra apagar. Por isso messageId vem primeiro.
-function extrairIdMensagemZapi(resp) {
-  const d = (resp && resp.data) || {};
-  return d.messageId || d.id || d.zaapId || null;
-}
-
-function montarPayloadRespostaZapi(payload, replyMsgId) {
-  if (!replyMsgId) return payload;
-
-  // Z-API documenta oficialmente o vínculo de resposta pelo campo `messageId`.
-  // Não enviar aliases extras aqui, porque alguns endpoints podem rejeitar
-  // propriedades desconhecidas e cair no fallback sem responder nativamente.
+function getPermissoesPortal() {
+  const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
   return {
-    ...payload,
-    messageId: String(replyMsgId)
+    ver_dashboard: true,
+    ver_cpl: g('perm-ver-cpl'),
+    ver_vendedores: g('perm-ver-vendedores'),
+    ver_campanhas: g('perm-ver-campanhas'),
+    ver_eventos: g('perm-ver-eventos'),
+    editar_vendedores: g('perm-editar-vendedores'),
+    editar_followup: g('perm-editar-followup'),
+    editar_campanhas: g('perm-editar-campanhas'),
+    exportar_csv: g('perm-exportar-csv')
   };
 }
-async function zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId) {
-  const headers = { 'Client-Token': clientToken };
-  if (!replyMsgId) {
-    const resp = await axios.post(url, payload, { headers });
-    return extrairIdMensagemZapi(resp);
+function setPermissoesPortal(p = {}) {
+  const def = { ver_cpl:true, ver_vendedores:true, ver_campanhas:true, ver_eventos:true, editar_vendedores:false, editar_followup:false, editar_campanhas:false, exportar_csv:true, ...(p || {}) };
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  set('perm-ver-cpl', def.ver_cpl); set('perm-ver-vendedores', def.ver_vendedores); set('perm-ver-campanhas', def.ver_campanhas); set('perm-ver-eventos', def.ver_eventos);
+  set('perm-editar-vendedores', def.editar_vendedores); set('perm-editar-followup', def.editar_followup); set('perm-editar-campanhas', def.editar_campanhas); set('perm-exportar-csv', def.exportar_csv);
+}
+
+
+// ── Login ──────────────────────────────────────────────────
+let _vendedorToken = '';
+let _vendedorInfo = null;
+
+// Token do cliente quando o funil é aberto pelo portal (index.html?funil=1&portal_token=...).
+// Quando presente, a função api() usa x-app-token e o backend isola tudo ao cliente dele.
+let _appTokenPortal = '';
+try {
+  const _pt = new URLSearchParams(window.location.search).get('portal_token');
+  if (_pt) {
+    _appTokenPortal = _pt;
+    // Remove o token da barra de endereço por segurança (não fica visível/no histórico).
+    try { history.replaceState(null, '', window.location.pathname); } catch (e) {}
+  } else {
+    // Sem token na URL: tenta recuperar a sessão do portal salva (sobrevive a refresh).
+    // Só vale se NÃO houver sessão de admin/vendedor ativa.
+    try {
+      const salvo = localStorage.getItem('movatak-portal-token') || '';
+      const temAdmin = !!(sessionStorage.getItem('mvtk_painel_secret') || localStorage.getItem('mvtk_painel_secret_local'));
+      const temVend = !!sessionStorage.getItem('mvtk_vend_token');
+      if (salvo && !temAdmin && !temVend) _appTokenPortal = salvo;
+    } catch (e) {}
   }
-  try {
-    const resp = await axios.post(url, montarPayloadRespostaZapi(payload, replyMsgId), { headers });
-    return extrairIdMensagemZapi(resp);
-  } catch (e) {
-    console.warn('[zapi][reply] envio com referência falhou; reenviando sem vínculo. status:', e.response?.status, 'body:', JSON.stringify(e.response?.data || {}));
-    const resp = await axios.post(url, payload, { headers });
-    return extrairIdMensagemZapi(resp);
-  }
-}
+} catch (e) {}
 
-async function zapiEnviar(instance, token, clientToken, telefone, mensagem, replyMsgId = null) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
-  return zapiPostComPossivelResposta(url, { phone: telefone, message: mensagem }, clientToken, replyMsgId);
-}
+async function fazerLogin() {
+  const email = (document.getElementById('login-email').value || '').trim();
+  const val = document.getElementById('login-input').value.trim();
+  const errEl = document.getElementById('login-err');
+  if (!val) { errEl.textContent = 'Informe a senha.'; return; }
 
-async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption, replyMsgId = null) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-image`;
-  return zapiPostComPossivelResposta(url, { phone: telefone, image: imageUrl, caption: caption || '' }, clientToken, replyMsgId);
-}
-
-async function zapiEnviarVideo(instance, token, clientToken, telefone, videoUrl, caption, replyMsgId = null) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-video`;
-  return zapiPostComPossivelResposta(url, { phone: telefone, video: videoUrl, caption: caption || '' }, clientToken, replyMsgId);
-}
-
-async function zapiEnviarAudio(instance, token, clientToken, telefone, audioUrl, replyMsgId = null) {
-  // Mensagem de voz (PTT) no WhatsApp não tem legenda — só o áudio.
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-audio`;
-  return zapiPostComPossivelResposta(url, { phone: telefone, audio: audioUrl }, clientToken, replyMsgId);
-}
-
-// Apaga a mensagem no WhatsApp do lead (delete for everyone). Convenção do Z-API
-// pra isso ainda não testada contra a API real — se o endpoint/formato não bater,
-// me avisa o erro exato que aparecer pra eu ajustar.
-async function zapiApagarMensagem(instance, token, clientToken, telefone, messageId) {
-  // Z-API espera os parâmetros na query string do DELETE, não no body.
-  // owner=true => apagar uma mensagem que NÓS enviamos (delete for everyone).
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/messages`;
-  const resp = await axios.delete(url, {
-    headers: { 'Client-Token': clientToken },
-    params: { messageId, phone: telefone, owner: 'true' }
-  });
-  console.log('[zapi][apagar] resposta:', JSON.stringify(resp.data || {}));
-  return resp.data;
-}
-
-async function zapiEtiquetar(instance, token, clientToken, telefone, label) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/label-contact`;
-  await axios.post(url, { phone: telefone, labelName: label }, {
-    headers: { 'Client-Token': clientToken }
-  });
-}
-
-
-async function zapiArquivar(instance, token, clientToken, telefone) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/archive-chat`;
-  await axios.post(url, { phone: telefone, archive: true }, { headers: { 'Client-Token': clientToken } });
-}
-
-async function zapiMarcarNaoLido(instance, token, clientToken, telefone) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/mark-message-as-unread`;
-  await axios.post(url, { phone: telefone }, { headers: { 'Client-Token': clientToken } });
-}
-
-// Busca a URL da foto de perfil do contato. A URL retornada pelo WhatsApp expira
-// em ~48h, então não vale guardar para sempre — buscamos sob demanda e cacheamos
-// por algumas horas (controle via foto_atualizada_em).
-async function zapiBuscarFoto(instance, token, clientToken, telefone) {
-  try {
-    const url = `${ZAPI_BASE}/${instance}/token/${token}/profile-picture`;
-    const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, params: { phone: telefone }, timeout: 8000 });
-    const d = resp.data || {};
-    return d.link || d.imgUrl || d.url || d.profilePicture || null;
-  } catch (e) {
-    return null;
-  }
-}
-
-
-function zapiHeaders(clientToken) {
-  return { 'Client-Token': clientToken };
-}
-
-function zapiUrl(instance, token, endpoint) {
-  return `${ZAPI_BASE}/${instance}/token/${token}/${String(endpoint || '').replace(/^\/+/, '')}`;
-}
-
-async function zapiPost(instance, token, clientToken, endpoint, payload = {}) {
-  const resp = await axios.post(zapiUrl(instance, token, endpoint), payload, { headers: zapiHeaders(clientToken) });
-  return resp.data || {};
-}
-
-async function zapiGet(instance, token, clientToken, endpoint, params = {}) {
-  const resp = await axios.get(zapiUrl(instance, token, endpoint), { headers: zapiHeaders(clientToken), params });
-  return resp.data || {};
-}
-
-async function zapiEnviarDocumento(instance, token, clientToken, telefone, documentUrl, fileName, caption, extension, replyMsgId = null) {
-  const ext = String(extension || (fileName || '').split('.').pop() || 'pdf').replace(/[^a-zA-Z0-9]/g, '').toLowerCase() || 'pdf';
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-document/${ext}`;
-  const payload = { phone: telefone, document: documentUrl };
-  if (fileName) payload.fileName = fileName;
-  if (caption) payload.caption = caption;
-  return zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId);
-}
-
-async function zapiEnviarLocalizacao(instance, token, clientToken, telefone, title, address, latitude, longitude, replyMsgId = null) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-location`;
-  return zapiPostComPossivelResposta(url, { phone: telefone, title, address, latitude: String(latitude), longitude: String(longitude) }, clientToken, replyMsgId);
-}
-
-async function zapiEnviarLink(instance, token, clientToken, telefone, linkUrl, message, title, image, replyMsgId = null) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-link`;
-  const payload = { phone: telefone, linkUrl };
-  if (message) payload.message = message;
-  if (title) payload.title = title;
-  if (image) payload.image = image;
-  return zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId);
-}
-
-async function zapiEnviarContato(instance, token, clientToken, telefone, contactName, contactPhone, contactBusiness = false, replyMsgId = null) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/send-contact`;
-  return zapiPostComPossivelResposta(url, { phone: telefone, contactName, contactPhone, contactBusiness: !!contactBusiness }, clientToken, replyMsgId);
-}
-
-async function zapiReagirMensagem(instance, token, clientToken, telefone, messageId, reaction) {
-  return zapiPost(instance, token, clientToken, 'send-reaction', { phone: telefone, messageId, reaction });
-}
-
-async function zapiEncaminharMensagem(instance, token, clientToken, destino, messageId, messagePhone) {
-  return zapiPost(instance, token, clientToken, 'forward-message', { phone: destino, messageId, messagePhone });
-}
-
-async function zapiLerMensagem(instance, token, clientToken, telefone, messageId) {
-  return zapiPost(instance, token, clientToken, 'read-message', { phone: telefone, messageId });
-}
-
-async function zapiEditarTexto(instance, token, clientToken, telefone, messageId, novoTexto) {
-  return zapiPost(instance, token, clientToken, 'send-text', { phone: telefone, message: novoTexto, editMessageId: messageId });
-}
-
-async function zapiModificarChat(instance, token, clientToken, telefone, action) {
-  return zapiPost(instance, token, clientToken, 'modify-chat', { phone: telefone, action });
-}
-
-async function zapiListarChats(instance, token, clientToken) {
-  return zapiGet(instance, token, clientToken, 'chats');
-}
-
-const ZAPI_ADVANCED_ENDPOINTS = {
-  sticker: 'send-sticker',
-  gif: 'send-gif',
-  ptv: 'send-ptv',
-  catalog: 'send-catalog',
-  product: 'send-product',
-  poll: 'send-poll',
-  button_actions: 'send-button-actions',
-  button_list: 'send-button-list',
-  button_image: 'send-button-list-image',
-  button_video: 'send-button-list-video',
-  option_list: 'send-option-list',
-  otp: 'send-button-otp',
-  pix: 'send-button-pix',
-  carousel: 'send-carousel',
-  order: 'send-order',
-  order_status: 'send-order-status-update',
-  order_payment: 'send-order-payment-update',
-  pin_message: 'pin-message'
-};
-
-function limparPayloadAvancado(payload) {
-  const out = { ...(payload || {}) };
-  delete out.phone; delete out.telefone; delete out.endpoint; delete out.recurso; delete out.tipo;
-  return out;
-}
-
-const MOVATAK_ADMIN_WA = '558176041948';
-
-async function zapiCriarEtiqueta(instance, token, clientToken, nome) {
-  try {
-    // Z-API: criação de tag é POST em /business/create-tag (somente contas Business).
-    // O caminho /tags é GET (listar) — usar POST nele retorna 405.
-    const url = `https://api.z-api.io/instances/${instance}/token/${token}/business/create-tag`;
-    const res = await axios.post(url, { name: nome }, { headers: { 'Client-Token': clientToken } });
-    return res.data;
-  } catch(e) {
-    console.error('[zapiCriarEtiqueta]', e.message);
-    return null;
-  }
-}
-
-async function zapiAtribuirEtiqueta(instance, token, clientToken, telefone, tagId) {
-  try {
-    const url = `https://api.z-api.io/instances/${instance}/token/${token}/chats/${telefone}/tags/${tagId}/add`;
-    await axios.put(url, {}, { headers: { 'Client-Token': clientToken } });
-  } catch(e) {
-    console.error('[zapiAtribuirEtiqueta]', e.message);
-  }
-}
-
-async function zapiRemoverEtiqueta(instance, token, clientToken, telefone, tagId) {
-  try {
-    if (!tagId) return;
-    const url = `https://api.z-api.io/instances/${instance}/token/${token}/chats/${telefone}/tags/${tagId}/remove`;
-    await axios.put(url, {}, { headers: { 'Client-Token': clientToken } });
-  } catch(e) {
-    // Mantém a operação do CRM mesmo se a remoção da lista/tag falhar na Z-API.
-    console.error('[zapiRemoverEtiqueta]', e.message);
-  }
-}
-
-async function enviarAlerta(instance, token, clientToken, destinatario, msg) {
-  try {
-    await zapiEnviar(instance, token, clientToken, destinatario, msg);
-  } catch(e) {
-    console.error('[enviarAlerta]', e.message);
-  }
-}
-
-// ============================================================
-// Auditoria operacional — histórico do lead e saúde da integração
-// ============================================================
-async function registrarEventoLead(leadId, clienteId, tipo, descricao, dados = {}) {
-  try {
-    if (!leadId || !clienteId || !tipo) return;
-    await query(
-      `INSERT INTO movatak_lead_eventos (lead_id, cliente_id, tipo, descricao, dados)
-       VALUES ($1, $2, $3, $4, $5::jsonb)`,
-      [leadId, clienteId, tipo, descricao || null, JSON.stringify(dados || {})]
-    );
-  } catch (e) {
-    // Não deixa auditoria derrubar o CRM se a migração ainda não foi aplicada.
-    console.error('[evento-lead]', e.message);
-  }
-}
-
-async function registrarWebhookCliente(clienteId, resumo = {}) {
-  try {
-    await query(
-      `UPDATE movatak_clientes
-          SET ultimo_webhook_em = NOW(), ultimo_webhook_payload = $1::jsonb
-        WHERE id = $2`,
-      [JSON.stringify(resumo || {}), clienteId]
-    );
-  } catch (e) {
-    console.error('[webhook-status]', e.message);
-  }
-}
-
-async function registrarErroZapi(clienteId, mensagem, detalhes = {}) {
-  try {
-    await query(
-      `UPDATE movatak_clientes
-          SET ultimo_erro_zapi_em = NOW(), ultimo_erro_zapi = $1
-        WHERE id = $2`,
-      [String(mensagem || '').slice(0, 500), clienteId]
-    );
-  } catch (e) {
-    console.error('[zapi-status]', e.message);
-  }
-}
-
-function csvEscape(v) {
-  const s = v == null ? '' : String(v);
-  return '"' + s.replace(/"/g, '""') + '"';
-}
-
-async function contarMensagensAutomaticasHoje(leadId) {
-  const r = await query(
-    `SELECT COUNT(*)::int AS total
-       FROM movatak_lead_eventos
-      WHERE lead_id = $1
-        AND tipo = 'mensagem_enviada'
-        AND criado_em >= CURRENT_DATE`,
-    [leadId]
-  );
-  return parseInt((r.rows[0] || {}).total || 0, 10);
-}
-
-async function podeEnviarMensagemAutomatica(leadId) {
-  try {
-    const total = await contarMensagensAutomaticasHoje(leadId);
-    return total < MOVATAK_MAX_AUTO_MSG_DIA;
-  } catch (e) {
-    // Se a auditoria ainda não estiver migrada, não derruba o envio.
-    console.error('[anti-spam]', e.message);
-    return true;
-  }
-}
-
-async function reentradaFU1Permitida(leadId) {
-  try {
-    const r = await query(
-      `SELECT 1
-         FROM movatak_lead_eventos
-        WHERE lead_id = $1
-          AND tipo IN ('reativado_gatilho','lead_criado','followup_reativado_manual')
-          AND criado_em >= NOW() - ($2 || ' hours')::INTERVAL
-        LIMIT 1`,
-      [leadId, MOVATAK_REENTRADA_FU1_HORAS]
-    );
-    return !r.rows.length;
-  } catch (e) {
-    console.error('[anti-spam]', e.message);
-    return true;
-  }
-}
-
-// Verdadeiro se o lead já estava em conversa ativa: tem 2+ mensagens de entrada
-// na janela de horas (a mensagem atual já foi gravada antes desta checagem, então
-// exigimos pelo menos mais uma anterior). Evita reativar o FU1 no meio da conversa.
-async function leadRespondeuRecentemente(leadId, horas) {
-  try {
-    const r = await query(
-      `SELECT COUNT(*)::int AS n FROM movatak_conversas
-        WHERE lead_id = $1 AND direcao = 'entrada'
-          AND criado_em >= NOW() - ($2 || ' hours')::INTERVAL`,
-      [leadId, horas]
-    );
-    return (r.rows[0] ? r.rows[0].n : 0) >= 2;
-  } catch (e) {
-    console.error('[anti-spam][resposta-recente]', e.message);
-    return false;
-  }
-}
-
-// Dispara a mensagem de ausência para um lead, se aplicável.
-// Regra: toggle da coluna LIGADO → dispara sempre (override de horário).
-// Sem toggle → usa avaliarAusencia (horário). Lead sem coluna → usa coluna de entrada.
-// Dedup garante no máximo uma vez por período (dia, no caso do toggle).
-async function dispararAusenciaSeAplicavel(cliente, lead, telefone) {
-  try {
-    if (!lead) return;
-    let colunaAvaliar = lead.funil_coluna_id;
-    if (!colunaAvaliar) {
-      const ent = await query(
-        `SELECT id FROM movatak_funil_colunas
-          WHERE cliente_id = $1 AND ativo = true
-          ORDER BY ordem ASC, id ASC LIMIT 1`,
-        [cliente.id]
-      ).catch(() => ({ rows: [] }));
-      if (ent.rows.length) colunaAvaliar = ent.rows[0].id;
+  // Email preenchido → tenta login de VENDEDOR. Vazio → login de GESTOR (só senha).
+  if (email) {
+    try {
+      const r = await api('/movatak/vendedor/login', { method: 'POST', body: JSON.stringify({ email, senha: val }) }, true);
+      _vendedorToken = r.token;
+      _vendedorInfo = r.vendedor;
+      sessionStorage.setItem('mvtk_vend_token', r.token);
+      sessionStorage.setItem('mvtk_vend_info', JSON.stringify(r.vendedor));
+      iniciarAppVendedor();
+    } catch (e) {
+      errEl.textContent = 'Email ou senha inválidos.';
     }
-    if (!colunaAvaliar) return;
+    return;
+  }
 
-    const col = await query(
-      'SELECT ausencia_ativa FROM movatak_funil_colunas WHERE id = $1',
-      [colunaAvaliar]
-    ).catch(() => ({ rows: [] }));
-    const togglerLigado = col.rows.length && col.rows[0].ausencia_ativa;
+  secret = val;
+  sessionStorage.setItem(SENHA_KEY, val);
+  localStorage.setItem(SENHA_LOCAL_KEY, val);
+  iniciar();
+}
 
-    let deveAvisar = false, mensagemAus = '', periodoChave = '';
-    if (togglerLigado) {
-      mensagemAus = (cliente.ausencia_msg_padrao || '').trim();
-      const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
-      periodoChave = 'toggle:' + hojeBRT;
-      deveAvisar = !!mensagemAus;
+document.getElementById('login-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter') fazerLogin();
+});
+document.getElementById('login-email').addEventListener('keydown', e => {
+  if (e.key === 'Enter') fazerLogin();
+});
+
+function sair() {
+  // Modo portal do cliente: limpa o token e volta para o login do portal.
+  if (_appTokenPortal) {
+    try {
+      localStorage.removeItem('movatak-portal-token');
+      localStorage.removeItem('movatak-portal-nome');
+    } catch (e) {}
+    window.location.href = 'portal.html';
+    return;
+  }
+  sessionStorage.removeItem(SENHA_KEY);
+  localStorage.removeItem(SENHA_LOCAL_KEY);
+  sessionStorage.removeItem('mvtk_vend_token');
+  sessionStorage.removeItem('mvtk_vend_info');
+  secret = '';
+  _vendedorToken = '';
+  _vendedorInfo = null;
+  document.getElementById('login-screen').classList.remove('hidden');
+  document.getElementById('app').classList.remove('visible');
+}
+
+// ============================================================
+// APP DO VENDEDOR — kanban restrito aos setores dele
+// ============================================================
+let _vendFunil = { colunas: [], leads: [], setores: [], leadAberto: null };
+
+async function iniciarAppVendedor() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.add('visible');
+  document.getElementById('login-err').textContent = '';
+
+  const app = document.getElementById('app');
+  const nomeVend = _vendedorInfo && _vendedorInfo.nome ? _vendedorInfo.nome : 'Vendedor';
+  const cliente = _vendedorInfo && _vendedorInfo.cliente_nome ? _vendedorInfo.cliente_nome : '';
+  const clienteId = _vendedorInfo && _vendedorInfo.cliente_id ? Number(_vendedorInfo.cliente_id) : null;
+
+  app.innerHTML = `
+    <header>
+      <div class="header-left">
+        <div class="header-logo">M</div>
+        <div>
+          <div class="header-title">Funil de Atendimento</div>
+          <div class="header-sub">${escapeHtml(cliente || 'Cliente')} · Vendedor: ${escapeHtml(nomeVend)}</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <span id="header-status" style="font-size:12px;color:var(--text2)">Atualizado agora</span>
+        <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()">🧩 Template</button>
+        <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()">📝 Msgs rápidas</button>
+        <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
+        <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
+      <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
+        <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
+        <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+      <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
+        <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
+        <button class="btn-sair" onclick="sair()">Sair</button>
+      </div>
+    </header>
+    <main class="funil-main-3col">
+      <div class="funil-page funil-page-3col">
+        <div class="funil-layout-controls" id="funil-layout-controls">
+          <span class="layout-label">Visual:</span>
+          <button type="button" class="funil-layout-btn" id="layout-btn-inbox" onclick="toggleColunaFunil('inbox')" title="Mostrar/ocultar caixa de entrada">☰ Inbox</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-kanban" onclick="toggleColunaFunil('kanban')" title="Mostrar/ocultar funil">▦ Kanban</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-chat" onclick="toggleColunaFunil('chat')" title="Mostrar/ocultar conversa">💬 Chat</button>
+          <button type="button" class="funil-layout-btn" onclick="mostrarTodasColunasFunil()" title="Restaurar layout completo">Mostrar tudo</button>
+        </div>
+        <div class="funil-3col-grid" id="funil-layout-grid">
+          <!-- Coluna 1: Caixa de entrada (conversas) -->
+          <div class="funil-inbox-col">
+            <div class="funil-inbox-head">
+              <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
+            </div>
+            <div class="funil-inbox-filtros" id="funil-inbox-filtros"></div>
+            <div id="funil-inbox-lista" class="funil-inbox-lista">
+              <div class="state-row"><div class="spinner"></div>Carregando...</div>
+            </div>
+          </div>
+
+          <!-- Coluna 2: Kanban (métricas + toolbar + abas de setor ficam aqui dentro) -->
+          <div class="funil-kanban-col">
+            <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
+            <div class="funil-toolbar">
+              <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
+              <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
+              <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
+            </div>
+            <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0">
+              <span id="funil-lote-count" style="font-size:13px;color:var(--accent);font-weight:600"></span>
+              <button class="btn-save" style="padding:7px 14px;font-size:12px" onclick="abrirModalLote()">Enviar mensagem em lote</button>
+              <button class="btn-cancel" style="padding:7px 14px;font-size:12px" onclick="limparSelecaoLote()">Cancelar seleção</button>
+            </div>
+            <div id="funil-board" class="funil-board">
+              <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+            </div>
+            <div id="funil-vendedores-section" style="margin-top:20px;display:none">
+              <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Distribuição por Vendedor</div>
+              <div class="fu-hint" style="margin-bottom:10px">Leads atribuídos automaticamente ao final do fluxo. Arraste um lead para outro vendedor para reatribuir.</div>
+              <div id="funil-board-vendedores" class="funil-board"></div>
+            </div>
+          </div>
+
+          <!-- Coluna 3: Conversa do lead selecionado (sempre visível) -->
+          <div class="funil-chat-col" id="funil-painel">
+            <div id="funil-chat-vazio" class="funil-chat-vazio">
+              <div style="font-size:32px;margin-bottom:8px">💬</div>
+              <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
+            </div>
+            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+                <div>
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
+                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
+                  <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
+                  <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
+                </div>
+              </div>
+              <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
+                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
+                  <div id="painel-conversa"><div style="font-size:12px;color:var(--text2)">Carregando conversa...</div></div>
+                </div>
+                <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
+                  <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:var(--text2)">Carregando...</div></div>
+                </div>
+              </div>
+              <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
+                <div id="painel-reply-preview" style="display:none;margin-bottom:8px"></div>
+                <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
+                  <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
+                  <div id="painel-midia-el"></div>
+                </div>
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
+                  onpaste="painelColarArea(event)"
+                  ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
+                    📎
+                    <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                  </label>
+                  <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
+                    style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
+                  <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+                  <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
+                  <div style="position:relative">
+                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
+                    <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Enviar recurso Z-API</div>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('document')">📄 Documento/PDF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('link')">🔗 Link com preview</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('location')">📍 Localização</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('contact')">👤 Contato</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('pix')">💠 Botão PIX</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('option_list')">☑️ Lista de opções</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('poll')">📊 Enquete</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('sticker')">🏷️ Sticker</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('gif')">🎞️ GIF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('ptv')">🎥 PTV</button>
+                      <div style="height:1px;background:var(--border);margin:8px 0"></div>
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Ações do chat</div>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('read')">✓ Marcar chat lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unread')">📩 Marcar não lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('pin')">📌 Fixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unpin')">↘ Desafixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('mute')">🔕 Mutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unmute')">🔔 Desmutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('archive')">🗄️ Arquivar no WhatsApp</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unarchive')">📂 Desarquivar no WhatsApp</button>
+                    </div>
+                  </div>
+                  <div class="quick-menu-wrap" id="quick-menu-painel">
+                    <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
+                    <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
+                  </div>
+                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 IA</button>
+                </div>
+                <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="funil-status"></div>
+      </div>
+    </main>`;
+
+  funilState = {
+    clienteId,
+    clienteNome: cliente,
+    colunas: [],
+    setores: [],
+    setorAtivo: null,
+    leads: [],
+    totalGeral: 0,
+    totalNaoLidas: 0,
+    filtroInbox: 'todos',
+    buscaInbox: '',
+    modoVendedor: true
+  };
+
+  restaurarLayoutFunil();
+  await carregarFunilAtendimento();
+  iniciarSocketFunil(clienteId);
+}
+
+async function carregarFunilVendedor() {
+  try {
+    const data = await api('/movatak/vendedor/funil');
+    _vendFunil.colunas = data.colunas || [];
+    _vendFunil.leads = data.leads || [];
+    _vendFunil.setores = data.setores || [];
+    if (data.semSetor) {
+      document.getElementById('vend-board').innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--amber)">Você ainda não está vinculado a nenhum setor. Peça ao gestor para liberar seu acesso.</div>';
+      document.getElementById('vend-inbox-lista').innerHTML = '';
+      return;
+    }
+    renderVendSetoresBarra();
+    renderVendBoard();
+    renderVendInbox();
+  } catch (e) {
+    document.getElementById('vend-board').innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderVendSetoresBarra() {
+  const bar = document.getElementById('vend-setores-barra');
+  if (!bar) return;
+  if (_vendFunil.setores.length <= 1) { bar.innerHTML = ''; return; }
+  bar.innerHTML = _vendFunil.setores.map(s =>
+    `<span style="font-size:11px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 10px">
+      <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.cor||'var(--accent)'};margin-right:5px"></span>${escapeHtml(s.nome)}
+    </span>`).join('');
+}
+
+function renderVendBoard() {
+  const board = document.getElementById('vend-board');
+  if (!board) return;
+  if (!_vendFunil.colunas.length) {
+    board.innerHTML = '<div class="state-row" style="grid-column:1/-1">Nenhuma etapa nos seus setores.</div>';
+    return;
+  }
+  board.innerHTML = _vendFunil.colunas.map(col => {
+    const leads = col.leads || [];
+    const cor = col.cor || '#6b7280';
+    const cards = leads.map(l => `
+      <div class="funil-card" onclick="abrirConversaVendedor(${l.id})" style="cursor:pointer">
+        <div style="font-weight:600;font-size:13px">${escapeHtml(l.nome || l.telefone)}</div>
+        <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtml((l.ultima_msg||'').slice(0,40))}</div>
+      </div>`).join('') || '<div style="font-size:11px;color:var(--text3);padding:8px">Sem leads</div>';
+    return `<div class="funil-coluna">
+      <div class="funil-coluna-head" style="border-top:3px solid ${cor}">
+        <span>${escapeHtml(col.nome)}</span><span class="funil-coluna-count">${leads.length}</span>
+      </div>
+      <div class="funil-coluna-body">${cards}</div>
+    </div>`;
+  }).join('');
+}
+
+function renderVendInbox() {
+  const box = document.getElementById('vend-inbox-lista');
+  if (!box) return;
+  const busca = (document.getElementById('vend-busca')||{}).value || '';
+  let leads = _vendFunil.leads.slice();
+  if (busca.trim()) {
+    const q = busca.toLowerCase();
+    leads = leads.filter(l => (l.nome||'').toLowerCase().includes(q) || (l.telefone||'').includes(q));
+  }
+  leads.sort((a,b) => new Date(b.atualizado_em||0) - new Date(a.atualizado_em||0));
+  if (!leads.length) { box.innerHTML = '<div class="fu-hint" style="padding:18px;text-align:center">Nenhuma conversa.</div>'; return; }
+  box.innerHTML = leads.map(l => {
+    const ativo = _vendFunil.leadAberto === l.id ? ' active' : '';
+    return `<div class="funil-inbox-item${ativo}" onclick="abrirConversaVendedor(${l.id})">
+      <div style="display:flex;justify-content:space-between"><strong style="font-size:13px">${escapeHtml(l.nome||l.telefone)}</strong>
+      ${l.nao_lida ? '<span style="width:8px;height:8px;border-radius:50%;background:var(--accent)"></span>' : ''}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${escapeHtml(l.ultima_msg ? String(l.ultima_msg).slice(0,38) : (rotuloMidiaInbox(l.ultima_msg_midia, '') || ''))}</div>
+    </div>`;
+  }).join('');
+}
+
+async function abrirConversaVendedor(leadId) {
+  _vendFunil.leadAberto = leadId;
+  renderVendInbox();
+  const lead = _vendFunil.leads.find(l => l.id === leadId);
+  document.getElementById('vend-chat-vazio').style.display = 'none';
+  const cont = document.getElementById('vend-chat-conteudo');
+  cont.style.display = 'flex';
+  cont.innerHTML = `
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border)">
+      <div style="font-weight:700">${escapeHtml(lead ? (lead.nome||lead.telefone) : 'Lead')}</div>
+      <div style="font-size:11px;color:var(--text2)">${escapeHtml(lead ? lead.telefone : '')}</div>
+    </div>
+    <div id="vend-conversa" style="flex:1;overflow-y:auto;padding:12px 16px;min-height:0"><div class="fu-hint">Carregando...</div></div>
+    <div style="padding:10px 16px;border-top:1px solid var(--border)">
+      <textarea id="vend-msg" class="fu-textarea" style="min-height:70px" placeholder="Mensagem... (ENTER envia)"
+        onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMsgVendedor();}"></textarea>
+      <button class="btn-save" style="margin-top:8px;width:100%" onclick="enviarMsgVendedor()">Enviar</button>
+      <div id="vend-msg-status" class="fu-hint" style="margin-top:6px"></div>
+    </div>`;
+  try {
+    const msgs = await api('/movatak/vendedor/leads/' + leadId + '/conversas');
+    renderConversaVendedor(msgs);
+  } catch (e) {
+    document.getElementById('vend-conversa').innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderConversaVendedor(msgs) {
+  const box = document.getElementById('vend-conversa');
+  if (!box) return;
+  if (!msgs || !msgs.length) { box.innerHTML = '<div class="fu-hint" style="text-align:center;margin-top:20px">Nenhuma mensagem ainda.</div>'; return; }
+  box.innerHTML = msgs.map(m => {
+    const saida = m.direcao === 'saida';
+    const hora = new Date(m.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+    const midia = m.midia_url ? renderMidiaMensagem(m) : '';
+    const txt = m.conteudo ? escapeHtml(m.conteudo) : '';
+    return `<div style="display:flex;justify-content:${saida?'flex-end':'flex-start'};margin-bottom:8px">
+      <div style="max-width:85%;background:${saida?'var(--msg-out)':'var(--msg-in)'};border-radius:12px;padding:8px 12px">
+        ${midia}${txt?`<div style="font-size:13px;color:${saida?'var(--msg-text-out)':'var(--msg-text-in)'};white-space:pre-wrap">${txt}</div>`:''}
+        <div style="font-size:10px;color:${saida?'var(--msg-time-out)':'var(--msg-time-in)'};margin-top:3px;text-align:right">${hora}</div>
+      </div></div>`;
+  }).join('');
+  box.scrollTop = box.scrollHeight;
+}
+
+async function enviarMsgVendedor() {
+  const ta = document.getElementById('vend-msg');
+  const texto = (ta.value||'').trim();
+  if (!texto || !_vendFunil.leadAberto) return;
+  const st = document.getElementById('vend-msg-status');
+  st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
+  try {
+    await api('/movatak/vendedor/leads/' + _vendFunil.leadAberto + '/mensagem', {
+      method: 'POST', body: JSON.stringify({ texto })
+    });
+    ta.value = '';
+    st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
+    const msgs = await api('/movatak/vendedor/leads/' + _vendFunil.leadAberto + '/conversas');
+    renderConversaVendedor(msgs);
+  } catch (e) {
+    st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// TOUR GUIADO / ONBOARDING
+// Dois conjuntos de passos: TOUR_INICIAL (tela de clientes) e
+// TOUR_FUNIL (dentro do funil de atendimento). Ajustar é só editar aqui.
+// ════════════════════════════════════════════════════════════
+const TOUR_INICIAL = [
+  {
+    alvo: '.metric-card',
+    titulo: '📊 Suas métricas',
+    texto: 'No topo você acompanha o resumo geral: total de leads, convertidos, quem está em follow-up, taxa de conversão e vendedores. Tudo atualizado automaticamente.'
+  },
+  {
+    alvo: '.periodo-btns',
+    titulo: '📅 Período',
+    texto: 'Filtre os números por Hoje, 7, 30 ou 90 dias. Útil pra comparar a evolução do seu atendimento ao longo do tempo.'
+  },
+  {
+    alvo: '.clientes-section',
+    titulo: '🏢 Seus clientes',
+    texto: 'Aqui ficam os clientes/operações que você gerencia. Cada linha tem atalhos: Editar, Followup, Auto Atendimento, Funil de Atendimento e mais. Clique em "Funil de Atendimento" pra atender os leads.'
+  },
+  {
+    alvo: '[onclick="abrirModal()"]',
+    titulo: '➕ Novo cliente',
+    texto: 'Cadastre uma nova operação/cliente aqui. Você configura WhatsApp, follow-up, automações e tudo mais por cliente.'
+  },
+  {
+    alvo: '[onclick="abrirReset()"]',
+    titulo: '♻️ Resetar lead',
+    texto: 'Ferramenta de teste: apaga um lead pelo número pra ele entrar de novo como novo. Ótimo pra testar sua automação com seu próprio número. Bom trabalho! 🚀'
+  }
+];
+
+const TOUR_FUNIL = [
+  {
+    alvo: '.layout-label',
+    titulo: '👀 Modos de visualização',
+    texto: 'Aqui você alterna como vê seus leads: Inbox (lista de conversas), Kanban (quadro por etapas), Chat (foco na conversa) ou tudo junto. Use o que combina com seu momento.'
+  },
+  {
+    alvo: '.btn-prioridades',
+    titulo: '🔥 Prioridades',
+    texto: 'O sistema calcula quais leads precisam de atenção AGORA — quem está esperando resposta, quem esfriou. Clique e atenda do topo pra baixo. Os mais urgentes sempre no topo.'
+  },
+  {
+    alvo: '.btn-sla',
+    titulo: '📊 SLA — Tempo de resposta',
+    texto: 'Veja por setor e por vendedor quanto tempo leva pra responder os leads, separando atendimento humano do automático. É seu raio-x de performance da equipe.'
+  },
+  {
+    alvo: '#btn-agenda',
+    titulo: '📅 Agenda',
+    texto: 'Agende retornos e compromissos com os leads. Você recebe um lembrete visual antes da hora, e o lead acende no kanban pra não passar batido.'
+  },
+  {
+    alvo: '#funil-board',
+    titulo: '🗂️ Kanban de atendimento',
+    texto: 'Cada coluna é uma etapa do seu funil. Arraste os leads conforme avançam. Dentro de cada coluna você ativa a Ausência, sincroniza o WhatsApp e liga a IA de automação.'
+  },
+  {
+    alvo: '.btn-sugerir-ia',
+    titulo: '🤖 IA que sugere respostas',
+    texto: 'Na conversa, clique aqui pra IA sugerir uma resposta no tom do seu negócio, baseada no histórico. Você revisa e envia com 1 clique. Nunca envia sozinha.'
+  },
+  {
+    alvo: '#painel-msg-texto',
+    titulo: '💬 Atendimento',
+    texto: 'Aqui você conversa com o lead direto pelo WhatsApp. Use as Respostas rápidas, anexe arquivos e mantenha tudo registrado no histórico. Bom trabalho! 🚀'
+  }
+];
+
+let _tourIndice = 0;
+let _tourAtivo = false;
+let _tourTelaAtual = 'inicial';
+let _tourJaDisparou = {};
+
+function tourElementoVisivel(sel) {
+  // Procura entre TODOS os elementos que casam (pode haver duplicados escondidos
+  // em modais/seções) e retorna o primeiro REALMENTE visível na tela.
+  const els = document.querySelectorAll(sel);
+  for (const el of els) {
+    // offsetParent é null se o elemento ou qualquer ancestral está display:none.
+    if (el.offsetParent === null && getComputedStyle(el).position !== 'fixed') continue;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) continue;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+    return el;
+  }
+  return null;
+}
+
+function iniciarTour(forcado, telaExplicita) {
+  // Não reabre se já está rodando.
+  if (_tourAtivo) return;
+
+  // Tela: usa a explícita (do disparo automático) ou detecta.
+  // Detecção confiável: a tela inicial tem a lista de clientes (.clientes-section) visível.
+  // Se ela NÃO está visível, estamos no funil.
+  let tela = telaExplicita;
+  if (!tela) {
+    const naInicial = !!tourElementoVisivel('.clientes-section');
+    tela = naInicial ? 'inicial' : 'funil';
+  }
+  _tourTelaAtual = tela;
+  const conjunto = tela === 'funil' ? TOUR_FUNIL : TOUR_INICIAL;
+
+  // Só passos cujo alvo existe E está visível na tela atual.
+  const passos = conjunto.filter(p => tourElementoVisivel(p.alvo));
+  if (!passos.length) {
+    if (forcado) alert('Nada para mostrar nesta tela no momento.');
+    return;
+  }
+  _tourPassosAtivos = passos;
+  _tourIndice = 0;
+  _tourAtivo = true;
+  document.getElementById('tour-overlay').classList.add('ativo');
+  mostrarPassoTour();
+}
+
+let _tourPassosAtivos = [];
+
+function mostrarPassoTour() {
+  const passo = _tourPassosAtivos[_tourIndice];
+  if (!passo) { fecharTour(); return; }
+  const el = tourElementoVisivel(passo.alvo);
+  if (!el) { tourProximo(); return; }
+
+  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  setTimeout(() => {
+    const r = el.getBoundingClientRect();
+    const pad = 6;
+    const spot = document.getElementById('tour-spot');
+    spot.style.top = (r.top - pad) + 'px';
+    spot.style.left = (r.left - pad) + 'px';
+    spot.style.width = (r.width + pad * 2) + 'px';
+    spot.style.height = (r.height + pad * 2) + 'px';
+
+    document.getElementById('tour-titulo').textContent = passo.titulo;
+    document.getElementById('tour-texto').textContent = passo.texto;
+    document.getElementById('tour-contador').textContent = (_tourIndice + 1) + ' de ' + _tourPassosAtivos.length;
+    document.getElementById('tour-btn-prev').style.visibility = _tourIndice === 0 ? 'hidden' : 'visible';
+    document.getElementById('tour-btn-next').textContent = _tourIndice === _tourPassosAtivos.length - 1 ? 'Concluir' : 'Avançar';
+
+    // Posiciona o balão: abaixo do alvo, ou acima se não couber.
+    const balao = document.getElementById('tour-balao');
+    const bw = 340, bh = balao.offsetHeight || 160;
+    let top = r.bottom + 14;
+    let left = r.left + (r.width / 2) - (bw / 2);
+    if (top + bh > window.innerHeight - 10) top = r.top - bh - 14;
+    if (top < 10) top = 10;
+    left = Math.max(10, Math.min(left, window.innerWidth - bw - 10));
+    balao.style.top = top + 'px';
+    balao.style.left = left + 'px';
+  }, 320);
+}
+
+function tourProximo() {
+  if (_tourIndice >= _tourPassosAtivos.length - 1) { fecharTour(); return; }
+  _tourIndice++;
+  mostrarPassoTour();
+}
+
+function tourAnterior() {
+  if (_tourIndice > 0) { _tourIndice--; mostrarPassoTour(); }
+}
+
+function pularTour() { fecharTour(); }
+
+function fecharTour() {
+  _tourAtivo = false;
+  document.getElementById('tour-overlay').classList.remove('ativo');
+  // Marca como visto a tela onde o tour rodou (usa a tela guardada, não redetecta).
+  const chave = _tourTelaAtual === 'funil' ? 'movatak-tour-funil' : 'movatak-tour-inicial';
+  try { localStorage.setItem(chave, '1'); } catch(e) {}
+}
+
+// Dispara automaticamente no 1º acesso de cada tela (cada uma só uma vez).
+// Guarda _tourJaDisparou evita reagendar a cada atualização da tela.
+function talvezIniciarTourAutomatico(tela) {
+  const chave = tela === 'funil' ? 'movatak-tour-funil' : 'movatak-tour-inicial';
+  if (_tourJaDisparou[tela]) return; // já tentou nesta sessão, não reagenda
+  let visto = '0';
+  try { visto = localStorage.getItem(chave) || '0'; } catch(e) {}
+  if (visto === '1') return; // já viu antes
+  _tourJaDisparou[tela] = true;
+  setTimeout(() => { if (!_tourAtivo) iniciarTour(false, tela); }, 1200);
+}
+
+// Reposiciona o destaque se a janela mudar de tamanho durante o tour.
+window.addEventListener('resize', () => { if (_tourAtivo) mostrarPassoTour(); });
+
+function iniciar() {
+  document.getElementById('login-screen').classList.add('hidden');
+  document.getElementById('app').classList.add('visible');
+  document.getElementById('login-err').textContent = '';
+  verificarVersao();
+  if (ehPaginaSLA()) {
+    iniciarPaginaSLA();
+  } else if (ehPaginaFunilAtendimento()) {
+    iniciarPaginaFunilAtendimento();
+  } else {
+    carregarTudo();
+  }
+}
+
+// Compara versão do painel com a do backend — alerta se divergir
+async function verificarVersao() {
+  try {
+    const r = await api('/movatak/version');
+    const elBack = document.getElementById('versao-backend');
+    elBack.textContent = r.version || '—';
+    if (r.version && r.version !== PAINEL_VERSION) {
+      elBack.style.color = 'var(--amber)';
+      elBack.textContent = r.version + ' (painel desatualizado — Ctrl+Shift+R)';
     } else {
-      const av = avaliarAusencia(cliente);
-      if (av.ausente && av.mensagem) { deveAvisar = true; mensagemAus = av.mensagem; periodoChave = av.periodoChave; }
+      elBack.style.color = 'var(--green)';
     }
+  } catch(e) {
+    document.getElementById('versao-backend').textContent = 'offline';
+  }
+}
 
-    if (deveAvisar && mensagemAus) {
-      const reg = await query(
-        `INSERT INTO movatak_ausencia_enviada (lead_id, cliente_id, periodo_chave)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (lead_id, periodo_chave) DO NOTHING
-         RETURNING id`,
-        [lead.id, cliente.id, periodoChave]
-      ).catch(() => ({ rows: [] }));
-      if (reg.rows.length) {
-        // Aguarda a saudação de boas-vindas chegar e assentar primeiro (a Z-API pode
-        // entregar fora de ordem se as mensagens saem muito próximas).
-        await new Promise(r => setTimeout(r, 8000));
-        const msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, mensagemAus).catch(() => null);
-        await registrarConversa(lead.id, cliente.id, 'saida', mensagemAus, null, null, msgId, null, 'ausencia').catch(() => null);
+// Verificar sessão salva
+function recuperarSecretFunilJanela() {
+  let auth = '';
+  try { auth = sessionStorage.getItem(SENHA_KEY) || ''; } catch(e) {}
+  try { if (!auth) auth = localStorage.getItem(SENHA_LOCAL_KEY) || ''; } catch(e) {}
+
+  // Fallback robusto para janela/aba nova: o painel pai grava o segredo em window.name.
+  // Isso evita a corrida onde a nova aba inicia antes do localStorage/sessionStorage ser copiado.
+  try {
+    if (!auth && ehPaginaFunilAtendimento() && String(window.name || '').indexOf('movatak_funil_auth:') === 0) {
+      const raw = window.name.replace('movatak_funil_auth:', '');
+      const payload = JSON.parse(atob(raw));
+      if (payload && payload.secret && (!payload.ts || (Date.now() - Number(payload.ts)) < 120000)) {
+        auth = String(payload.secret);
+        window.name = '';
+      }
+    }
+  } catch(e) {}
+
+  if (auth) {
+    try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
+    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+  }
+  return auth;
+}
+
+let funilState = { clienteId: null, clienteNome: '', colunas: [], setores: [], setorAtivo: null };
+// Entrada pelo PORTAL DO CLIENTE: se há app_token do portal, o funil abre direto
+// no modo cliente (sem tela de login). O backend isola tudo ao cliente do token.
+if (_appTokenPortal) {
+  iniciarFunilPortalCliente();
+} else {
+// Restaura sessão de vendedor, se houver (tem prioridade sobre a de gestor).
+let _vendTokenSalvo = '';
+try { _vendTokenSalvo = sessionStorage.getItem('mvtk_vend_token') || ''; } catch(e) {}
+if (_vendTokenSalvo) {
+  _vendedorToken = _vendTokenSalvo;
+  try { _vendedorInfo = JSON.parse(sessionStorage.getItem('mvtk_vend_info') || 'null'); } catch(e) {}
+  iniciarAppVendedor();
+} else {
+  const savedSecret = recuperarSecretFunilJanela();
+  if (savedSecret) {
+    secret = savedSecret;
+    iniciar();
+  }
+}
+}
+
+// Abre a TELA INICIAL completa no modo cliente (portal). O cliente vê o dashboard
+// e os botões de recurso só da operação dele. O backend isola tudo pelo token.
+async function iniciarFunilPortalCliente() {
+  try {
+    document.body.classList.add('modo-portal-cliente'); // ativa o CSS que esconde itens do admin
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.add('visible');
+    // Descobre quem é o cliente pelo token.
+    const me = await api('/movatak/app/me');
+    if (!me || !me.id) throw new Error('Sessão inválida. Faça login novamente no portal.');
+    // Persiste o token para sobreviver a refresh da página.
+    try { localStorage.setItem('movatak-portal-token', _appTokenPortal); } catch (e) {}
+    _portalClienteId = me.id;
+    _portalClienteNome = me.nome || 'Minha empresa';
+    // Limpa o token da URL.
+    try { history.replaceState(null, '', window.location.pathname); } catch (e) {}
+    verificarVersao();
+    // Abre a tela inicial (igual à do admin), mas só com a operação do cliente.
+    carregarTudo();
+  } catch (e) {
+    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#fff;font-family:sans-serif">Erro ao abrir o portal: ' + (e.message || e) + '<br><br><a href="portal.html" style="color:#5b7fff">Voltar ao login</a></div>';
+  }
+}
+let _portalClienteId = null;
+let _portalClienteNome = '';
+
+// ── API ────────────────────────────────────────────────────
+// ── Rotas do vendedor: reaproveita a mesma tela do admin, mas redireciona
+// as chamadas para endpoints restritos pelo x-vendedor-token no backend.
+function adaptarPathVendedor(path) {
+  if (!_vendedorToken || !path) return path;
+  let p = String(path);
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil\/metricas(\?.*)?$/, '/movatak/vendedor/funil/metricas$1');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil\/colunas\/reordenar$/, '/movatak/vendedor/funil/colunas/reordenar');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil\/colunas$/, '/movatak/vendedor/funil/colunas');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/funil(\?.*)?$/, '/movatak/vendedor/funil$1');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/mensagens-rapidas$/, '/movatak/vendedor/mensagens-rapidas');
+  p = p.replace(/^\/movatak\/admin\/mensagens-rapidas\/([^/]+)(\/usar)?$/, '/movatak/vendedor/mensagens-rapidas/$1$2');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/questionario-templates$/, '/movatak/vendedor/questionario-templates');
+  p = p.replace(/^\/movatak\/admin\/questionario-templates\/([^/]+)$/, '/movatak/vendedor/questionario-templates/$1');
+  p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/agendamentos(\?.*)?$/, '/movatak/vendedor/agendamentos$1');
+  p = p.replace(/^\/movatak\/admin\/agendamentos\/([^/]+)(\/status)?$/, '/movatak/vendedor/agendamentos/$1$2');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/conversas$/, '/movatak/vendedor/leads/$1/conversas');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/historico$/, '/movatak/vendedor/leads/$1/historico');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/marcar-lida$/, '/movatak/vendedor/leads/$1/marcar-lida');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/arquivar$/, '/movatak/vendedor/leads/$1/arquivar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/cliente$/, '/movatak/vendedor/leads/$1/cliente');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/descartar$/, '/movatak/vendedor/leads/$1/descartar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/followup\/pausar$/, '/movatak/vendedor/leads/$1/followup/pausar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/followup\/reativar$/, '/movatak/vendedor/leads/$1/followup/reativar');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/iniciar-autoatendimento$/, '/movatak/vendedor/leads/$1/iniciar-autoatendimento');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)$/, '/movatak/vendedor/leads/$1');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/funil$/, '/movatak/vendedor/leads/$1/coluna');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/setor$/, '/movatak/vendedor/leads/$1/setor');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/mensagem-kanban$/, '/movatak/vendedor/leads/$1/mensagem-kanban');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/mensagem-rapida$/, '/movatak/vendedor/leads/$1/mensagem-rapida');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/reativar-followup$/, '/movatak/vendedor/leads/$1/reativar-followup');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/zapi\/chat-action$/, '/movatak/vendedor/leads/$1/zapi/chat-action');
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/zapi\/send-advanced$/, '/movatak/vendedor/leads/$1/zapi/send-advanced');
+  p = p.replace(/^\/movatak\/admin\/conversas\/([^/]+)(\/reagir|\/encaminhar|\/marcar-lida-zap|\/editar)?$/, '/movatak/vendedor/conversas/$1$2');
+  p = p.replace(/^\/movatak\/admin\/upload-imagem$/, '/movatak/vendedor/upload-imagem');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)\/setor$/, '/movatak/vendedor/funil/colunas/$1/setor');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)\/ausencia$/, '/movatak/vendedor/funil/colunas/$1/ausencia');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)\/sincronizar-whatsapp$/, '/movatak/vendedor/funil/colunas/$1/sincronizar-whatsapp');
+  p = p.replace(/^\/movatak\/admin\/funil\/colunas\/([^/]+)$/, '/movatak/vendedor/funil/colunas/$1');
+  return p;
+}
+
+async function api(path, opts = {}, raw = false) {
+  // Headers de auth, em ordem de prioridade:
+  // 1) app_token do cliente (portal) — quando o funil é aberto pelo portal do cliente;
+  // 2) token do vendedor; 3) secret do gestor (admin).
+  const appTokenCliente = (typeof _appTokenPortal !== 'undefined' && _appTokenPortal) ? _appTokenPortal : null;
+  const authHeaders = appTokenCliente
+    ? { 'x-app-token': appTokenCliente }
+    : (_vendedorToken
+        ? { 'x-vendedor-token': _vendedorToken }
+        : { 'x-movatak-secret': secret });
+  const pathFinal = adaptarPathVendedor(path);
+  const controller = new AbortController();
+  const metodo = String((opts && opts.method) || 'GET').toUpperCase();
+  const timeoutMs = Number(opts.timeoutMs || (metodo === 'GET' ? 20000 : 60000));
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(API_BASE + pathFinal, {
+      ...opts,
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders,
+        ...(opts.headers || {})
+      }
+    });
+  } catch (e) {
+    if (e && e.name === 'AbortError') {
+      throw new Error('Tempo esgotado ao carregar dados. Verifique se o backend recebeu o index.js atualizado e tente novamente.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+  if (res.status === 401 && !raw) {
+    if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+      const st = document.getElementById('funil-status');
+      if (st) st.innerHTML = '<span style="color:var(--red)">Sessão expirada. Feche esta janela, faça login no painel e abra o funil novamente.</span>';
+    }
+    // No modo portal do cliente, NÃO desloga automaticamente a cada 401 — apenas
+    // propaga o erro. O logout do portal é tratado só quando a sessão realmente expira.
+    if (!_vendedorToken && !_appTokenPortal) sair();
+    throw new Error('Sessão expirada.');
+  }
+  if (!res.ok) {
+    let detalhe = '';
+    try {
+      const err = await res.json();
+      detalhe = err.error ? ': ' + err.error : '';
+    } catch (_) {}
+    throw new Error(`Erro ${res.status}${detalhe}`);
+  }
+  return res.json();
+}
+
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+// ── Período ────────────────────────────────────────────────
+function setPeriodo(d) {
+  periodoAtual = d;
+  ['0','7','30','90'].forEach(x => document.getElementById('p'+x).classList.remove('active'));
+  document.getElementById('p'+d).classList.add('active');
+  carregarTudo();
+}
+
+// ── Carregamento ───────────────────────────────────────────
+async function carregarTudo() {
+  atualizarStatus('Atualizando...');
+  try {
+    const clientes = await api('/movatak/admin/clientes');
+    renderClientes(clientes);
+    // Mantém o cliente selecionado, ou seleciona o primeiro
+    if (clientes.length) {
+      const alvo = clienteSelecionado
+        ? clientes.find(c => c.id === clienteSelecionado)
+        : clientes[0];
+      if (alvo) selecionarCliente(alvo.id, alvo.nome);
+    } else {
+      renderMetricas(clientes, periodoAtual);
+      renderFunil(clientes, periodoAtual);
+    }
+    atualizarStatus('Atualizado agora');
+    talvezIniciarTourAutomatico('inicial');
+  } catch(e) {
+    atualizarStatus('Erro: ' + e.message);
+  }
+}
+
+function atualizarStatus(txt) {
+  const el = document.getElementById('header-status');
+  if (el) el.textContent = txt;
+}
+
+// ── Métricas globais ───────────────────────────────────────
+function renderMetricas(clientes, periodo) {
+  if (!document.getElementById('metrics-grid')) return; // tela do funil/kanban não tem este elemento
+  const isHoje = periodo === 0;
+  const totalLeads   = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.leads_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.total_leads || 0), 0);
+  const convertidos  = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.vendas_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.convertidos || 0), 0);
+  const followup     = clientes.reduce((s, c) => s + parseInt(c.em_followup || 0), 0);
+  const taxa         = totalLeads > 0 ? ((convertidos / totalLeads) * 100).toFixed(1) : '0.0';
+  const taxaColor    = parseFloat(taxa) >= 20 ? 'green' : parseFloat(taxa) >= 10 ? 'amber' : 'red-val';
+
+  document.getElementById('metrics-grid').innerHTML = `
+    <div class="metric-card">
+      <div class="metric-label">Clientes ativos</div>
+      <div class="metric-value">${clientes.filter(c => c.ativo).length}</div>
+      <div class="metric-sub">total cadastrados: ${clientes.length}</div>
+    </div>
+    <div class="metric-card accent">
+      <div class="metric-label">Total de leads</div>
+      <div class="metric-value">${totalLeads}</div>
+      <div class="metric-sub">todos os clientes</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-label">Convertidos</div>
+      <div class="metric-value">${convertidos}</div>
+      <div class="metric-sub">vendas fechadas</div>
+    </div>
+    <div class="metric-card amber">
+      <div class="metric-label">Em follow up</div>
+      <div class="metric-value">${followup}</div>
+      <div class="metric-sub">sequência ativa</div>
+    </div>
+    <div class="metric-card ${taxaColor}">
+      <div class="metric-label">Taxa geral</div>
+      <div class="metric-value">${taxa}%</div>
+      <div class="metric-sub">fechamento consolidado</div>
+    </div>
+  `;
+}
+
+// ── Gráfico de leads por hora do dia ───────────────────────
+function renderGraficoHoras(leadsPorHora) {
+  const wrap = document.getElementById('chart-hours');
+  if (!leadsPorHora || !leadsPorHora.length) {
+    wrap.innerHTML = '<div class="state-row" style="width:100%;font-size:13px">Sem leads hoje</div>';
+    return;
+  }
+  const max = Math.max(...leadsPorHora.map(h => h.leads), 1);
+  // Mostra apenas horas pares no rótulo para não poluir
+  wrap.innerHTML = leadsPorHora.map(h => {
+    const altura = h.leads > 0 ? Math.max(6, (h.leads / max) * 110) : 3;
+    const lbl = h.hora % 3 === 0 ? String(h.hora).padStart(2,'0') : '';
+    return `<div class="hour-col">
+      <div class="hour-val">${h.leads > 0 ? h.leads : ''}</div>
+      <div class="hour-bar${h.leads > 0 ? ' has-leads' : ''}" style="height:${altura}px"></div>
+      <div class="hour-lbl">${lbl}</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Vendas por vendedor (painel do dashboard) ──────────────
+function renderVendedoresVendas(vendedores) {
+  const wrap = document.getElementById('vendedores-vendas');
+  if (!vendedores || !vendedores.length) {
+    wrap.innerHTML = '<div class="state-row" style="font-size:13px">Nenhum vendedor cadastrado</div>';
+    return;
+  }
+  const max = Math.max(...vendedores.map(v => parseInt(v.fechamentos || 0)), 1);
+  wrap.innerHTML = vendedores.map((v, i) => {
+    const fech = parseInt(v.fechamentos || 0);
+    const pct  = Math.round((fech / max) * 100);
+    const cor  = i === 0 ? 'var(--green)' : i === 1 ? 'var(--accent)' : 'var(--amber)';
+    return `<div class="vv-item">
+      <div class="vv-row">
+        <span class="vv-nome">${v.nome}</span>
+        <span class="vv-num" style="color:${cor}">${fech} ${fech === 1 ? 'venda' : 'vendas'}</span>
+      </div>
+      <div class="vv-bar-bg"><div class="vv-bar-fill" style="width:${pct}%;background:${cor}"></div></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Selecionar cliente — atualiza cards e painéis ──────────
+let clienteSelecionado = null;
+async function selecionarCliente(id, nome) {
+  clienteSelecionado = id;
+  document.querySelectorAll('tr.cliente-row').forEach(tr => {
+    tr.classList.toggle('selecionado', parseInt(tr.dataset.id) === id);
+  });
+  document.querySelector('.periodo-bar h2').textContent = nome;
+  document.getElementById('chart-title').textContent = 'Leads por hora — hoje · ' + nome;
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/resumo?dias=' + periodoAtual);
+    renderMetricasCliente(r);
+    renderGraficoHoras(r.leads_por_hora);
+    renderVendedoresVendas(r.vendedores);
+    renderFunilCliente(r);
+  } catch(e) {
+    atualizarStatus('Erro ao carregar cliente: ' + e.message);
+  }
+}
+
+// Cards do topo com dados de um cliente específico
+function renderMetricasCliente(r) {
+  if (!document.getElementById('metrics-grid')) return; // ausente na tela do funil/kanban
+  const total = parseInt(r.total_leads || 0);
+  const conv  = parseInt(r.convertidos || 0);
+  const taxa  = total > 0 ? ((conv / total) * 100).toFixed(1) : '0.0';
+  const taxaColor = parseFloat(taxa) >= 20 ? 'green' : parseFloat(taxa) >= 10 ? 'amber' : 'red-val';
+  document.getElementById('metrics-grid').innerHTML = `
+    <div class="metric-card accent">
+      <div class="metric-label">Total de leads</div>
+      <div class="metric-value">${total}</div>
+      <div class="metric-sub">leads hoje: ${r.leads_hoje || 0}</div>
+    </div>
+    <div class="metric-card green">
+      <div class="metric-label">Convertidos</div>
+      <div class="metric-value">${conv}</div>
+      <div class="metric-sub">vendas hoje: ${r.vendas_hoje || 0}</div>
+    </div>
+    <div class="metric-card amber">
+      <div class="metric-label">Em follow up</div>
+      <div class="metric-value">${r.em_followup || 0}</div>
+      <div class="metric-sub">sequência ativa</div>
+    </div>
+    <div class="metric-card ${taxaColor}">
+      <div class="metric-label">Taxa de conversão</div>
+      <div class="metric-value">${taxa}%</div>
+      <div class="metric-sub">fechamento</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Vendedores</div>
+      <div class="metric-value">${(r.vendedores || []).length}</div>
+      <div class="metric-sub">cadastrados</div>
+    </div>
+  `;
+}
+
+function renderFunilCliente(r) {
+  if (!document.getElementById('funil-wrap')) return; // ausente na tela do funil/kanban
+  const total = parseInt(r.total_leads || 0);
+  const fu    = parseInt(r.em_followup || 0);
+  const conv  = parseInt(r.convertidos || 0);
+  function step(label, valor, color) {
+    const pct = total > 0 ? Math.round((valor / total) * 100) : 0;
+    return `<div class="funil-step">
+      <div class="funil-row">
+        <span class="funil-name">${label}</span>
+        <span class="funil-num" style="color:${color}">${valor}</span>
+      </div>
+      <div class="funil-bar-bg"><div class="funil-bar-fill" style="width:${pct}%;background:${color}"></div></div>
+      <div class="funil-pct">${pct}%</div>
+    </div>`;
+  }
+  document.getElementById('funil-wrap').innerHTML =
+    step('Leads', total, 'var(--accent)') +
+    step('Follow up', fu, 'var(--amber)') +
+    step('Clientes', conv, 'var(--green)');
+}
+
+// ── Funil consolidado ──────────────────────────────────────
+function renderFunil(clientes, periodo) {
+  if (!document.getElementById('funil-wrap')) return; // ausente na tela do funil/kanban
+  const isHoje = periodo === 0;
+  const total     = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.leads_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.total_leads || 0), 0);
+  const followup  = clientes.reduce((s, c) => s + parseInt(c.em_followup || 0), 0);
+  const clientes_ = isHoje
+    ? clientes.reduce((s, c) => s + parseInt(c.vendas_hoje || 0), 0)
+    : clientes.reduce((s, c) => s + parseInt(c.convertidos || 0), 0);
+
+  function step(label, valor, color) {
+    const pct = total > 0 ? Math.round((valor / total) * 100) : 0;
+    return `<div class="funil-step">
+      <div class="funil-row">
+        <span class="funil-name">${label}</span>
+        <span class="funil-num" style="color:${color}">${valor}</span>
+      </div>
+      <div class="funil-bar-bg">
+        <div class="funil-bar-fill" style="width:${pct}%;background:${color}"></div>
+      </div>
+      <div class="funil-pct">${pct}%</div>
+    </div>`;
+  }
+
+  document.getElementById('funil-wrap').innerHTML =
+    step('Leads', total, 'var(--accent)') +
+    step('Follow up', followup, 'var(--amber)') +
+    step('Clientes', clientes_, 'var(--green)');
+}
+
+// ── Tabela de clientes ─────────────────────────────────────
+function renderClientes(clientes) {
+  const tbody = document.getElementById('clientes-tbody');
+  if (!tbody) return; // não existe na tela do funil/kanban — evita erro de innerHTML em null
+  if (!clientes.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="state-row">Nenhum cliente cadastrado.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = clientes.map(c => {
+    const total  = parseInt(c.total_leads || 0);
+    const conv   = parseInt(c.convertidos || 0);
+    const fu     = parseInt(c.em_followup || 0);
+    const taxa   = total > 0 ? ((conv / total) * 100).toFixed(1) : '0.0';
+    const taxaCls = parseFloat(taxa) >= 20 ? 'td-green' : parseFloat(taxa) >= 10 ? 'td-amber' : '';
+    return `<tr class="cliente-row" data-id="${c.id}" onclick="selecionarCliente(${c.id}, '${c.nome.replace(/'/g, "")}')">
+      <td><strong>${c.nome}</strong></td>
+      <td class="td-mono">${total}</td>
+      <td class="td-green">${conv}</td>
+      <td class="td-amber">${fu}</td>
+      <td class="${taxaCls}">${taxa}%</td>
+      <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
+      <td class="td-mono" style="font-size:13px">—</td>
+      <td>
+        <button onclick="event.stopPropagation();abrirCredenciais(${c.id})" class="so-admin" style="background:transparent;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">🔑 Credenciais</button>
+        <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
+        <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
+        <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
+        <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
+        <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
+        <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+// ── Modal ──────────────────────────────────────────────────
+let editandoClienteId = null;
+
+function abrirModal() {
+  editandoClienteId = null;
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('token-resultado').style.display = 'none';
+  document.getElementById('modal-err').textContent = '';
+  document.getElementById('modal-titulo').textContent = 'Cadastrar novo cliente';
+  document.getElementById('lbl-token').textContent = 'Z-API TOKEN';
+  document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
+  document.getElementById('f-planos').closest('.form-field').style.display = '';
+  document.getElementById('planos-section').style.display = 'none';
+  document.getElementById('ausencia-section').style.display = 'none';
+  const btn = document.getElementById('btn-salvar');
+  btn.textContent = 'Cadastrar';
+  btn.onclick = salvarCliente;
+  ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos','nicho'].forEach(id => {
+    document.getElementById('f-' + id).value = '';
+  });
+  setPermissoesPortal();
+}
+
+// Abrir modal em modo edição — carrega dados do cliente
+async function abrirEdicao(id) {
+  editandoClienteId = id;
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('token-resultado').style.display = 'none';
+  document.getElementById('modal-err').textContent = '';
+  document.getElementById('modal-titulo').textContent = 'Config. Inicial';
+  document.getElementById('lbl-token').textContent = 'Z-API TOKEN (deixe vazio para manter)';
+  document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN (deixe vazio para manter)';
+  // Planos: editados aqui (modo edição), com valor e nota mínima
+  document.getElementById('f-planos').closest('.form-field').style.display = 'none';
+  document.getElementById('planos-section').style.display = '';
+  document.getElementById('ausencia-section').style.display = '';
+  document.getElementById('ia-section').style.display = '';
+  document.getElementById('portal-section').style.display = '';
+  planosClienteId = id;
+  carregarPlanos(id);
+  carregarAusencia(id);
+  const btn = document.getElementById('btn-salvar');
+  btn.textContent = 'Carregando...';
+  btn.onclick = salvarEdicao;
+  // Limpar token/client-token (modo B — não exibe credenciais)
+  document.getElementById('f-token').value = '';
+  document.getElementById('f-client-token').value = '';
+  try {
+    const c = await api('/movatak/admin/clientes/' + id + '/dados');
+    document.getElementById('f-nome').value     = c.nome || '';
+    document.getElementById('f-whatsapp').value = c.whatsapp || '';
+    document.getElementById('f-trigger').value  = c.trigger_msg || '';
+    document.getElementById('f-instance').value = c.zapi_instance || '';
+    document.getElementById('f-cpl').value      = c.teto_cpl || '';
+    const nichoEl = document.getElementById('f-nicho'); if (nichoEl) nichoEl.value = c.nicho || '';
+    setPermissoesPortal(c.permissoes_portal || {});
+    const bvm1 = document.getElementById('f-boasvindas-msg1');
+    const bvm2 = document.getElementById('f-boasvindas-msg2');
+    const bvd  = document.getElementById('f-boasvindas-delay');
+    if (bvm1) bvm1.value = c.boas_vindas_lead_msg1 || '';
+    if (bvm2) bvm2.value = c.boas_vindas_lead_msg2 || '';
+    if (bvd)  bvd.value  = c.boas_vindas_lead_delay != null ? c.boas_vindas_lead_delay : 5;
+    const iaOferta = document.getElementById('f-ia-oferta');
+    const iaTom = document.getElementById('f-ia-tom');
+    const iaResumo = document.getElementById('f-ia-resumo');
+    if (iaOferta) iaOferta.value = c.ia_oferta || '';
+    if (iaTom) iaTom.value = c.ia_tom || '';
+    if (iaResumo) iaResumo.value = c.ia_resumo || '';
+    const portalEmail = document.getElementById('f-portal-email');
+    const portalSenha = document.getElementById('f-portal-senha');
+    const portalHint = document.getElementById('portal-senha-hint');
+    if (portalEmail) portalEmail.value = c.portal_email || '';
+    if (portalSenha) portalSenha.value = '';
+    if (portalHint) portalHint.textContent = c.portal_tem_senha ? '✓ Senha já definida. Preencha apenas para trocar.' : '⚠️ Nenhuma senha definida ainda.';
+    btn.textContent = 'Salvar alterações';
+  } catch(e) {
+    document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
+    btn.textContent = 'Salvar alterações';
+  }
+}
+
+async function salvarEdicao() {
+  const nome          = document.getElementById('f-nome').value.trim();
+  const whatsapp      = document.getElementById('f-whatsapp').value.trim();
+  const trigger_msg   = (document.getElementById('f-trigger')?.value || '').trim();
+  const zapi_instance = document.getElementById('f-instance').value.trim();
+  const zapi_token    = document.getElementById('f-token').value.trim();
+  const zapi_ct       = document.getElementById('f-client-token').value.trim();
+  const cpl           = document.getElementById('f-cpl').value.trim();
+  const nicho         = (document.getElementById('f-nicho')?.value || '').trim();
+
+  if (!nome || !whatsapp || !zapi_instance) {
+    document.getElementById('modal-err').textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.';
+    return;
+  }
+
+  document.getElementById('btn-salvar').textContent = 'Salvando...';
+  document.getElementById('modal-err').textContent = '';
+
+  try {
+    await api('/movatak/admin/clientes/' + editandoClienteId + '/dados', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        nome, whatsapp, zapi_instance, trigger_msg, nicho, agenda_ativa: !!nicho,
+        zapi_token, zapi_client_token: zapi_ct,
+        teto_cpl: cpl ? parseFloat(cpl) : null,
+        permissoes_portal: getPermissoesPortal(),
+        boas_vindas_lead_msg1: (document.getElementById('f-boasvindas-msg1')?.value || '').trim(),
+        boas_vindas_lead_msg2: (document.getElementById('f-boasvindas-msg2')?.value || '').trim(),
+        boas_vindas_lead_delay: parseInt(document.getElementById('f-boasvindas-delay')?.value) || 5,
+        ia_oferta: (document.getElementById('f-ia-oferta')?.value || '').trim(),
+        ia_tom: (document.getElementById('f-ia-tom')?.value || '').trim(),
+        ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim(),
+        portal_email: (document.getElementById('f-portal-email')?.value || '').trim(),
+        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim()
+      })
+    });
+    document.getElementById('btn-salvar').textContent = 'Salvo!';
+    setTimeout(() => { fecharModal(); carregarTudo(); }, 800);
+  } catch(e) {
+    document.getElementById('modal-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-salvar').textContent = 'Salvar alterações';
+  }
+}
+
+let planosClienteId = null;
+let planosTemplatesCache = [];
+// ───── Configuração de ausência (Config. Inicial) ─────
+const DIAS_SEMANA = [['Dom',0],['Seg',1],['Ter',2],['Qua',3],['Qui',4],['Sex',5],['Sáb',6]];
+let _ausHorarios = [];
+let _ausDatas = [];
+let _ausClienteId = null;
+
+function renderAusHorarios() {
+  const box = document.getElementById('aus-horarios-lista');
+  if (!box) return;
+  box.innerHTML = _ausHorarios.map((h, i) => `
+    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+        ${DIAS_SEMANA.map(([nome, num]) => `
+          <label style="font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:3px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 8px">
+            <input type="checkbox" ${(h.dias||[]).includes(num) ? 'checked' : ''} onchange="ausHorarioDia(${i}, ${num}, this.checked)" style="cursor:pointer">${nome}
+          </label>`).join('')}
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--text2)">das</span>
+        <input type="time" value="${h.inicio||''}" onchange="ausHorarioCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">às</span>
+        <input type="time" value="${h.fim||''}" onchange="ausHorarioCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <button class="btn-remove" type="button" onclick="removerHorarioAusencia(${i})" style="margin-left:auto">×</button>
+      </div>
+    </div>`).join('') || '<div class="fu-hint">Nenhuma faixa adicionada.</div>';
+}
+
+function renderAusDatas() {
+  const box = document.getElementById('aus-datas-lista');
+  if (!box) return;
+  box.innerHTML = _ausDatas.map((d, i) => `
+    <div style="background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:8px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+        <input type="date" value="${d.data||''}" onchange="ausDataCampo(${i},'data',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">das</span>
+        <input type="time" value="${d.inicio||'00:00'}" onchange="ausDataCampo(${i},'inicio',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <span style="font-size:12px;color:var(--text2)">às</span>
+        <input type="time" value="${d.fim||'23:59'}" onchange="ausDataCampo(${i},'fim',this.value)" style="background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:5px 8px;color:var(--text);font-family:var(--sans)">
+        <button class="btn-remove" type="button" onclick="removerDataAusencia(${i})" style="margin-left:auto">×</button>
+      </div>
+      <textarea class="fu-textarea" rows="2" placeholder="Mensagem específica desta data (ex: Estamos em recesso de Natal...)" onchange="ausDataCampo(${i},'msg',this.value)" style="min-height:auto">${escapeHtml(d.msg||'')}</textarea>
+    </div>`).join('') || '<div class="fu-hint">Nenhuma data adicionada.</div>';
+}
+
+function addHorarioAusencia() { _ausHorarios.push({ dias: [], inicio: '18:00', fim: '08:00' }); renderAusHorarios(); }
+function removerHorarioAusencia(i) { _ausHorarios.splice(i, 1); renderAusHorarios(); }
+function ausHorarioCampo(i, campo, val) { if (_ausHorarios[i]) _ausHorarios[i][campo] = val; }
+function ausHorarioDia(i, num, marcado) {
+  if (!_ausHorarios[i]) return;
+  const dias = new Set(_ausHorarios[i].dias || []);
+  if (marcado) dias.add(num); else dias.delete(num);
+  _ausHorarios[i].dias = Array.from(dias).sort();
+}
+function addDataAusencia() { _ausDatas.push({ data: '', inicio: '00:00', fim: '23:59', msg: '' }); renderAusDatas(); }
+function removerDataAusencia(i) { _ausDatas.splice(i, 1); renderAusDatas(); }
+function ausDataCampo(i, campo, val) { if (_ausDatas[i]) _ausDatas[i][campo] = val; }
+
+async function carregarAusencia(id) {
+  _ausClienteId = id;
+  const el = document.getElementById('aus-msg-padrao');
+  if (el) el.value = '';
+  _ausHorarios = []; _ausDatas = [];
+  renderAusHorarios(); renderAusDatas();
+  try {
+    const data = await api('/movatak/admin/clientes/' + id + '/ausencia');
+    if (el) el.value = data.ausencia_msg_padrao || '';
+    _ausHorarios = Array.isArray(data.ausencia_horarios) ? data.ausencia_horarios : [];
+    _ausDatas = Array.isArray(data.ausencia_datas) ? data.ausencia_datas : [];
+    renderAusHorarios(); renderAusDatas();
+  } catch (e) { /* silencioso — seção aparece vazia */ }
+}
+
+async function salvarAusencia() {
+  const st = document.getElementById('aus-status');
+  if (!_ausClienteId) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Abra um cliente para editar.'; } return; }
+  const msgPadrao = (document.getElementById('aus-msg-padrao').value || '').trim();
+  const horarios = _ausHorarios.filter(h => (h.dias||[]).length && h.inicio && h.fim);
+  const datas = _ausDatas.filter(d => d.data);
+  try {
+    await api('/movatak/admin/clientes/' + _ausClienteId + '/ausencia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ausencia_msg_padrao: msgPadrao, ausencia_horarios: horarios, ausencia_datas: datas })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração de ausência salva.'; }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }
+  }
+}
+
+async function carregarPlanos(id) {
+  const box = document.getElementById('planos-lista');
+  if (!box) return;
+  box.innerHTML = '<div class="fu-hint">Carregando planos...</div>';
+  try {
+    const [planos, tpls] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/planos'),
+      api('/movatak/admin/clientes/' + id + '/questionario-templates').catch(() => [])
+    ]);
+    planosTemplatesCache = tpls || [];
+    if (!planos.length) { box.innerHTML = '<div class="fu-hint">Nenhum plano cadastrado ainda.</div>'; return; }
+    box.innerHTML = planos.map(p => {
+      const vinc = Array.isArray(p.template_ids) ? p.template_ids.map(Number) : [];
+      const tplBtn = planosTemplatesCache.length
+        ? `<button class="btn-add-small" style="padding:6px 10px;font-size:11px;white-space:nowrap" onclick="abrirVinculoPlano(${p.id})">Modelos${vinc.length ? ' (' + vinc.length + ')' : ': todos'}</button>`
+        : '';
+      return `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px" data-plano-row="${p.id}">
+        <input type="text" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2" value="${escAttr(p.nome)}" onchange="patchPlano(${p.id},'nome',this.value)">
+        <input type="text" inputmode="decimal" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${formatarValorPlanoInput(p.valor)}" placeholder="R$ 99,90" onchange="patchPlano(${p.id},'valor',normalizarValorPlano(this.value))">
+        <input type="number" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:80px" value="${p.nota_minima || 0}" placeholder="Nota mín." onchange="patchPlano(${p.id},'nota_minima',this.value)">
+        ${tplBtn}
+        <button class="btn-remove" title="Excluir plano" onclick="removerPlano(${p.id})">×</button>
+      </div>
+      <div id="vinc-plano-${p.id}" style="display:none;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:10px;margin:-2px 0 10px 0">
+        <div class="fu-hint" style="margin-bottom:8px">Em quais modelos de autoatendimento este plano/produto aparece? Sem marcar nenhum, ele fica só no questionário do cliente (padrão).</div>
+        ${planosTemplatesCache.map(t => `<label style="display:inline-flex;align-items:center;gap:6px;margin:3px 12px 3px 0;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" value="${t.id}" ${vinc.includes(Number(t.id)) ? 'checked' : ''} onchange="salvarVinculoPlano(${p.id})"> ${escapeHtml(t.nome)}</label>`).join('')}
+      </div>`;
+    }).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro ao carregar planos: ' + e.message + '</div>';
+  }
+}
+
+function abrirVinculoPlano(planoId) {
+  const el = document.getElementById('vinc-plano-' + planoId);
+  if (el) el.style.display = el.style.display === 'none' || !el.style.display ? 'block' : 'none';
+}
+
+async function salvarVinculoPlano(planoId) {
+  const wrap = document.getElementById('vinc-plano-' + planoId);
+  if (!wrap) return;
+  const template_ids = Array.from(wrap.querySelectorAll('input[type="checkbox"]:checked')).map(c => parseInt(c.value, 10));
+  const st = document.getElementById('plano-status');
+  try {
+    await api('/movatak/admin/planos/' + planoId, { method: 'PATCH', body: JSON.stringify({ template_ids }) });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = 'Modelos do plano atualizados.'; }
+    // Atualiza o contador no botão sem recarregar tudo
+    carregarPlanos(planosClienteId);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar modelos: ' + e.message; }
+  }
+}
+async function adicionarPlano() {
+  const nome = document.getElementById('plano-novo-nome').value.trim();
+  const valor = normalizarValorPlano(document.getElementById('plano-novo-valor').value);
+  const nota_minima = document.getElementById('plano-novo-nota').value.trim();
+  const st = document.getElementById('plano-status');
+  if (!nome) { st.style.color = 'var(--red)'; st.textContent = 'Informe o nome do plano.'; return; }
+  try {
+    await api('/movatak/admin/clientes/' + planosClienteId + '/planos', { method: 'POST', body: JSON.stringify({ nome, valor, nota_minima }) });
+    ['plano-novo-nome','plano-novo-valor','plano-novo-nota'].forEach(id => document.getElementById(id).value = '');
+    st.style.color = 'var(--green)'; st.textContent = 'Plano adicionado.';
+    carregarPlanos(planosClienteId);
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+}
+async function patchPlano(id, campo, valor) {
+  try {
+    await api('/movatak/admin/planos/' + id, { method: 'PATCH', body: JSON.stringify({ [campo]: valor }) });
+    if (campo === 'nota_minima' || campo === 'valor') carregarPlanos(planosClienteId);
+  } catch (e) {
+    const st = document.getElementById('plano-status'); if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }
+  }
+}
+async function removerPlano(id) {
+  if (!confirm('Excluir este plano?')) return;
+  try { await api('/movatak/admin/planos/' + id, { method: 'DELETE' }); carregarPlanos(planosClienteId); }
+  catch (e) { const st = document.getElementById('plano-status'); if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao excluir: ' + e.message; } }
+}
+
+// ── Envio em Lote (Kanban) ─────────────────────────────────
+let loteEnviando = false;
+
+function getLeadsSelecionados() {
+  return Array.from(document.querySelectorAll('.funil-lead-check:checked'))
+    .map(el => Number(el.dataset.leadId)).filter(Boolean);
+}
+
+function atualizarSelecaoLote() {
+  const ids = getLeadsSelecionados();
+  const bar = document.getElementById('funil-lote-bar');
+  const count = document.getElementById('funil-lote-count');
+  if (!bar) return;
+  if (ids.length > 0) {
+    bar.style.display = 'flex';
+    if (count) count.textContent = ids.length + ' lead' + (ids.length > 1 ? 's' : '') + ' selecionado' + (ids.length > 1 ? 's' : '');
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+function selecionarTodosColuna(colId, checked) {
+  document.querySelectorAll(`.funil-lead-check[data-coluna-id="${colId}"]`).forEach(el => { el.checked = checked; });
+  atualizarSelecaoLote();
+}
+
+function limparSelecaoLote() {
+  document.querySelectorAll('.funil-lead-check').forEach(el => { el.checked = false; });
+  document.querySelectorAll('[data-select-col]').forEach(el => { el.checked = false; });
+  atualizarSelecaoLote();
+}
+
+async function abrirModalLote() {
+  const ids = getLeadsSelecionados();
+  if (!ids.length) return;
+  document.getElementById('modal-lote-titulo').textContent = 'Envio em lote — ' + ids.length + ' lead' + (ids.length > 1 ? 's' : '');
+  document.getElementById('lote-btn-count').textContent = ids.length;
+  document.getElementById('lote-msg-texto').value = '';
+  document.getElementById('lote-status').textContent = '';
+  document.getElementById('lote-progresso').style.display = 'none';
+  document.getElementById('lote-progresso-bar').style.width = '0%';
+
+  await carregarMsgsRapidas();
+  const grid = document.getElementById('msgs-rapidas-lote-grid');
+  grid.innerHTML = msgsRapidasCache.length
+    ? msgsRapidasCache.map(m => `<button onclick="document.getElementById('lote-msg-texto').value=this.dataset.txt" data-txt="${escapeHtml(m.texto)}" title="${escapeHtml(m.texto)}">${escapeHtml(m.titulo)}</button>`).join('')
+    : '';
+
+  const colSel = document.getElementById('lote-mover-coluna');
+  colSel.innerHTML = '<option value="">— não mover —</option>' +
+    (funilState.colunas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+
+  document.getElementById('modal-lote').classList.add('open');
+}
+
+function fecharModalLote() {
+  if (loteEnviando) return;
+  document.getElementById('modal-lote').classList.remove('open');
+}
+
+async function iniciarEnvioLote() {
+  const texto = (document.getElementById('lote-msg-texto').value || '').trim();
+  const st = document.getElementById('lote-status');
+  if (!texto) { st.style.color = 'var(--red)'; st.textContent = 'Escreva ou escolha uma mensagem.'; return; }
+
+  const ids = getLeadsSelecionados();
+  if (!ids.length) { st.style.color = 'var(--red)'; st.textContent = 'Nenhum lead selecionado.'; return; }
+
+  const intervaloMs = (parseInt(document.getElementById('lote-intervalo').value) || 8) * 1000;
+  const moverColunaId = document.getElementById('lote-mover-coluna').value || null;
+
+  loteEnviando = true;
+  const btn = document.getElementById('btn-lote-enviar');
+  btn.disabled = true;
+  document.querySelector('#modal-lote .btn-cancel').textContent = 'Aguarde...';
+  document.getElementById('lote-progresso').style.display = '';
+  st.textContent = '';
+
+  let enviados = 0, erros = 0;
+  const total = ids.length;
+
+  const atualizarProgresso = () => {
+    const pct = Math.round(((enviados + erros) / total) * 100);
+    document.getElementById('lote-progresso-bar').style.width = pct + '%';
+    document.getElementById('lote-progresso-txt').textContent =
+      `Enviando ${enviados + erros}/${total}... (${enviados} ok${erros ? ', ' + erros + ' erro(s)' : ''})`;
+  };
+
+  for (let i = 0; i < ids.length; i++) {
+    atualizarProgresso();
+    try {
+      await api('/movatak/admin/leads/' + ids[i] + '/mensagem-rapida', { method: 'POST', body: JSON.stringify({ texto }) });
+      enviados++;
+    } catch (e) { erros++; console.error('[lote] lead ' + ids[i] + ':', e.message); }
+
+    if (i < ids.length - 1) await new Promise(r => setTimeout(r, intervaloMs));
+  }
+
+  // Mover leads após envio
+  if (moverColunaId) {
+    document.getElementById('lote-progresso-txt').textContent = 'Movendo leads...';
+    for (const leadId of ids) {
+      try {
+        await api('/movatak/admin/leads/' + leadId + '/funil', { method: 'PATCH', body: JSON.stringify({ coluna_id: Number(moverColunaId) }) });
+      } catch (e) { console.error('[lote][mover] lead ' + leadId + ':', e.message); }
+    }
+  }
+
+  loteEnviando = false;
+  btn.disabled = false;
+  document.querySelector('#modal-lote .btn-cancel').textContent = 'Fechar';
+  document.getElementById('lote-progresso-bar').style.width = '100%';
+  document.getElementById('lote-progresso-txt').textContent = `Concluído: ${enviados}/${total} enviados${erros ? ', ' + erros + ' com erro' : ''}.`;
+  st.style.color = erros ? 'var(--amber)' : 'var(--green)';
+  st.textContent = erros
+    ? `✓ ${enviados} enviados com sucesso. ${erros} falharam (veja o console).`
+    : `✓ Todas as ${enviados} mensagens enviadas!`;
+  limparSelecaoLote();
+  await carregarFunilAtendimento();
+}
+
+// ── Painel lateral de mensagem + histórico ─────────────────
+window._painelLeadId = null;
+
+function painelTab(tab) {
+  const conv = document.getElementById('painel-body-conversa');
+  const hist = document.getElementById('painel-body-historico');
+  const tConv = document.getElementById('painel-tab-conversa');
+  const tHist = document.getElementById('painel-tab-historico');
+  if (tab === 'conversa') {
+    conv.style.display = ''; hist.style.display = 'none';
+    tConv.style.borderBottomColor = 'var(--accent)'; tConv.style.color = 'var(--text)';
+    tHist.style.borderBottomColor = 'transparent'; tHist.style.color = 'var(--text2)';
+    rolarConversaParaFim();
+  } else {
+    conv.style.display = 'none'; hist.style.display = '';
+    tHist.style.borderBottomColor = 'var(--accent)'; tHist.style.color = 'var(--text)';
+    tConv.style.borderBottomColor = 'transparent'; tConv.style.color = 'var(--text2)';
+  }
+}
+
+// Detecta o tipo de mídia de uma mensagem (usa midia_tipo vindo do banco quando
+// existir; senão tenta pela extensão — cobre mensagens antigas sem o campo).
+function renderMidiaMensagem(m) {
+  if (!m.midia_url) return '';
+  const tipo = m.midia_tipo || (
+    /\.(mp4|mov|m4v|3gp)(\?|$)/i.test(m.midia_url) ? 'video' :
+    /\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(m.midia_url) ? 'audio' :
+    /\.webm(\?|$)/i.test(m.midia_url) ? 'video' : 'imagem'
+  );
+  const btnBaixar = `<button onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px">⬇ Baixar</button>`;
+  let player;
+  if (tipo === 'video') player = `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
+  else if (tipo === 'audio') {
+    const btnTranscrever = m.id
+      ? `<button onclick="transcreverAudio(event, ${Number(m.id)}, '${encodeURIComponent(m.midia_url)}')" title="Transcrever áudio para texto" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px;margin-left:6px">📝 Transcrever</button>`
+      : '';
+    player = `<audio src="${m.midia_url}" controls style="display:block;margin-bottom:4px;height:36px;max-width:230px"></audio>`
+      + `<div style="display:flex;flex-wrap:wrap;align-items:center">${btnBaixar}${btnTranscrever}</div>`
+      + `<div id="transcricao-${m.id || 'x'}" style="display:none;font-size:12px;color:var(--text);background:rgba(255,255,255,.06);border-radius:8px;padding:8px 10px;margin-top:4px;line-height:1.4;white-space:pre-wrap"></div>`;
+    return player;
+  }
+  else player = `<img src="${m.midia_url}" onclick="abrirLightbox('${m.midia_url}')" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover;cursor:zoom-in">`;
+  return player + btnBaixar;
+}
+
+// Abre a imagem ampliada em tela cheia (lightbox). Fecha clicando fora, no ✕ ou com Esc.
+function abrirLightbox(url) {
+  const lb = document.getElementById('lightbox-img');
+  const img = document.getElementById('lightbox-img-el');
+  const baixar = document.getElementById('lightbox-baixar');
+  if (!lb || !img) return;
+  img.src = url;
+  if (baixar) baixar.href = url;
+  lb.style.display = 'flex';
+}
+function fecharLightbox() {
+  const lb = document.getElementById('lightbox-img');
+  if (lb) { lb.style.display = 'none'; document.getElementById('lightbox-img-el').src = ''; }
+}
+// Esc fecha o lightbox.
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    const lb = document.getElementById('lightbox-img');
+    if (lb && lb.style.display === 'flex') fecharLightbox();
+  }
+});
+
+// Baixa a mídia. Como o arquivo está em outro domínio (Supabase), um <a download>
+// simples às vezes só abre em vez de baixar — então buscamos como blob e forçamos
+// o download com o nome de arquivo original.
+async function baixarMidia(url, ev) {
+  if (ev) ev.stopPropagation();
+  try {
+    const resp = await fetch(url);
+    const blob = await resp.blob();
+    const nome = (url.split('/').pop() || 'midia').split('?')[0] || 'midia';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) {
+    // Fallback: abre em nova aba pra salvar manualmente se o fetch falhar (CORS, etc).
+    window.open(url, '_blank');
+  }
+}
+
+// Pede ao backend a transcrição de um áudio e mostra abaixo do player.
+async function transcreverAudio(ev, msgId, urlEnc) {
+  if (ev) ev.stopPropagation();
+  const box = document.getElementById('transcricao-' + msgId);
+  const btn = ev && ev.currentTarget ? ev.currentTarget : null;
+  if (box && box.dataset.pronto === '1') { // toggle se já transcrito
+    box.style.display = box.style.display === 'none' ? 'block' : 'none';
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = '📝 Transcrevendo...'; }
+  if (box) { box.style.display = 'block'; box.textContent = 'Transcrevendo áudio...'; box.style.color = 'var(--text2)'; }
+  try {
+    const r = await api('/movatak/admin/transcrever-audio', {
+      method: 'POST',
+      body: JSON.stringify({ url: decodeURIComponent(urlEnc) })
+    });
+    if (r && r.texto) {
+      if (box) { box.textContent = '📝 ' + r.texto; box.style.color = 'var(--text)'; box.dataset.pronto = '1'; }
+    } else {
+      if (box) { box.textContent = 'Não foi possível transcrever este áudio.'; box.style.color = 'var(--text2)'; }
+    }
+  } catch (e) {
+    if (box) { box.textContent = e.message || 'Transcrição indisponível no momento.'; box.style.color = 'var(--text2)'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '📝 Transcrever'; }
+  }
+}
+
+
+function rolarConversaParaFim() {
+  const wrap = document.getElementById('painel-body-conversa');
+  if (!wrap) return;
+  const irParaFim = () => { wrap.scrollTop = wrap.scrollHeight; };
+  irParaFim();
+  requestAnimationFrame(irParaFim);
+  setTimeout(irParaFim, 60);
+  setTimeout(irParaFim, 250);
+  wrap.querySelectorAll('img, video, audio').forEach(el => {
+    el.addEventListener('load', irParaFim, { once: true });
+    el.addEventListener('loadedmetadata', irParaFim, { once: true });
+  });
+}
+
+
+let painelConversasCache = [];
+let painelReplyTo = null;
+
+function resumoMensagemPainel(m, limite = 96) {
+  if (!m) return 'Mensagem';
+  const tipo = m.midia_tipo || m.reply_to_midia_tipo || '';
+  const texto = String((m.conteudo ?? m.reply_to_conteudo ?? '') || '').trim();
+  const prefixoMidia = tipo
+    ? (tipo === 'imagem' ? '🖼️ Imagem' : tipo === 'audio' ? '🎧 Áudio' : tipo === 'video' ? '🎬 Vídeo' : '📎 Anexo')
+    : '';
+  const base = texto || prefixoMidia || 'Mensagem';
+  const combinado = prefixoMidia && texto ? (prefixoMidia + ' · ' + texto) : base;
+  return combinado.length > limite ? combinado.slice(0, limite - 1) + '…' : combinado;
+}
+
+function renderPreviewRespostaMensagem(m) {
+  if (!m || !(m.reply_to_conversa_id || m.reply_to_msg_id || m.reply_to_conteudo || m.reply_to_midia_url)) return '';
+  const label = m.reply_to_direcao === 'saida' ? 'Respondendo você' : (m.reply_to_direcao === 'entrada' ? 'Respondendo cliente' : 'Respondendo mensagem');
+  const corBorda = m.reply_to_direcao === 'saida' ? 'var(--msg-time-out)' : 'var(--green)';
+  const targetId = m.reply_to_conversa_id ? Number(m.reply_to_conversa_id) : 0;
+  const click = targetId ? `onclick="focarMensagemRespondida(event, ${targetId})"` : '';
+
+  const tipo = (m.reply_to_midia_tipo || '').toLowerCase();
+  const url = m.reply_to_midia_url || '';
+  const txt = String(m.reply_to_conteudo || '').trim();
+
+  // Miniatura/ícone da mídia citada
+  let thumb = '';
+  let resumoTxt = txt;
+  if (url) {
+    if (tipo.includes('image') || tipo === 'imagem') {
+      thumb = `<img src="${escapeHtml(url)}" style="width:38px;height:38px;border-radius:6px;object-fit:cover;flex-shrink:0" onerror="this.style.display='none'">`;
+      if (!resumoTxt) resumoTxt = '📷 Foto';
+    } else if (tipo.includes('video') || tipo === 'video' || tipo === 'vídeo') {
+      thumb = `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">🎥</div>`;
+      if (!resumoTxt) resumoTxt = '🎥 Vídeo';
+    } else if (tipo.includes('audio') || tipo.includes('ptt') || tipo === 'áudio') {
+      thumb = `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">🎙️</div>`;
+      if (!resumoTxt) resumoTxt = '🎙️ Áudio';
+    } else {
+      thumb = `<div style="width:38px;height:38px;border-radius:6px;background:var(--bg4);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:16px">📎</div>`;
+      if (!resumoTxt) resumoTxt = '📎 Arquivo';
+    }
+  }
+  if (!resumoTxt) resumoTxt = resumoMensagemPainel({ conteudo: m.reply_to_conteudo, midia_tipo: m.reply_to_midia_tipo, midia_url: m.reply_to_midia_url }, 86);
+
+  return `<div ${click} title="Ir para a mensagem original" style="border-left:3px solid ${corBorda};background:rgba(255,255,255,.08);border-radius:8px;padding:6px 8px;margin-bottom:7px;cursor:${targetId ? 'pointer' : 'default'};max-width:100%;display:flex;gap:8px;align-items:center">
+    ${thumb}
+    <div style="min-width:0;flex:1">
+      <div style="font-size:10px;color:${corBorda};font-weight:700;margin-bottom:2px">${label}</div>
+      <div style="font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumoTxt)}</div>
+    </div>
+  </div>`;
+}
+
+function renderBolhaMensagemPainel(m) {
+  const saida = m.direcao === 'saida';
+  const hora = m.criado_em ? new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+  const midiaHtml = renderMidiaMensagem(m);
+  const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
+  const podeApagar = m.id && m.fonte !== 'zapi';
+  const btnResponder = m.id
+    ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">↩</button>`
+    : '';
+  const btnReagir = (m.id && m.msg_id)
+    ? `<button onclick="reagirMensagemPainel(${Number(m.id)})" title="Reagir com emoji" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">😊</button>`
+    : '';
+  const btnEncaminhar = (m.id && m.msg_id)
+    ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">↪</button>`
+    : '';
+  const btnEditar = (saida && m.id && m.msg_id && !m.midia_url)
+    ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:var(--msg-acao-out);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
+    : '';
+  const btnLidaZap = (!saida && m.id && m.msg_id)
+    ? `<button onclick="marcarMensagemZapComoLida(${Number(m.id)})" title="Marcar esta mensagem como lida no WhatsApp" style="background:none;border:none;color:var(--msg-acao-in);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✓</button>`
+    : '';
+  const btnApagar = podeApagar
+    ? `<button onclick="apagarMensagemPainel(${Number(m.id)})" title="Apagar mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:12px;padding:0;margin-left:6px">🗑</button>`
+    : '';
+  const statusTxt = saida && m.msg_status ? `<span class="zap-msg-status" title="Status WhatsApp: ${escapeHtml(m.msg_status)}"> · ${escapeHtml(formatarStatusZap(m.msg_status))}</span>` : '';
+  return `<div style="display:flex;justify-content:${saida ? 'flex-end' : 'flex-start'};margin-bottom:8px" data-conversa-id="${m.id || ''}">
+    <div style="max-width:85%;background:${saida ? 'var(--msg-out)' : 'var(--msg-in)'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
+      ${renderPreviewRespostaMensagem(m)}
+      ${midiaHtml}
+      ${texto ? `<div style="font-size:13px;line-height:1.4;color:${saida ? 'var(--msg-text-out)' : 'var(--msg-text-in)'};white-space:pre-wrap">${texto}</div>` : ''}
+      <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
+        <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : 'var(--msg-time-in)'}">${hora}</span>
+        ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnEditar}${btnLidaZap}${btnApagar}
+      </div>
+    </div>
+  </div>`;
+}
+
+function focarMensagemRespondida(event, conversaId) {
+  if (event) event.stopPropagation();
+  const alvo = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
+  if (!alvo) return;
+  alvo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const bubble = alvo.firstElementChild;
+  if (!bubble) return;
+  const original = bubble.style.boxShadow;
+  bubble.style.boxShadow = '0 0 0 2px var(--amber)';
+  setTimeout(() => { bubble.style.boxShadow = original || ''; }, 1300);
+}
+
+function selecionarRespostaPainel(conversaId) {
+  const msg = (painelConversasCache || []).find(m => Number(m.id) === Number(conversaId));
+  if (!msg) return;
+  painelReplyTo = {
+    id: msg.id,
+    msg_id: msg.msg_id || null,
+    direcao: msg.direcao || null,
+    conteudo: msg.conteudo || '',
+    midia_url: msg.midia_url || null,
+    midia_tipo: msg.midia_tipo || null
+  };
+  renderPainelReplyPreview();
+  const ta = document.getElementById('painel-msg-texto');
+  if (ta) ta.focus();
+}
+
+function renderPainelReplyPreview() {
+  const box = document.getElementById('painel-reply-preview');
+  if (!box) return;
+  if (!painelReplyTo) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  const label = painelReplyTo.direcao === 'saida' ? 'Respondendo sua mensagem enviada' : 'Respondendo mensagem do cliente';
+  const resumo = resumoMensagemPainel(painelReplyTo, 120);
+  box.style.display = '';
+  box.innerHTML = `<div style="border-left:3px solid var(--accent);background:rgba(91,127,255,.12);border:1px solid var(--border2);border-radius:10px;padding:8px 10px;display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+    <div style="min-width:0">
+      <div style="font-size:11px;color:var(--accent);font-weight:700;margin-bottom:3px">↩ ${escapeHtml(label)}</div>
+      <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(resumo)}</div>
+    </div>
+    <button type="button" onclick="cancelarRespostaPainel()" title="Cancelar resposta" style="background:transparent;border:none;color:var(--text2);font-size:16px;cursor:pointer;line-height:1">×</button>
+  </div>`;
+}
+
+function cancelarRespostaPainel(focar = true) {
+  painelReplyTo = null;
+  renderPainelReplyPreview();
+  if (focar) {
+    const ta = document.getElementById('painel-msg-texto');
+    if (ta) ta.focus();
+  }
+}
+
+function renderConversaPainel(msgs) {
+  const box = document.getElementById('painel-conversa');
+  painelConversasCache = Array.isArray(msgs) ? msgs : [];
+  if (!painelConversasCache.length) {
+    if (box) box.innerHTML = '<div style="font-size:12px;color:var(--text2);text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
+    return;
+  }
+  if (box) box.innerHTML = painelConversasCache.map(renderBolhaMensagemPainel).join('');
+  // Scroll robusto até a última mensagem (espera mídia carregar).
+  rolarConversaParaFim();
+}
+
+async function abrirPainelLead(leadId, nomeAbrev) {
+  window._painelLeadId = leadId;
+  garantirColunaFunilVisivel('chat');
+  document.getElementById('painel-lead-nome').textContent = nomeAbrev || 'Lead';
+  document.getElementById('painel-lead-fone').textContent = '';
+  document.getElementById('painel-msg-texto').value = '';
+  document.getElementById('painel-msg-status').textContent = '';
+  cancelarRespostaPainel(false);
+  const midiaEl = document.getElementById('painel-midia-el');
+  const midiaPreview = document.getElementById('painel-midia-preview');
+  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
+  if (midiaPreview) midiaPreview.style.display = 'none';
+  document.getElementById('painel-historico').innerHTML = '<div class="fu-hint">Carregando...</div>';
+
+  const vazio = document.getElementById('funil-chat-vazio');
+  const conteudo = document.getElementById('funil-chat-conteudo');
+  if (vazio) vazio.style.display = 'none';
+  if (conteudo) conteudo.style.display = 'flex';
+  marcarItemInboxAtivo(leadId);
+  destacarLeadKanban(leadId, true);
+  painelTab('conversa');
+
+  // Conversa + Histórico em paralelo
+  try {
+    const [convData, histData] = await Promise.all([
+      api('/movatak/admin/leads/' + leadId + '/conversas'),
+      api('/movatak/admin/leads/' + leadId + '/historico')
+    ]);
+    const lead = histData.lead || {};
+    document.getElementById('painel-lead-nome').textContent = lead.nome || nomeAbrev || 'Lead';
+    document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
+    renderConversaPainel(convData);
+    renderHistoricoPainel(histData);
+  } catch (e) {
+    document.getElementById('painel-conversa').innerHTML = '<div style="font-size:12px;color:red">Erro: ' + e.message + '</div>';
+  }
+
+  // Busca a foto de perfil em segundo plano (sob demanda, com cache no backend).
+  // Atualiza o avatar do lead na inbox quando chega, sem travar a abertura.
+  api('/movatak/admin/leads/' + leadId + '/foto').then(r => {
+    if (r && r.foto_url) {
+      const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId));
+      if (lead) { lead.foto_url = r.foto_url; renderInboxFunil(); }
+    }
+  }).catch(() => {});
+
+  // Mensagens rápidas (sempre recarrega para garantir ordem por uso atualizada)
+  await carregarMsgsRapidas();
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  if (grid) {
+    grid.innerHTML = msgsRapidasCache.length
+      ? msgsRapidasCache.map(m => {
+          const ehAutoatendimento = !!m.template_id;
+          const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+          const icone = ehAutoatendimento ? '🔄 ' : (ehSequencia ? '🔁 ' : '');
+          const titulo = icone + m.titulo;
+          const tip = ehAutoatendimento ? 'Inicia o autoatendimento completo (espera respostas do lead)'
+            : (ehSequencia ? `Envia ${m.itens.length} mensagens em sequência` : m.texto);
+          return `<button onclick="usarMsgRapidaPainel(${m.id}, this)" title="${escapeHtml(tip)}">${escapeHtml(titulo)}</button>`;
+        }).join('')
+      : '<button onclick="abrirGerenciarMsgsRapidas()" style="border-color:var(--amber);color:var(--amber);font-size:11px">📝 Cadastrar mensagens rápidas</button>';
+    const countEl = document.getElementById('quick-menu-count');
+    if (countEl) countEl.textContent = msgsRapidasCache.length ? '(' + msgsRapidasCache.length + ')' : '';
+  }
+
+  // Marca como lido (caixa de entrada + kanban) — não bloqueia a abertura da conversa.
+  marcarLeadComoLido(leadId);
+}
+
+// Atualiza o estado local (sem reload de rede) pra badge de não-lido desaparecer na hora.
+async function marcarLeadComoLido(leadId) {
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+  if (lead) lead.nao_lida = false;
+  renderInboxFunil();
+  try { await api('/movatak/admin/leads/' + leadId + '/marcar-lida', { method: 'PATCH' }); } catch (e) {}
+}
+
+function fecharPainelLead() {
+  const vazio = document.getElementById('funil-chat-vazio');
+  const conteudo = document.getElementById('funil-chat-conteudo');
+  if (vazio) vazio.style.display = '';
+  if (conteudo) conteudo.style.display = 'none';
+  window._painelLeadId = null;
+  marcarItemInboxAtivo(null);
+  limparDestaqueLeadKanban();
+}
+
+async function arquivarLeadAtual() {
+  if (!window._painelLeadId) return;
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(window._painelLeadId));
+  const arquivar = !(lead && lead.arquivado);
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/arquivar', { method: 'PATCH', body: JSON.stringify({ arquivado: arquivar }) });
+    fecharPainelLead();
+    carregarFunilAtendimento();
+  } catch (e) {
+    alert('Erro ao arquivar: ' + e.message);
+  }
+}
+
+// Marca a conversa aberta como não lida de propósito (pra lembrar de voltar nela depois).
+async function marcarLeadAtualComoNaoLida() {
+  if (!window._painelLeadId) return;
+  const leadId = window._painelLeadId;
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/marcar-lida', { method: 'PATCH', body: JSON.stringify({ nao_lida: true }) });
+    const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+    if (lead) lead.nao_lida = true;
+    renderInboxFunil();
+    const status = document.getElementById('funil-status');
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Conversa marcada como não lida.'; }
+  } catch (e) {
+    alert('Erro ao marcar como não lida: ' + e.message);
+  }
+}
+
+// Exclui o lead DEFINITIVAMENTE (lead + conversa + histórico + tudo). Irreversível,
+// por isso pede confirmação dupla.
+async function excluirLeadAtual() {
+  if (!window._painelLeadId) return;
+  const leadId = window._painelLeadId;
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+  const nome = lead && lead.nome ? lead.nome : 'este lead';
+  if (!confirm('Excluir ' + nome + ' definitivamente? Isso apaga o lead, a conversa e todo o histórico. NÃO dá pra desfazer.')) return;
+  if (!confirm('Tem certeza? Esta ação é irreversível.')) return;
+  try {
+    await api('/movatak/admin/leads/' + leadId, { method: 'DELETE' });
+    fecharPainelLead();
+    mostrarToast('Lead excluído definitivamente.', 'sucesso');
+    carregarFunilAtendimento();
+  } catch (e) {
+    mostrarToast('Erro ao excluir lead: ' + e.message, 'erro');
+  }
+}
+
+function usarMsgRapidaPainel(id, btnEl) {
+  // Trava síncrona: se esse botão (ou qualquer outro) já está enviando, ignora o clique.
+  if (window._enviandoMsgRapida) return;
+  const m = msgsRapidasCache.find(x => String(x.id) === String(id));
+  if (!m) return;
+  fecharQuickMenuPainel();
+  // Sequência vinculada a um autoatendimento: dispara o motor real do autoatendimento,
+  // que respeita perguntas que esperam resposta do lead, saltos, opções, etc.
+  if (m.template_id) {
+    dispararAutoatendimentoPainel(m, btnEl);
+    return;
+  }
+  const itens = (Array.isArray(m.itens) && m.itens.length) ? m.itens : [{ texto: m.texto || '', midia_url: m.midia_url || null }];
+  enviarSequenciaRapida(m, itens, btnEl);
+}
+
+// Inicia o autoatendimento real do template vinculado à mensagem rápida.
+async function dispararAutoatendimentoPainel(m, btnEl) {
+  if (!window._painelLeadId) return;
+  window._enviandoMsgRapida = true;
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  const st = document.getElementById('painel-msg-status');
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = true);
+  const labelOriginal = btnEl ? btnEl.textContent : null;
+  if (btnEl) btnEl.textContent = '⏳';
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Iniciando autoatendimento...'; }
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/iniciar-autoatendimento', {
+      method: 'POST', body: JSON.stringify({ template_id: m.template_id })
+    });
+    api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Autoatendimento iniciado.'; }
+    if (btnEl) btnEl.textContent = '✓';
+    const histData = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    renderHistoricoPainel(histData);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+    if (btnEl) btnEl.textContent = labelOriginal;
+  } finally {
+    window._enviandoMsgRapida = false;
+    if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = false);
+    if (btnEl) setTimeout(() => { btnEl.textContent = labelOriginal; }, 1500);
+  }
+}
+
+// Dispara, em ordem e uma por uma, as mensagens de uma resposta rápida
+// (simples = 1 item, ou sequência = vários) direto pro lead, sem perguntar
+// e sem passar pelo campo de texto. Trava o grid inteiro durante o envio
+// pra um clique duplo (ou reclique por achar que não enviou) não duplicar.
+async function enviarSequenciaRapida(m, itens, btnEl) {
+  if (!window._painelLeadId) return;
+  if (!itens || !itens.length) return;
+  if (window._enviandoMsgRapida) return;
+  window._enviandoMsgRapida = true;
+
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  const labelOriginal = btnEl ? btnEl.textContent : null;
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = true);
+  if (btnEl) btnEl.textContent = '⏳ Enviando...';
+
+  const leadId = window._painelLeadId;
+  const st = document.getElementById('painel-msg-status');
+  let erro = null;
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i];
+    if (st) { st.style.color = 'var(--text2)'; st.textContent = itens.length > 1 ? ('Enviando ' + (i + 1) + '/' + itens.length + '...') : 'Enviando...'; }
+    try {
+      await api('/movatak/admin/leads/' + leadId + '/mensagem-rapida', {
+        method: 'POST', body: JSON.stringify({ texto: it.texto || '', midia_url: it.midia_url || null })
+      });
+    } catch (e) {
+      erro = e;
+      break;
+    }
+    if (i < itens.length - 1) await new Promise(r => setTimeout(r, 1800));
+  }
+
+  if (erro) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao enviar: ' + erro.message; }
+    if (btnEl) btnEl.textContent = labelOriginal;
+  } else {
+    api('/movatak/admin/mensagens-rapidas/' + m.id + '/usar', { method: 'POST' }).catch(() => null);
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Enviado.'; }
+    if (btnEl) btnEl.textContent = '✓ Enviado';
+    try {
+      const data = await api('/movatak/admin/leads/' + leadId + '/historico');
+      renderHistoricoPainel(data);
+    } catch (e) {}
+    // Mantém o "✓ Enviado" visível por um instante antes de voltar ao normal,
+    // pra ficar claro que já foi e não precisa clicar de novo.
+    setTimeout(() => { if (btnEl) btnEl.textContent = labelOriginal; }, 1500);
+  }
+
+  window._enviandoMsgRapida = false;
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = false);
+}
+
+// ── Anexar arquivo (clique ou arrastar) e gravar áudio no compositor do chat ──
+async function uploadArquivoPainel(file) {
+  if (!file) return;
+  const midiaEl = document.getElementById('painel-midia-el');
+  const preview = document.getElementById('painel-midia-preview');
+  const ehVideo = file.type.startsWith('video/');
+  const limiteMb = ehVideo ? 20 : 8;
+  if (file.size > limiteMb * 1024 * 1024) {
+    alert('Arquivo muito grande (máx ' + limiteMb + 'MB).');
+    return;
+  }
+  if (preview) preview.style.display = '';
+  if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--text2)">Enviando arquivo...</span>';
+  try {
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+    renderMidiaAnexadaPainel(resp.url, resp.tipo);
+  } catch (e) {
+    if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--red)">Erro ao enviar arquivo: ' + e.message + '</span>';
+  }
+}
+
+function renderMidiaAnexadaPainel(url, tipo) {
+  const midiaEl = document.getElementById('painel-midia-el');
+  const preview = document.getElementById('painel-midia-preview');
+  if (!midiaEl) return;
+  let prevHtml = '';
+  if (tipo === 'video') prevHtml = `<video src="${url}" style="max-width:160px;max-height:90px;border-radius:6px" controls></video>`;
+  else if (tipo === 'audio') prevHtml = `<audio src="${url}" controls style="height:32px"></audio>`;
+  else prevHtml = `<img src="${url}" style="max-width:160px;max-height:90px;border-radius:6px;object-fit:cover">`;
+  midiaEl.innerHTML = prevHtml + ' <button type="button" onclick="removerMidiaPainel()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-left:6px;vertical-align:middle">✕ remover</button>';
+  midiaEl.dataset.url = url;
+  midiaEl.dataset.tipo = tipo;
+  if (preview) preview.style.display = '';
+}
+
+function removerMidiaPainel() {
+  const midiaEl = document.getElementById('painel-midia-el');
+  const preview = document.getElementById('painel-midia-preview');
+  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
+  if (preview) preview.style.display = 'none';
+}
+
+function painelArquivoDragOver(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = 'var(--accent)';
+}
+function painelArquivoDragLeave(ev) {
+  ev.currentTarget.style.borderColor = '';
+}
+function painelArquivoDrop(ev) {
+  ev.preventDefault();
+  ev.currentTarget.style.borderColor = '';
+  const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (file) uploadArquivoPainel(file);
+}
+
+// Colar (Ctrl+V) na caixa de mensagem: texto cola normalmente (comportamento nativo).
+// Se houver uma imagem na área de transferência, ela é capturada e anexada.
+function painelColarArea(ev) {
+  const itens = (ev.clipboardData && ev.clipboardData.items) ? ev.clipboardData.items : [];
+  for (let i = 0; i < itens.length; i++) {
+    const it = itens[i];
+    if (it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) {
+      const file = it.getAsFile();
+      if (file) {
+        ev.preventDefault(); // impede a textarea de tentar colar a imagem como texto
+        uploadArquivoPainel(file);
+        return;
+      }
+    }
+  }
+  // Sem imagem: deixa o texto colar normalmente (não chama preventDefault).
+}
+
+// Grava áudio do microfone (clique pra começar, clique de novo pra parar e anexar).
+let _gravadorAudio = null;
+let _gravadorAudioChunks = [];
+
+async function alternarGravacaoAudio(btn) {
+  if (_gravadorAudio && _gravadorAudio.state === 'recording') {
+    _gravadorAudio.stop();
+    return;
+  }
+  if (window._enviandoMsgRapida) return; // já tem um envio em andamento (mensagem rápida ou outro áudio)
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _gravadorAudioChunks = [];
+    const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) ? 'audio/ogg;codecs=opus'
+      : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : 'audio/webm';
+    _gravadorAudio = new MediaRecorder(stream, { mimeType: mime });
+    _gravadorAudio.ondataavailable = e => { if (e.data && e.data.size > 0) _gravadorAudioChunks.push(e.data); };
+    _gravadorAudio.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blobGravado = new Blob(_gravadorAudioChunks, { type: mime });
+      if (blobGravado.size > 0) {
+        if (btn) btn.textContent = '⏳';
+        try {
+          // Converte pra WAV: o WEBM/OGG que sai do navegador costuma ficar sem a
+          // duração corretamente escrita no cabeçalho (limitação conhecida do
+          // MediaRecorder), e isso faz tocadores mais rígidos (ex: WhatsApp Desktop)
+          // recusarem o áudio mesmo ele tocando normal no celular. WAV não tem essa
+          // ambiguidade — a duração vem direto do tamanho dos dados.
+          const blobWav = await converterBlobParaWav(blobGravado);
+          const file = new File([blobWav], 'audio.wav', { type: 'audio/wav' });
+          await enviarAudioGravado(file, btn);
+        } catch (e) {
+          console.warn('[audio] falha ao converter pra WAV, enviando formato original:', e.message);
+          const file = new File([blobGravado], mime.startsWith('audio/ogg') ? 'audio.ogg' : 'audio.webm', { type: mime });
+          await enviarAudioGravado(file, btn);
+        }
+      } else {
+        btn.textContent = '🎙️';
+        btn.style.color = '';
+        btn.style.borderColor = 'var(--border2)';
+      }
+    };
+    _gravadorAudio.start();
+    btn.textContent = '⏹';
+    btn.style.color = 'var(--red)';
+    btn.style.borderColor = 'var(--red)';
+  } catch (e) {
+    alert('Não consegui acessar o microfone: ' + e.message);
+  }
+}
+
+// ── Converte o áudio gravado (webm/ogg) pra WAV ─────────────────────────────
+// WAV é descomplicado: a duração vem direto do tamanho dos dados, sem
+// metadado separado pra dar inconsistência entre tocadores diferentes.
+async function converterBlobParaWav(blob) {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AudioCtx();
+  let audioBuffer;
+  try {
+    audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+  } finally {
+    ctx.close();
+  }
+  return audioBufferParaWavBlob(audioBuffer);
+}
+
+function audioBufferParaWavBlob(audioBuffer) {
+  const sampleRate = audioBuffer.sampleRate;
+  const numFrames = audioBuffer.length;
+  const totalCanais = audioBuffer.numberOfChannels;
+
+  // Mixa tudo pra mono — voz não precisa de estéreo e o arquivo fica menor.
+  const canalMono = new Float32Array(numFrames);
+  for (let canal = 0; canal < totalCanais; canal++) {
+    const dados = audioBuffer.getChannelData(canal);
+    for (let i = 0; i < numFrames; i++) canalMono[i] += dados[i] / totalCanais;
+  }
+
+  const bytesPorAmostra = 2; // PCM 16-bit
+  const dataSize = numFrames * bytesPorAmostra;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const escreverString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  escreverString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  escreverString(8, 'WAVE');
+  escreverString(12, 'fmt ');
+  view.setUint32(16, 16, true);                                  // tamanho do bloco fmt
+  view.setUint16(20, 1, true);                                    // formato PCM
+  view.setUint16(22, 1, true);                                    // 1 canal (mono)
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPorAmostra, true);         // byte rate
+  view.setUint16(32, bytesPorAmostra, true);                      // block align
+  view.setUint16(34, 16, true);                                   // bits por amostra
+  escreverString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < numFrames; i++) {
+    let s = Math.max(-1, Math.min(1, canalMono[i]));
+    s = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    view.setInt16(offset, s, true);
+    offset += 2;
+  }
+
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+// Sobe o áudio gravado e dispara na hora pro lead — igual às mensagens rápidas,
+// sem precisar anexar e clicar em Enviar depois.
+async function enviarAudioGravado(file, btn) {
+  if (!window._painelLeadId) return;
+  window._enviandoMsgRapida = true;
+  const grid = document.getElementById('painel-msgs-rapidas-grid');
+  const st = document.getElementById('painel-msg-status');
+  if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = true);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳'; btn.style.color = ''; btn.style.borderColor = 'var(--border2)'; }
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Enviando áudio...'; }
+  try {
+    const dataUrl = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler áudio gravado'));
+      r.readAsDataURL(file);
+    });
+    const up = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
+      method: 'POST', body: JSON.stringify({ texto: '', midia_url: up.url, midia_tipo: up.tipo || 'audio' })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Áudio enviado.'; }
+    if (btn) btn.textContent = '✓';
+    const data = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    renderHistoricoPainel(data);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao enviar áudio: ' + e.message; }
+    if (btn) btn.textContent = '🎙️';
+  } finally {
+    window._enviandoMsgRapida = false;
+    if (grid) grid.querySelectorAll('button').forEach(b => b.disabled = false);
+    if (btn) {
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = '🎙️'; }, 1500);
+    }
+  }
+}
+
+// Apaga a mensagem do painel e tenta apagar no WhatsApp do lead também
+// (só funciona pra mensagens que a gente enviou, dentro do tempo que o
+// WhatsApp permite "apagar para todos" — geralmente até alguns minutos).
+async function apagarMensagemPainel(conversaId) {
+  if (!confirm('Apagar esta mensagem? O sistema também vai tentar apagá-la no WhatsApp do lead.')) return;
+  const st = document.getElementById('painel-msg-status');
+  try {
+    const resp = await api('/movatak/admin/conversas/' + conversaId, { method: 'DELETE' });
+    const bolha = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
+    if (bolha) bolha.remove();
+    if (st) {
+      if (resp.apagadaNoZap) {
+        st.style.color = 'var(--green)'; st.textContent = '✓ Mensagem apagada (painel + WhatsApp).';
+      } else {
+        st.style.color = 'var(--amber)'; st.textContent = 'Apagada do painel. ' + (resp.avisoZap || 'Pode não ter sido apagada no WhatsApp.');
       }
     }
   } catch (e) {
-    console.error('[ausencia] erro ao processar:', e.message);
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao apagar: ' + e.message; }
   }
 }
 
-async function localizarCampanhaPorGatilho(clienteId, texto) {
-  try {
-    const r = await query(
-      `SELECT c.*, t.followup_v2 AS template_followup_v2, t.boas_vindas_msg AS template_boas_vindas_msg, t.comandos AS template_comandos, t.nome AS template_nome
-         FROM movatak_campanhas c
-         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id AND t.ativo = true
-        WHERE c.cliente_id = $1
-          AND c.ativo = true
-          AND c.excluida_em IS NULL
-          AND c.gatilho IS NOT NULL
-          AND TRIM(c.gatilho) <> ''
-        ORDER BY LENGTH(c.gatilho) DESC, c.criado_em DESC`,
-      [clienteId]
-    );
-    return r.rows.find(c => textoBateGatilho(texto, c.gatilho)) || null;
-  } catch (e) {
-    // Se a migração de campanhas ainda não existir, segue pelo gatilho geral.
-    return null;
-  }
+
+function formatarStatusZap(status) {
+  const s = String(status || '').toLowerCase();
+  if (['read','lido','played'].includes(s)) return 'lida';
+  if (['delivered','entregue'].includes(s)) return 'entregue';
+  if (['sent','enviado'].includes(s)) return 'enviada';
+  if (['error','failed','falha'].includes(s)) return 'falha';
+  return status || '';
 }
 
-// Fallback por IA: quando o casamento literal de gatilho falha, a IA lê a
-// mensagem do tráfego e tenta encaixá-la em UMA das campanhas cadastradas.
-// Nunca cria fluxo novo — só escolhe entre as campanhas existentes. Se não
-// tiver certeza, retorna null (cai para humano/geral, como hoje).
-async function localizarCampanhaPorIA(clienteId, texto) {
+function setStatusPainel(msg, cor = 'var(--text2)') {
+  const st = document.getElementById('painel-msg-status');
+  if (!st) return;
+  st.style.color = cor;
+  st.textContent = msg || '';
+}
+
+async function reagirMensagemPainel(conversaId) {
+  const emoji = prompt('Qual emoji deseja usar como reação?', '👍');
+  if (!emoji) return;
   try {
-    if (!process.env.ANTHROPIC_API_KEY) return null;
-    const msg = String(texto || '').trim();
-    if (msg.length < 3) return null;
+    await api('/movatak/admin/conversas/' + conversaId + '/reagir', { method:'POST', body: JSON.stringify({ reaction: emoji.trim() }) });
+    setStatusPainel('✓ Reação enviada.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao reagir: ' + e.message, 'var(--red)'); }
+}
 
-    const r = await query(
-      `SELECT c.id, c.nome, c.gatilho, c.template_id
-         FROM movatak_campanhas c
-        WHERE c.cliente_id = $1 AND c.ativo = true AND c.excluida_em IS NULL
-          AND c.gatilho IS NOT NULL AND TRIM(c.gatilho) <> ''`,
-      [clienteId]
-    );
-    const campanhas = r.rows || [];
-    if (!campanhas.length) return null;
+async function encaminharMensagemPainel(conversaId) {
+  const destino = prompt('Encaminhar para qual WhatsApp? Use DDI + DDD + número. Ex: 5581999999999');
+  if (!destino) return;
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/encaminhar', { method:'POST', body: JSON.stringify({ destino }) });
+    setStatusPainel('✓ Mensagem encaminhada.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao encaminhar: ' + e.message, 'var(--red)'); }
+}
 
-    const lista = campanhas.map((c, i) => `${i + 1}. ${c.nome} — palavras/tema: "${c.gatilho}"`).join('\n');
-    const systemPrompt =
-      `Você classifica a mensagem inicial de um lead que chegou pelo WhatsApp (geralmente vinda de um anúncio) ` +
-      `em UMA das campanhas cadastradas. Responda APENAS com o NÚMERO da campanha que melhor corresponde à intenção do lead. ` +
-      `Se nenhuma corresponder com clareza, ou se ficar em dúvida, responda APENAS "0". ` +
-      `Não explique. Não invente. Só o número.\n\nCAMPANHAS:\n${lista}`;
-    const userPrompt = `MENSAGEM DO LEAD:\n"${msg}"\n\nNúmero da campanha (ou 0):`;
+async function editarMensagemPainel(conversaId) {
+  const msg = (painelConversasCache || []).find(m => Number(m.id) === Number(conversaId));
+  const novo = prompt('Novo texto da mensagem:', msg && msg.conteudo ? msg.conteudo : '');
+  if (!novo || !novo.trim()) return;
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/editar', { method:'POST', body: JSON.stringify({ texto: novo.trim() }) });
+    if (msg) msg.conteudo = novo.trim();
+    renderConversaPainel(painelConversasCache);
+    setStatusPainel('✓ Mensagem editada.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao editar: ' + e.message, 'var(--red)'); }
+}
 
-    const resposta = await chamarHaiku(systemPrompt, userPrompt);
-    const num = parseInt(String(resposta || '').replace(/[^0-9]/g, ''), 10);
-    if (!num || num < 1 || num > campanhas.length) return null; // 0 = sem certeza → humano
+async function marcarMensagemZapComoLida(conversaId) {
+  try {
+    await api('/movatak/admin/conversas/' + conversaId + '/marcar-lida-zap', { method:'POST', body: JSON.stringify({}) });
+    setStatusPainel('✓ Mensagem marcada como lida no WhatsApp.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro ao marcar como lida: ' + e.message, 'var(--red)'); }
+}
 
-    const escolhida = campanhas[num - 1];
-    // Recarrega a campanha completa (com dados do template) no mesmo formato do gatilho.
-    const full = await query(
-      `SELECT c.*, t.followup_v2 AS template_followup_v2, t.boas_vindas_msg AS template_boas_vindas_msg, t.comandos AS template_comandos, t.nome AS template_nome
-         FROM movatak_campanhas c
-         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id AND t.ativo = true
-        WHERE c.id = $1`,
-      [escolhida.id]
-    );
-    if (full.rows.length) {
-      console.log('[IA-ROUTE] lead encaixado por IA na campanha "' + escolhida.nome + '" (id ' + escolhida.id + ')');
-      return full.rows[0];
+async function acaoChatWhatsapp(action) {
+  if (!window._painelLeadId) return;
+  try {
+    await api('/movatak/admin/leads/' + window._painelLeadId + '/zapi/chat-action', { method:'POST', body: JSON.stringify({ action }) });
+    setStatusPainel('✓ Ação aplicada no WhatsApp: ' + action, 'var(--green)');
+    if (typeof agendarReloadKanban === 'function') agendarReloadKanban();
+  } catch(e) { setStatusPainel('Erro na ação do chat: ' + e.message, 'var(--red)'); }
+}
+
+function abrirRecursoWhatsappPainel(tipo) {
+  if (!window._painelLeadId) return;
+  const cfg = {
+    document: ['Enviar documento', ['URL do documento', 'Nome do arquivo', 'Legenda', 'Extensão (pdf, docx, xlsx...)']],
+    link: ['Enviar link com preview', ['URL do link', 'Mensagem', 'Título opcional', 'Imagem opcional']],
+    location: ['Enviar localização', ['Título', 'Endereço completo', 'Latitude', 'Longitude']],
+    contact: ['Enviar contato', ['Nome do contato', 'Telefone do contato', 'É business? sim/não']],
+    pix: ['Enviar botão PIX', ['Mensagem', 'Chave PIX', 'Nome do botão']],
+    option_list: ['Enviar lista de opções', ['JSON da lista de opções conforme Z-API']],
+    poll: ['Enviar enquete', ['JSON da enquete conforme Z-API']],
+    sticker: ['Enviar sticker', ['URL/base64 do sticker']],
+    gif: ['Enviar GIF', ['URL do GIF', 'Legenda opcional']],
+    ptv: ['Enviar PTV/vídeo circular', ['URL do vídeo PTV']]
+  }[tipo];
+  if (!cfg) return;
+  const vals = [];
+  for (const campo of cfg[1]) {
+    const v = prompt(cfg[0] + '\n' + campo + ':');
+    if (v === null) return;
+    vals.push(v);
+  }
+  let payload = {};
+  if (tipo === 'document') payload = { document: vals[0], fileName: vals[1], caption: vals[2], extension: vals[3] };
+  else if (tipo === 'link') payload = { linkUrl: vals[0], message: vals[1], title: vals[2], image: vals[3] };
+  else if (tipo === 'location') payload = { title: vals[0], address: vals[1], latitude: vals[2], longitude: vals[3] };
+  else if (tipo === 'contact') payload = { contactName: vals[0], contactPhone: vals[1], contactBusiness: /^s|true|1$/i.test(vals[2] || '') };
+  else if (tipo === 'pix') payload = { message: vals[0], pixKey: vals[1], buttonText: vals[2] || 'Copiar PIX' };
+  else if (tipo === 'option_list' || tipo === 'poll') {
+    try { payload = JSON.parse(vals[0] || '{}'); } catch(e) { alert('JSON inválido.'); return; }
+  } else if (tipo === 'sticker') payload = { sticker: vals[0] };
+  else if (tipo === 'gif') payload = { gif: vals[0], caption: vals[1] };
+  else if (tipo === 'ptv') payload = { video: vals[0] };
+  enviarRecursoWhatsappPainel(tipo, payload);
+}
+
+async function enviarRecursoWhatsappPainel(recurso, payload) {
+  if (!window._painelLeadId) return;
+  const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
+  setStatusPainel('Enviando recurso...', 'var(--text2)');
+  try {
+    const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/zapi/send-advanced', {
+      method:'POST', body: JSON.stringify({
+        recurso, payload,
+        reply_to_conversa_id: replyTo ? replyTo.id : null,
+        reply_to_msg_id: replyTo ? replyTo.msg_id : null
+      })
+    });
+    adicionarMensagemAoPainel({
+      id: resp.conversaId || null,
+      direcao:'saida', conteudo: payload.caption || payload.message || payload.title || ('Recurso enviado: ' + recurso),
+      midia_url: payload.document || payload.linkUrl || payload.url || payload.image || payload.video || payload.gif || payload.sticker || null,
+      midia_tipo: recurso,
+      reply_to_conversa_id: replyTo ? replyTo.id : null,
+      reply_to_msg_id: replyTo ? replyTo.msg_id : null,
+      reply_to_direcao: replyTo ? replyTo.direcao : null,
+      reply_to_conteudo: replyTo ? replyTo.conteudo : null,
+      reply_to_midia_url: replyTo ? replyTo.midia_url : null,
+      reply_to_midia_tipo: replyTo ? replyTo.midia_tipo : null,
+      criado_em: resp.criado_em || new Date().toISOString()
+    });
+    cancelarRespostaPainel(false);
+    setStatusPainel('✓ Recurso enviado.', 'var(--green)');
+  } catch(e) { setStatusPainel('Erro no recurso: ' + e.message, 'var(--red)'); }
+}
+
+function toggleMenuRecursosWhatsapp(ev) {
+  if (ev) ev.stopPropagation();
+  const el = document.getElementById('menu-recursos-whatsapp');
+  if (!el) return;
+  el.style.display = el.style.display === 'block' ? 'none' : 'block';
+}
+
+document.addEventListener('click', function(ev){
+  const menu = document.getElementById('menu-recursos-whatsapp');
+  if (menu && !menu.contains(ev.target) && !(ev.target && ev.target.closest && ev.target.closest('#btn-recursos-whatsapp'))) menu.style.display = 'none';
+});
+
+// Pede à IA uma sugestão de resposta e preenche a caixa de mensagem.
+// Nunca envia sozinha — o operador revisa e clica Enviar.
+async function sugerirRespostaIA() {
+  if (!window._painelLeadId) return;
+  const ta = document.getElementById('painel-msg-texto');
+  const st = document.getElementById('painel-msg-status');
+  const botoes = document.querySelectorAll('.btn-sugerir-ia');
+  // Não sobrescreve texto já digitado sem confirmar.
+  if (ta && ta.value.trim() && !confirm('Você já escreveu algo. Substituir pela sugestão da IA?')) return;
+  botoes.forEach(b => { b.disabled = true; b.textContent = '🤖 Pensando...'; });
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = '🤖 Gerando sugestão...'; }
+  try {
+    const r = await api('/movatak/admin/leads/' + window._painelLeadId + '/sugerir-resposta');
+    if (r && r.sugestao) {
+      if (ta) { ta.value = r.sugestao; ta.focus(); }
+      if (st) { st.style.color = 'var(--accent)'; st.textContent = '✨ Sugestão da IA — revise e clique Enviar.'; }
+    } else {
+      if (st) { st.style.color = 'var(--red)'; st.textContent = 'A IA não retornou sugestão.'; }
     }
-    return null;
   } catch (e) {
-    console.error('[IA-ROUTE] erro:', e.message);
-    return null; // qualquer falha → comportamento atual (humano/geral)
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro na IA: ' + e.message; }
+  } finally {
+    botoes.forEach(b => { b.disabled = false; b.textContent = '🤖 IA'; });
   }
 }
 
-function followupDataDaLinha(row) {
-  return row.template_followup_v2 || row.followup_msgs_v2 || {};
+async function enviarMensagemPainel() {
+  const texto = (document.getElementById('painel-msg-texto').value || '').trim();
+  const midiaEl = document.getElementById('painel-midia-el');
+  const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
+  const midia_tipo = midiaEl && midiaEl.dataset.tipo ? midiaEl.dataset.tipo : null;
+  const st = document.getElementById('painel-msg-status');
+  if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem.'; return; }
+  if (!window._painelLeadId) return;
+  st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
+  try {
+    const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
+    const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
+      method: 'POST', body: JSON.stringify({
+        texto, midia_url, midia_tipo,
+        reply_to_conversa_id: replyTo ? replyTo.id : null,
+        reply_to_msg_id: replyTo ? replyTo.msg_id : null
+      })
+    });
+    // Adiciona a mensagem na tela na hora, com o ID real. Se o socket trouxer a
+    // mesma mensagem depois, adicionarMensagemAoPainel ignora (checa o id).
+    adicionarMensagemAoPainel({
+      id: resp.conversaId || null,
+      direcao: 'saida',
+      conteudo: texto || '',
+      midia_url: midia_url || null,
+      midia_tipo: midia_tipo || null,
+      reply_to_conversa_id: replyTo ? replyTo.id : null,
+      reply_to_msg_id: replyTo ? replyTo.msg_id : null,
+      reply_to_direcao: replyTo ? replyTo.direcao : null,
+      reply_to_conteudo: replyTo ? replyTo.conteudo : null,
+      reply_to_midia_url: replyTo ? replyTo.midia_url : null,
+      reply_to_midia_tipo: replyTo ? replyTo.midia_tipo : null,
+      criado_em: resp.criado_em || new Date().toISOString()
+    });
+    cancelarRespostaPainel(false);
+    document.getElementById('painel-msg-texto').value = '';
+    removerMidiaPainel();
+    st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
+    // Só atualiza o histórico de eventos/fila — a conversa já está correta na tela.
+    const histData = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    renderHistoricoPainel(histData);
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
 }
 
-function parseMoedaParaNumero(v) {
-  if (v === undefined || v === null || v === '') return null;
-  const raw = String(v).trim().replace(/[R$\s]/g, '');
+function renderHistoricoPainel(data) {
+  const box = document.getElementById('painel-historico');
+  const eventos = data.eventos || [];
+  const fila = data.fila || [];
+
+  const ICONES = {
+    lead_criado: '🆕', questionario_iniciado: '📋', questionario_lembrete: '⏰',
+    questionario_concluido: '✅', questionario_abandonado: '🚪', questionario_transferido: '🤝',
+    followup_reativado: '🔄', mensagem_manual: '💬', venda_marcada: '💰',
+    followup_reativado: '🔄', lead_convertido: '🎉', default: '📌'
+  };
+
+  const linhasEventos = eventos.map(e => {
+    const icone = ICONES[e.tipo] || ICONES.default;
+    const hora = new Date(e.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    const extra = e.tipo === 'mensagem_manual' && e.dados && e.dados.texto
+      ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:pre-wrap">"${escapeHtml(String(e.dados.texto).slice(0,120))}"</div>` : '';
+    return `<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start">
+      <span style="font-size:16px;flex-shrink:0;margin-top:1px">${icone}</span>
+      <div style="flex:1">
+        <div style="font-size:12px">${escapeHtml(e.descricao || e.tipo)}</div>
+        ${extra}
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${hora}</div>
+      </div>
+    </div>`;
+  });
+
+  const fuEnviados = fila.filter(f => f.status === 'enviado');
+  const linhasFU = fuEnviados.map(f => {
+    const hora = f.enviado_em ? new Date(f.enviado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
+    return `<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start">
+      <span style="font-size:16px;flex-shrink:0;margin-top:1px">📤</span>
+      <div style="flex:1">
+        <div style="font-size:12px">Follow-up FU${f.sequencia_fu || 1} msg${f.etapa_seq} enviado</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:2px">${hora}</div>
+      </div>
+    </div>`;
+  });
+
+  const tudo = [...linhasEventos, ...linhasFU];
+  box.innerHTML = tudo.length ? tudo.join('') : '<div class="fu-hint">Nenhum evento registrado.</div>';
+}
+
+function abrirMensagemRapidaLead(leadId, nomeAbrev) {
+  abrirPainelLead(leadId, nomeAbrev);
+}
+
+// ── Mensagens Rápidas do Kanban ────────────────────────────
+let msgRapidaLeadId = null;
+let msgsRapidasCache = [];
+
+async function carregarMsgsRapidas() {
+  if (!funilState.clienteId) return;
+  try {
+    msgsRapidasCache = await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas');
+  } catch (e) { msgsRapidasCache = []; }
+}
+
+function usarMsgRapida(id) {
+  const m = msgsRapidasCache.find(x => x.id === id || String(x.id) === String(id));
+  if (!m) return;
+  document.getElementById('msg-lead-texto').value = m.texto || '';
+  const prev = document.getElementById('msg-lead-midia-preview');
+  const el = document.getElementById('msg-lead-midia-el');
+  if (m.midia_url) {
+    prev.style.display = '';
+    const isVideo = /\.(mp4|webm|mov)/i.test(m.midia_url);
+    el.innerHTML = isVideo
+      ? `<video src="${m.midia_url}" style="max-width:200px;max-height:120px;border-radius:6px" controls></video>`
+      : `<img src="${m.midia_url}" onclick="abrirLightbox('${m.midia_url}')" style="max-width:200px;max-height:120px;border-radius:6px;object-fit:cover;cursor:zoom-in">`;
+    el.dataset.url = m.midia_url;
+  } else {
+    prev.style.display = 'none';
+    if (el) { el.innerHTML = ''; el.dataset.url = ''; }
+  }
+}
+
+function fecharMensagemRapidaLead() {
+  document.getElementById('modal-msg-lead').classList.remove('open');
+  const el = document.getElementById('msg-lead-midia-el');
+  const prev = document.getElementById('msg-lead-midia-preview');
+  if (el) { el.innerHTML = ''; el.dataset.url = ''; }
+  if (prev) prev.style.display = 'none';
+  msgRapidaLeadId = null;
+}
+
+async function enviarMensagemRapidaLead() {
+  const texto = (document.getElementById('msg-lead-texto').value || '').trim();
+  const midiaEl = document.getElementById('msg-lead-midia-el');
+  const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
+  const st = document.getElementById('msg-lead-status');
+  if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem ou selecione uma mensagem rápida com mídia.'; return; }
+  if (!msgRapidaLeadId) return;
+  const btn = document.querySelector('#modal-msg-lead .btn-save');
+  if (btn) { btn.disabled = true; btn.textContent = 'Enviando...'; }
+  try {
+    await api('/movatak/admin/leads/' + msgRapidaLeadId + '/mensagem-rapida', { method: 'POST', body: JSON.stringify({ texto, midia_url }) });
+    st.style.color = 'var(--green)'; st.textContent = '✓ Mensagem enviada!';
+    document.getElementById('msg-lead-texto').value = '';
+    if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; }
+    const prev = document.getElementById('msg-lead-midia-preview'); if (prev) prev.style.display = 'none';
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  finally { if (btn) { btn.disabled = false; btn.textContent = 'Enviar'; } }
+}
+
+async function reativarFollowupManual(leadId) {
+  const st = document.getElementById('funil-status');
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Reativando follow-up...'; }
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/reativar-followup', { method: 'POST', body: '{}' });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Follow-up reativado. FU1 enviado.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  }
+}
+
+async function abrirGerenciarMsgsRapidas() {
+  document.getElementById('msgs-gerenciar-status').textContent = '';
+  window._msgRapidaEditandoId = null;
+  cancelarSequenciaPendente();
+  document.getElementById('modal-gerenciar-msgs').classList.add('open');
+  await renderMsgsGerenciar();
+}
+
+function fecharGerenciarMsgsRapidas() {
+  window._msgRapidaEditandoId = null;
+  document.getElementById('modal-gerenciar-msgs').classList.remove('open');
+}
+
+function resumoMsgRapidaGerenciar(m, limite = 170) {
+  if (!m) return '';
+  if (m.template_id) return 'Autoatendimento completo vinculado ao fluxo de perguntas.';
+  if (Array.isArray(m.itens) && m.itens.length) {
+    const txt = m.itens.map(it => (it && it.texto) ? it.texto : (it && it.midia_url ? '[mídia]' : '')).filter(Boolean).join(' • ');
+    return txt ? (txt.length > limite ? txt.slice(0, limite) + '...' : txt) : 'Sequência com mídia/anexos.';
+  }
+  const txt = m.texto || (m.midia_url ? '[mídia/anexo]' : 'Sem texto cadastrado.');
+  return String(txt).length > limite ? String(txt).slice(0, limite) + '...' : String(txt);
+}
+
+function renderEditorMsgRapidaAdmin(m) {
+  const id = Number(m.id);
+  const ehAuto = !!m.template_id;
+  const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+  const midiaHtml = m.midia_url
+    ? (/(\.mp4|\.webm|\.mov)/i.test(m.midia_url)
+        ? `<video src="${m.midia_url}" class="msg-admin-midia" controls></video>`
+        : `<img src="${m.midia_url}" class="msg-admin-midia" alt="Mídia da resposta rápida">`)
+      + `<button class="msg-admin-link-danger" type="button" onclick="patchMsgRapida(${id},'midia_url','').then(() => renderMsgsGerenciar())">Remover mídia</button>`
+    : `<label class="msg-admin-link" style="cursor:pointer">📎 Adicionar mídia<input type="file" accept="image/*,video/mp4,video/webm" style="display:none" onchange="uploadMidiaMsgExistente(this,${id})"></label>`;
+
+  const conteudoEditor = ehAuto
+    ? `<div class="msg-admin-note">🔄 Esta resposta rápida inicia um autoatendimento completo. Para alterar as perguntas e respostas do fluxo, edite o template em <strong>Auto Atendimento</strong>. Aqui você altera apenas o título/atalho.</div>`
+    : ehSequencia
+      ? `<div class="msg-admin-note">🔁 Sequência com ${m.itens.length} mensagens. Edite os textos abaixo e salve a sequência.</div>` +
+        m.itens.map((it, i) => `
+          <label class="msg-admin-field-label">Mensagem ${i + 1}${it && it.midia_url ? ' · com mídia' : ''}</label>
+          <textarea id="msg-edit-item-${id}-${i}" class="fu-textarea msg-admin-textarea" placeholder="Texto da mensagem ${i + 1}...">${escapeHtml((it && it.texto) || '')}</textarea>
+        `).join('')
+      : `<label class="msg-admin-field-label">Texto</label>
+         <textarea id="msg-edit-texto-${id}" class="fu-textarea msg-admin-textarea" placeholder="Texto da mensagem...">${escapeHtml(m.texto || '')}</textarea>
+         <div class="msg-admin-media-box">${midiaHtml}</div>`;
+
+  return `<div class="msg-admin-card editing">
+    <div class="msg-admin-edit-head">
+      <div>
+        <div class="msg-admin-badge">Editando resposta rápida</div>
+        <label class="msg-admin-field-label">Título/atalho</label>
+      </div>
+    </div>
+    <input id="msg-edit-titulo-${id}" class="fu-textarea msg-admin-title-input" value="${escapeHtml(m.titulo || '')}" placeholder="Título/atalho">
+    ${conteudoEditor}
+    <div class="msg-admin-edit-actions">
+      <button class="btn-cancel" type="button" onclick="cancelarEdicaoMsgRapidaAdmin()">Cancelar</button>
+      <button class="btn-save" type="button" onclick="salvarEdicaoMsgRapidaAdmin(${id})">Salvar edição</button>
+    </div>
+  </div>`;
+}
+
+async function renderMsgsGerenciar() {
+  const box = document.getElementById('msgs-rapidas-lista');
+  box.innerHTML = '<div class="fu-hint">Carregando...</div>';
+  await carregarMsgsRapidas();
+  if (!msgsRapidasCache.length) { box.innerHTML = '<div class="fu-hint">Nenhuma mensagem cadastrada ainda.</div>'; return; }
+  const editandoId = window._msgRapidaEditandoId ? Number(window._msgRapidaEditandoId) : null;
+  box.innerHTML = msgsRapidasCache.map(m => {
+    const id = Number(m.id);
+    if (editandoId === id) return renderEditorMsgRapidaAdmin(m);
+
+    const ehAuto = !!m.template_id;
+    const ehSequencia = Array.isArray(m.itens) && m.itens.length > 0;
+    const icone = ehAuto ? '🔄' : (ehSequencia ? '🔁' : (m.midia_url ? '📎' : '💬'));
+    const tipo = ehAuto ? 'Autoatendimento' : (ehSequencia ? `Sequência · ${m.itens.length} mensagens` : (m.midia_url ? 'Mensagem com mídia' : 'Mensagem simples'));
+    const preview = resumoMsgRapidaGerenciar(m);
+    const midiaMini = m.midia_url && !ehSequencia
+      ? (/(\.mp4|\.webm|\.mov)/i.test(m.midia_url)
+          ? `<video src="${m.midia_url}" class="msg-admin-thumb" controls></video>`
+          : `<img src="${m.midia_url}" class="msg-admin-thumb" alt="Mídia">`)
+      : '';
+
+    return `<div class="msg-admin-card">
+      <div class="msg-admin-main">
+        <div class="msg-admin-title-row">
+          <span class="msg-admin-icon">${icone}</span>
+          <strong>${escapeHtml(m.titulo || 'Sem título')}</strong>
+          <span class="msg-admin-type">${escapeHtml(tipo)}</span>
+        </div>
+        <div class="msg-admin-preview">${escapeHtml(preview)}</div>
+        ${midiaMini}
+      </div>
+      <div class="msg-admin-actions">
+        <button class="msg-admin-edit-btn" type="button" onclick="iniciarEdicaoMsgRapidaAdmin(${id})">Editar</button>
+        <button class="btn-remove msg-admin-remove-btn" type="button" onclick="removerMsgRapida(${id})" title="Excluir resposta rápida">×</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function iniciarEdicaoMsgRapidaAdmin(id) {
+  window._msgRapidaEditandoId = Number(id);
+  renderMsgsGerenciar();
+}
+
+function cancelarEdicaoMsgRapidaAdmin() {
+  window._msgRapidaEditandoId = null;
+  renderMsgsGerenciar();
+}
+
+async function salvarEdicaoMsgRapidaAdmin(id) {
+  const st = document.getElementById('msgs-gerenciar-status');
+  const m = msgsRapidasCache.find(x => Number(x.id) === Number(id));
+  if (!m) return;
+
+  const tituloEl = document.getElementById('msg-edit-titulo-' + id);
+  const titulo = (tituloEl ? tituloEl.value : '').trim();
+  if (!titulo) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Preencha o título/atalho.'; } return; }
+
+  const body = { titulo };
+  if (!m.template_id) {
+    if (Array.isArray(m.itens) && m.itens.length) {
+      body.itens = m.itens.map((it, i) => {
+        const el = document.getElementById('msg-edit-item-' + id + '-' + i);
+        return { ...(it || {}), texto: el ? el.value : ((it && it.texto) || '') };
+      });
+      body.texto = body.itens.map(it => it.texto || '').filter(Boolean).join('\n\n');
+      if (!body.texto && !body.itens.some(it => it.midia_url)) {
+        if (st) { st.style.color = 'var(--red)'; st.textContent = 'A sequência precisa ter pelo menos um texto ou mídia.'; }
+        return;
+      }
+    } else {
+      const textoEl = document.getElementById('msg-edit-texto-' + id);
+      const texto = (textoEl ? textoEl.value : '').trim();
+      if (!texto && !m.midia_url) {
+        if (st) { st.style.color = 'var(--red)'; st.textContent = 'A mensagem precisa ter texto ou mídia.'; }
+        return;
+      }
+      body.texto = texto;
+    }
+  }
+
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando edição...'; }
+  try {
+    await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'PATCH', body: JSON.stringify(body) });
+    window._msgRapidaEditandoId = null;
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Edição salva.'; }
+    await renderMsgsGerenciar();
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar edição: ' + e.message; }
+  }
+}
+
+async function uploadMidiaNovaMsg(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const preview = document.getElementById('msg-nova-midia-preview');
+  const urlInput = document.getElementById('msg-nova-midia-url');
+  preview.textContent = 'Enviando...';
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl: base64 }) });
+    urlInput.value = resp.url || '';
+    preview.textContent = '✓ ' + file.name;
+    preview.style.color = 'var(--green)';
+  } catch (e) { preview.textContent = 'Erro: ' + e.message; preview.style.color = 'var(--red)'; }
+  input.value = '';
+}
+
+async function adicionarMsgRapida() {
+  const titulo = document.getElementById('msg-nova-titulo').value.trim();
+  const st = document.getElementById('msgs-gerenciar-status');
+  if (!titulo) { st.style.color='var(--red)'; st.textContent='Preencha o título.'; return; }
+
+  const body = { titulo };
+  if (window._sequenciaPendente && window._sequenciaPendente.length) {
+    body.itens = window._sequenciaPendente;
+    if (window._templatePendenteId) body.template_id = window._templatePendenteId;
+  } else {
+    const texto = document.getElementById('msg-nova-texto').value.trim();
+    const midia_url = (document.getElementById('msg-nova-midia-url').value || '').trim() || null;
+    if (!texto) { st.style.color='var(--red)'; st.textContent='Preencha o texto.'; return; }
+    body.texto = texto;
+    body.midia_url = midia_url;
+  }
+
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas', { method: 'POST', body: JSON.stringify(body) });
+    document.getElementById('msg-nova-titulo').value = '';
+    document.getElementById('msg-nova-texto').value = '';
+    document.getElementById('msg-nova-midia-url').value = '';
+    document.getElementById('msg-nova-midia-preview').textContent = '';
+    cancelarSequenciaPendente();
+    st.style.color = 'var(--green)'; st.textContent = 'Mensagem adicionada.';
+    await renderMsgsGerenciar();
+  } catch (e) { st.style.color='var(--red)'; st.textContent='Erro: '+e.message; }
+}
+
+// ── Importar mensagens do Auto Atendimento (questionário) como mensagem rápida ──
+let _importarAutoCarregado = false;
+
+async function toggleImportarAutoAtendimento() {
+  const box = document.getElementById('importar-auto-box');
+  if (!box) return;
+  const vaiAbrir = box.style.display === 'none';
+  box.style.display = vaiAbrir ? 'block' : 'none';
+  if (vaiAbrir && !_importarAutoCarregado) {
+    _importarAutoCarregado = true;
+    await carregarTemplatesAutoAtendimento();
+  }
+}
+
+async function carregarTemplatesAutoAtendimento() {
+  const sel = document.getElementById('importar-auto-template');
+  if (!sel || !funilState.clienteId) return;
+  try {
+    const templates = await api('/movatak/admin/clientes/' + funilState.clienteId + '/questionario-templates');
+    if (!templates || !templates.length) {
+      sel.innerHTML = '<option value="">Nenhum template de autoatendimento cadastrado.</option>';
+      return;
+    }
+    sel.innerHTML = '<option value="">Selecione um template...</option>' +
+      templates.map(t => `<option value="${t.id}">${escapeHtml(t.nome)} (${t.qtd_passos} pergunta${Number(t.qtd_passos) === 1 ? '' : 's'})</option>`).join('');
+    if (templates.length === 1) {
+      sel.value = templates[0].id;
+      await carregarMensagensAutoAtendimento(templates[0].id);
+    }
+  } catch (e) {
+    sel.innerHTML = '<option value="">Erro ao carregar templates.</option>';
+  }
+}
+
+async function carregarMensagensAutoAtendimento(templateId) {
+  const lista = document.getElementById('importar-auto-lista');
+  if (!lista) return;
+  if (!templateId) { lista.innerHTML = ''; return; }
+  lista.innerHTML = '<div class="fu-hint">Carregando mensagens...</div>';
+  try {
+    const t = await api('/movatak/admin/questionario-templates/' + templateId);
+    const itens = [];
+    if (t.intro) itens.push({ rotulo: 'Introdução', texto: t.intro, midia_url: t.intro_imagem || null });
+    (t.passos || []).forEach((p, i) => {
+      if (p && p.pergunta) itens.push({ rotulo: 'Pergunta ' + (i + 1), texto: p.pergunta, midia_url: p.imagem || null });
+    });
+    if (t.final) itens.push({ rotulo: 'Mensagem final', texto: t.final, midia_url: t.final_imagem || null });
+    window._itensAutoAtendimento = itens;
+    window._nomeTemplateAutoAtendimento = t.nome || 'Auto Atendimento';
+    window._templateAutoAtendimentoId = t.id || null;
+    if (!itens.length) {
+      lista.innerHTML = '<div class="fu-hint">Esse template não tem nenhum texto pra importar.</div>';
+      return;
+    }
+    // Todas marcadas por padrão — é o uso mais comum (importar tudo de uma vez).
+    lista.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <button type="button" onclick="alternarTodasAutoAtendimento()" class="btn-cancel" style="padding:5px 10px;font-size:11px">Marcar/Desmarcar todas</button>
+        <span id="auto-atend-contagem" style="font-size:11px;color:var(--text2)"></span>
+      </div>` +
+      itens.map((it, i) => `
+      <label class="chk-item-auto-row" style="display:flex;gap:8px;align-items:flex-start;padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;margin-bottom:6px;cursor:pointer">
+        <input type="checkbox" class="chk-item-auto" data-idx="${i}" checked onchange="atualizarSelecaoAutoAtendimento()" style="margin-top:2px;cursor:pointer;flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <strong style="font-size:12px;color:var(--accent)">${escapeHtml(it.rotulo)}${it.midia_url ? ' 📎' : ''}</strong>
+          <div style="font-size:12px;color:var(--text2);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(it.texto)}</div>
+        </div>
+      </label>`).join('') +
+      `<button type="button" class="btn-add-small" style="width:100%;margin-top:6px" onclick="usarSelecionadasAutoAtendimento()">Usar selecionadas como mensagem rápida</button>`;
+    atualizarSelecaoAutoAtendimento();
+  } catch (e) {
+    lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+function atualizarSelecaoAutoAtendimento() {
+  const checks = document.querySelectorAll('#importar-auto-lista .chk-item-auto');
+  const marcadas = Array.from(checks).filter(c => c.checked).length;
+  const contagem = document.getElementById('auto-atend-contagem');
+  if (contagem) contagem.textContent = marcadas + ' de ' + checks.length + ' selecionadas';
+}
+
+function alternarTodasAutoAtendimento() {
+  const checks = document.querySelectorAll('#importar-auto-lista .chk-item-auto');
+  const algumaDesmarcada = Array.from(checks).some(c => !c.checked);
+  checks.forEach(c => { c.checked = algumaDesmarcada; });
+  atualizarSelecaoAutoAtendimento();
+}
+
+// Pega só os itens marcados (na ordem original) e prepara a sequência —
+// só falta o título; o conteúdo já vem todo das frases selecionadas.
+function usarSelecionadasAutoAtendimento() {
+  const checks = Array.from(document.querySelectorAll('#importar-auto-lista .chk-item-auto'));
+  const idxsMarcados = checks.filter(c => c.checked).map(c => Number(c.dataset.idx));
+  const todosItens = window._itensAutoAtendimento || [];
+  const selecionados = idxsMarcados.map(i => todosItens[i]).filter(Boolean);
+  if (!selecionados.length) {
+    const st = document.getElementById('msgs-gerenciar-status');
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Marque pelo menos uma mensagem.'; }
+    return;
+  }
+  window._sequenciaPendente = selecionados.map(it => ({ texto: it.texto, midia_url: it.midia_url || null }));
+  // Se o usuário selecionou TODAS as mensagens do template (na ordem original), a
+  // sequência pode ser disparada pelo autoatendimento real — que respeita perguntas
+  // que esperam resposta do lead. Se selecionou só algumas, vira sequência simples.
+  const selecionouTudoNaOrdem = idxsMarcados.length === todosItens.length &&
+    idxsMarcados.every((v, i) => v === i);
+  window._templatePendenteId = selecionouTudoNaOrdem ? (window._templateAutoAtendimentoId || null) : null;
+  document.getElementById('msg-nova-titulo').value = window._nomeTemplateAutoAtendimento || 'Auto Atendimento';
+  document.getElementById('msg-nova-modo-simples').style.display = 'none';
+  document.getElementById('msg-nova-modo-sequencia').style.display = 'block';
+  document.getElementById('msg-nova-seq-contagem').textContent = selecionados.length;
+  const avisoAuto = window._templatePendenteId
+    ? `<div style="font-size:11px;color:var(--accent);background:rgba(91,127,255,.12);border:1px solid var(--accent);border-radius:6px;padding:6px 8px;margin-bottom:6px">🔄 Como você selecionou o autoatendimento inteiro, ao usar esta resposta ela vai rodar o fluxo completo — esperando as respostas do lead nas perguntas, igual ao autoatendimento normal.</div>`
+    : '';
+  document.getElementById('msg-nova-seq-preview').innerHTML = avisoAuto + selecionados.map(it => `
+    <div style="font-size:11px;color:var(--text2);padding:5px 8px;background:var(--bg3);border-radius:6px;margin-bottom:4px">
+      <strong style="color:var(--accent)">${escapeHtml(it.rotulo)}${it.midia_url ? ' 📎' : ''}</strong> — ${escapeHtml(String(it.texto).slice(0, 70))}
+    </div>`).join('');
+  const st = document.getElementById('msgs-gerenciar-status');
+  if (st) { st.style.color = 'var(--green)'; st.textContent = 'Só falta o título — clique em Adicionar.'; }
+  document.getElementById('msg-nova-modo-sequencia').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelarSequenciaPendente() {
+  window._sequenciaPendente = null;
+  window._templatePendenteId = null;
+  document.getElementById('msg-nova-modo-simples').style.display = 'block';
+  document.getElementById('msg-nova-modo-sequencia').style.display = 'none';
+}
+
+async function uploadMidiaMsgExistente(input, msgId) {
+  const file = input.files[0];
+  if (!file) return;
+  const st = document.getElementById('msgs-gerenciar-status');
+  st.style.color = 'var(--text2)'; st.textContent = 'Enviando mídia...';
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(new Error('Falha ao ler arquivo'));
+      r.readAsDataURL(file);
+    });
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ imagem: base64, clienteId: funilState.clienteId }) });
+    await api('/movatak/admin/mensagens-rapidas/' + msgId, { method: 'PATCH', body: JSON.stringify({ midia_url: resp.url }) });
+    st.style.color = 'var(--green)'; st.textContent = '✓ Mídia salva.';
+    await renderMsgsGerenciar();
+  } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  input.value = '';
+}
+
+async function patchMsgRapida(id, campo, valor) {
+  try { await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'PATCH', body: JSON.stringify({ [campo]: valor }) }); }
+  catch (e) { const st=document.getElementById('msgs-gerenciar-status'); if(st){st.style.color='var(--red)';st.textContent='Erro ao salvar: '+e.message;} }
+}
+
+async function removerMsgRapida(id) {
+  if (!confirm('Remover esta mensagem?')) return;
+  try { await api('/movatak/admin/mensagens-rapidas/' + id, { method: 'DELETE' }); await renderMsgsGerenciar(); }
+  catch (e) { const st=document.getElementById('msgs-gerenciar-status'); if(st){st.style.color='var(--red)';st.textContent='Erro: '+e.message;} }
+}
+
+function fecharModal() {
+  document.getElementById('modal').classList.remove('open');
+  if (tokenGerado) carregarTudo();
+  tokenGerado = '';
+}
+
+async function salvarCliente() {
+  const nome         = document.getElementById('f-nome').value.trim();
+  const whatsapp     = document.getElementById('f-whatsapp').value.trim();
+  const trigger_msg  = (document.getElementById('f-trigger')?.value || '').trim();
+  const zapi_instance= document.getElementById('f-instance').value.trim();
+  const zapi_token   = document.getElementById('f-token').value.trim();
+  const zapi_ct      = document.getElementById('f-client-token').value.trim();
+  const cpl          = document.getElementById('f-cpl').value.trim();
+  const nicho        = (document.getElementById('f-nicho')?.value || '').trim();
+  const planosTxt    = document.getElementById('f-planos').value.trim();
+
+  if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_ct) {
+    document.getElementById('modal-err').textContent = 'Preencha os campos obrigatórios: nome, WhatsApp, instância, token e client-token.';
+    return;
+  }
+
+  const planos = planosTxt
+    ? planosTxt.split(',').map(p => ({ nome: p.trim(), valor: null })).filter(p => p.nome)
+    : [];
+
+  document.getElementById('btn-salvar').textContent = 'Salvando...';
+  document.getElementById('modal-err').textContent = '';
+
+  try {
+    const res = await api('/movatak/admin/clientes', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome, whatsapp, zapi_instance, zapi_token,
+        zapi_client_token: zapi_ct, trigger_msg, nicho,
+        teto_cpl: cpl ? parseFloat(cpl) : null,
+        planos,
+        permissoes_portal: getPermissoesPortal()
+      })
+    });
+
+    tokenGerado = res.app_token;
+    document.getElementById('token-gerado').textContent = res.app_token;
+    document.getElementById('token-resultado').style.display = 'block';
+    document.getElementById('btn-salvar').textContent = 'Fechar';
+    document.getElementById('btn-salvar').onclick = fecharModal;
+  } catch(e) {
+    document.getElementById('modal-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-salvar').textContent = 'Cadastrar';
+  }
+}
+
+function copiarToken() {
+  navigator.clipboard.writeText(tokenGerado).then(() => {
+    document.querySelector('.btn-copy').textContent = 'Copiado!';
+    setTimeout(() => { document.querySelector('.btn-copy').textContent = 'Copiar token'; }, 2000);
+  });
+}
+
+// Fechar modal clicando fora
+document.getElementById('modal').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal')) fecharModal();
+});
+
+
+let fuId = null;
+async function abrirFU(id) {
+  fuId = id;
+  cancelarEdicaoCampanha();
+  document.getElementById('fu-err').textContent = '';
+  document.getElementById('btn-fu-save').textContent = 'Carregando...';
+  document.getElementById('modal-fu').classList.add('open');
+  try {
+    const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
+    // Carregar novo formato (2 blocos) se existir
+    if (msgs.followup_v2) {
+      document.getElementById('fu1-msg1').value = msgs.followup_v2.fu1?.msg1 || '';
+      document.getElementById('fu1-msg2').value = msgs.followup_v2.fu1?.msg2 || '';
+      document.getElementById('fu2-msg1').value = msgs.followup_v2.fu2?.msg1 || '';
+      document.getElementById('fu2-msg2').value = msgs.followup_v2.fu2?.msg2 || '';
+      document.getElementById('fu2-msg3').value = msgs.followup_v2.fu2?.msg3 || '';
+    } else {
+      // Compatibilidade com formato antigo (4 mensagens) — preenche FU1 e deixa FU2 vazio
+      document.getElementById('fu1-msg1').value = msgs.msg1 || '';
+      document.getElementById('fu1-msg2').value = msgs.msg2 || '';
+      document.getElementById('fu2-msg1').value = '';
+      document.getElementById('fu2-msg2').value = '';
+      document.getElementById('fu2-msg3').value = '';
+    }
+    document.getElementById('fu-verba').value = msgs.verba_diaria || '';
+    document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
+    document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
+    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+    // Carregar templates primeiro (garante que o select de campanha já tem opções quando Editar é clicado)
+    await carregarTemplatesFollowup();
+    // Carregar campanhas depois (Editar só aparece quando as opções já estão prontas)
+    carregarCampanhas(id);
+    // Demais seções em paralelo (não dependem do select de templates)
+    carregarVendedores(id);
+    carregarComandos(id);
+    carregarRanking(id);
+    carregarOperacao(id);
+    carregarFilaFollowup(id);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+  }
+}
+function fecharFU() {
+  document.getElementById('modal-fu').classList.remove('open');
+  fuId = null;
+}
+// Salva o follow-up: grava no cliente E, se houver template vinculado,
+// atualiza o template (aplica em toda automação que usa ele).
+async function salvarFollowupComFeedback() {
+  const st = document.getElementById('fu-salvo-status');
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando...'; }
+  const followup_v2 = {
+    fu1: {
+      msg1: document.getElementById('fu1-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu1-msg2')?.value.trim() || ''
+    },
+    fu2: {
+      msg1: document.getElementById('fu2-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu2-msg2')?.value.trim() || '',
+      msg3: document.getElementById('fu2-msg3')?.value.trim() || ''
+    }
+  };
+  // Qual template está selecionado no dropdown (pode estar vazio).
+  const templateSel = document.getElementById('fu-template-select')?.value || '';
+  try {
+    // 1) Sempre salva no cliente (o que de fato dispara para os leads dele).
+    await salvarFU();
+
+    // 2) Se há um template selecionado, tenta atualizá-lo também.
+    let infoTemplate = '';
+    if (templateSel) {
+      try {
+        const r = await api('/movatak/admin/clientes/' + fuId + '/template-followup-mensagens', {
+          method: 'PATCH',
+          body: JSON.stringify({ template: templateSel, followup_v2 })
+        });
+        if (r && r.ok) infoTemplate = ' + template atualizado';
+      } catch (e) {
+        const msg = (e.message || '');
+        if (msg.includes('TEMPLATE_PADRAO')) {
+          infoTemplate = ' (template padrão não é editável — salvo só no cliente)';
+        } else if (msg.includes('SEM_TEMPLATE')) {
+          infoTemplate = '';
+        } else {
+          infoTemplate = ' (cliente salvo; template falhou)';
+        }
+      }
+    }
+    if (st) {
+      st.style.color = infoTemplate.includes('não é editável') || infoTemplate.includes('falhou') ? 'var(--amber)' : 'var(--green)';
+      st.textContent = '✓ Salvo!' + infoTemplate;
+      clearTimeout(st._t);
+      st._t = setTimeout(() => { st.textContent = ''; }, 6000);
+    }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar'; }
+  }
+}
+
+async function salvarFU() {
+  const fu1_msg1 = document.getElementById('fu1-msg1').value.trim();
+  const fu1_msg2 = document.getElementById('fu1-msg2').value.trim();
+  const fu2_msg1 = document.getElementById('fu2-msg1').value.trim();
+  const fu2_msg2 = document.getElementById('fu2-msg2').value.trim();
+  const fu2_msg3 = document.getElementById('fu2-msg3').value.trim();
+  // Nenhum campo do Followup é obrigatório — o cliente preenche apenas o que usar.
+  document.getElementById('btn-fu-save').textContent = 'Salvando...';
+  document.getElementById('fu-err').textContent = '';
+  try {
+    const verba_diaria = document.getElementById('fu-verba').value.trim();
+    const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
+    const trigger_msg = document.getElementById('fu-trigger').value.trim();
+
+    // Salvar follow up com estrutura dos 2 blocos
+    await api('/movatak/admin/clientes/' + fuId + '/followup', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        followup_v2: {
+          fu1: { msg1: fu1_msg1, msg2: fu1_msg2 },
+          fu2: { msg1: fu2_msg1, msg2: fu2_msg2, msg3: fu2_msg3 }
+        },
+        verba_diaria, whatsapp_dono, trigger_msg
+      })
+    });
+    
+    // Salvar comandos de automação
+    // Aceita comandos separados por vírgula, ponto e vírgula ou quebra de linha.
+    const parseCmds = (id) => {
+      const el = document.getElementById(id);
+      return (el?.value || '')
+        .split(/[,;\n]+/)
+        .map(s => s.trim().toLowerCase())
+        .filter(Boolean);
+    };
+    const resCmd = await fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/comandos', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-movatak-secret': secret },
+      body: JSON.stringify({
+        followup: [],
+        convertido: parseCmds('fu-cmd-convertido'),
+        descartar:  parseCmds('fu-cmd-descartar'),
+        desfazer:   parseCmds('fu-cmd-desfazer')
+      })
+    });
+    if (!resCmd.ok) {
+      const err = await resCmd.json().catch(() => ({}));
+      document.getElementById('fu-err').textContent = err.error || 'Erro ao salvar comandos.';
+      document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+      return;
+    }
+    document.getElementById('btn-fu-save').textContent = 'Salvo!';
+    carregarOperacao(fuId);
+    carregarFilaFollowup(fuId);
+    setTimeout(() => { document.getElementById('btn-fu-save').textContent = 'Salvar alterações'; }, 1200);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
+    document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
+  }
+}
+const _modalFu = document.getElementById('modal-fu');
+if (_modalFu) {
+  _modalFu.addEventListener('click', e => {
+    if (e.target === _modalFu) fecharFU();
+  });
+}
+
+
+// ── Vendedores ─────────────────────────────────────────────
+async function carregarVendedores(id) {
+  try {
+    const [vendedores, setores] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/vendedores'),
+      api('/movatak/admin/clientes/' + id + '/setores').catch(() => [])
+    ]);
+    window._setoresCliente = Array.isArray(setores) ? setores : [];
+    const lista = document.getElementById('fu-vendedores-list');
+    if (!vendedores.length) {
+      lista.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhum vendedor cadastrado.</div>';
+      return;
+    }
+    const setoresDisp = window._setoresCliente;
+    lista.innerHTML = vendedores.map(v => {
+      const setoresVend = Array.isArray(v.setor_ids) ? v.setor_ids : [];
+      const checkboxesSetores = setoresDisp.length
+        ? setoresDisp.map(s => `
+            <label style="font-size:11px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;background:var(--bg3);border:1px solid var(--border2);border-radius:6px;padding:4px 8px">
+              <input type="checkbox" data-vend-setor="${v.id}" value="${s.id}" ${setoresVend.includes(Number(s.id)) ? 'checked' : ''} onchange="salvarSetoresVendedor(${v.id})">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.cor || 'var(--accent)'}"></span>${escapeHtml(s.nome)}
+            </label>`).join('')
+        : '<span style="font-size:11px;color:var(--text3)">Nenhum setor criado ainda. Crie setores no kanban primeiro.</span>';
+      return `
+      <div class="vendedor-item" style="flex-wrap:wrap;gap:8px">
+        <span class="vendedor-nome" style="flex:1">${v.nome}</span>
+        <button class="btn-remove" onclick="removerVendedor(${v.id})" title="Remover">×</button>
+        <input type="text" class="fu-textarea" style="flex-basis:100%;min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px"
+          id="vend-cmd-${v.id}" value="${v.comando || ''}" placeholder="Comando deste vendedor (ex: #joao)"
+          onchange="salvarComandoVendedor(${v.id})">
+        <div class="vend-access-grid">
+          <input type="email" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-email-${v.id}" value="${v.email_acesso || ''}" placeholder="Email de acesso do vendedor">
+          <input type="password" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px" id="vend-senha-${v.id}" placeholder="Nova senha (opcional)">
+        </div>
+        <div style="width:100%">
+          <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Setores que este vendedor acessa:</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px">${checkboxesSetores}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;width:100%;font-size:11px;color:var(--text3);font-family:var(--mono)">
+          <button class="btn-add-small" style="padding:6px 10px;font-size:11px" onclick="salvarAcessoVendedor(${v.id})">Salvar acesso</button>
+          <span>Token: ${v.acesso_token || 'gerado após salvar'} · senha: ${v.tem_senha ? 'configurada' : 'não configurada'}</span>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('fu-vendedores-list').innerHTML = `<div style="font-size:13px;color:var(--red)">Erro ao carregar vendedores: ${e.message}</div>`;
+    document.getElementById('fu-err').textContent = 'Erro ao carregar vendedores. Verifique se a migração v2.0.1 foi executada no PostgreSQL.';
+  }
+}
+
+async function adicionarVendedor() {
+  const nome = document.getElementById('fu-novo-vendedor').value.trim();
+  const email_acesso = (document.getElementById('fu-novo-vendedor-email') || {}).value ? document.getElementById('fu-novo-vendedor-email').value.trim() : '';
+  const senha_acesso = (document.getElementById('fu-novo-vendedor-senha') || {}).value ? document.getElementById('fu-novo-vendedor-senha').value.trim() : '';
+  if (!nome) return;
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/vendedores', {
+      method: 'POST',
+      body: JSON.stringify({ nome, email_acesso, senha_acesso })
+    });
+    document.getElementById('fu-novo-vendedor').value = '';
+    if (document.getElementById('fu-novo-vendedor-email')) document.getElementById('fu-novo-vendedor-email').value = '';
+    if (document.getElementById('fu-novo-vendedor-senha')) document.getElementById('fu-novo-vendedor-senha').value = '';
+    carregarVendedores(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao adicionar vendedor: ' + e.message;
+  }
+}
+
+async function removerVendedor(vendedorId) {
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/vendedores/' + vendedorId, { method: 'DELETE' });
+    carregarVendedores(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao remover vendedor.';
+  }
+}
+
+// ── Comandos de automação ──────────────────────────────────
+async function carregarComandos(id) {
+  const setCampo = (campoId, valor) => {
+    const el = document.getElementById(campoId);
+    if (!el) return;
+    el.value = Array.isArray(valor) ? valor.join(', ') : (valor || '');
+  };
+
+  try {
+    const c = await api('/movatak/admin/clientes/' + id + '/comandos');
+
+    // O HTML atual não possui campo visível para comando de followup.
+    // Por isso NÃO devemos tentar preencher fu-cmd-followup, pois esse elemento não existe
+    // e quebrava o carregamento dos demais comandos.
+    setCampo('fu-cmd-convertido', c.convertido || []);
+    setCampo('fu-cmd-descartar',  c.descartar  || []);
+    setCampo('fu-cmd-desfazer',   c.desfazer   || []);
+  } catch(e) {
+    setCampo('fu-cmd-convertido', []);
+    setCampo('fu-cmd-descartar', []);
+    setCampo('fu-cmd-desfazer', []);
+    document.getElementById('fu-err').textContent = 'Erro ao carregar comandos: ' + e.message;
+  }
+}
+
+async function salvarComandoVendedor(vendedorId) {
+  const comando = document.getElementById('vend-cmd-' + vendedorId).value.trim();
+  try {
+    await api('/movatak/admin/vendedores/' + vendedorId + '/comando', {
+      method: 'PATCH',
+      body: JSON.stringify({ comando })
+    });
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar comando do vendedor.';
+  }
+}
+
+
+async function salvarAcessoVendedor(vendedorId) {
+  const email_acesso = document.getElementById('vend-email-' + vendedorId).value.trim();
+  const senha_acesso = document.getElementById('vend-senha-' + vendedorId).value.trim();
+  const comando = document.getElementById('vend-cmd-' + vendedorId).value.trim();
+  try {
+    await api('/movatak/admin/vendedores/' + vendedorId + '/acesso', {
+      method: 'PATCH',
+      body: JSON.stringify({ email_acesso, senha_acesso, comando })
+    });
+    document.getElementById('fu-err').textContent = 'Acesso do vendedor salvo.';
+    carregarVendedores(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar acesso do vendedor: ' + e.message;
+  }
+}
+
+// Salva os setores marcados de um vendedor (lê os checkboxes data-vend-setor).
+async function salvarSetoresVendedor(vendedorId) {
+  const marcados = Array.from(document.querySelectorAll('input[data-vend-setor="' + vendedorId + '"]:checked'))
+    .map(el => parseInt(el.value, 10)).filter(Boolean);
+  try {
+    await api('/movatak/admin/vendedores/' + vendedorId + '/setores', {
+      method: 'PATCH',
+      body: JSON.stringify({ setor_ids: marcados })
+    });
+    document.getElementById('fu-err').textContent = 'Setores do vendedor atualizados.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar setores: ' + e.message;
+  }
+}
+
+// ── Gráfico de performance dos vendedores ──────────────────
+async function carregarRanking(id) {
+  const wrap = document.getElementById('fu-ranking-chart');
+  try {
+    const ranking = await api('/movatak/admin/clientes/' + id + '/ranking');
+    if (!ranking.length) {
+      wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhum vendedor com vendas ainda.</div>';
+      return;
+    }
+    const max = Math.max(...ranking.map(v => parseInt(v.fechamentos || 0)), 1);
+    wrap.innerHTML = ranking.map((v, i) => {
+      const fech = parseInt(v.fechamentos || 0);
+      const pct  = Math.round((fech / max) * 100);
+      const cor  = i === 0 ? 'var(--green)' : i === 1 ? 'var(--accent)' : 'var(--amber)';
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+          <span style="font-size:13px;color:var(--text)">${v.nome}</span>
+          <span style="font-size:13px;font-weight:700;color:${cor}">${fech} ${fech === 1 ? 'venda' : 'vendas'}</span>
+        </div>
+        <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
+          <div style="height:100%;width:${pct}%;background:${cor};border-radius:4px;transition:width .5s"></div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar performance.</div>';
+  }
+}
+
+
+// ── Operação e fila do follow-up ───────────────────────────
+function fmtData(iso) {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleString('pt-BR'); }
+  catch(e) { return iso; }
+}
+
+async function carregarOperacao(id) {
+  const wrap = document.getElementById('fu-operacao-box');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando status...</div>';
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/operacao');
+    const leads = r.leads || {};
+    const fila = r.fila || {};
+    const cards = [
+      ['Leads', leads.total_leads || 0],
+      ['Atendimento', leads.em_atendimento || 0],
+      ['FU ativo', leads.em_followup || 0],
+      ['Clientes', leads.clientes || 0],
+      ['FU1 pendente', fila.pendentes_fu1 || 0],
+      ['FU2 pendente', fila.pendentes_fu2 || 0],
+      ['Atrasadas', fila.pendentes_atrasadas || 0],
+      ['Pausadas', fila.pausadas || 0]
+    ];
+    wrap.innerHTML = `
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(105px,1fr));gap:8px;margin-bottom:12px">
+        ${cards.map(([label, val]) => `
+          <div style="background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px">
+            <div style="font-size:10px;color:var(--text3);text-transform:uppercase;margin-bottom:4px">${label}</div>
+            <div style="font-size:20px;font-weight:800;color:var(--text)">${val}</div>
+          </div>
+        `).join('')}
+      </div>
+      <div style="font-size:12px;color:var(--text2);line-height:1.6">
+        <strong>Último lead:</strong> ${r.ultimo_lead ? `${r.ultimo_lead.nome || 'Sem nome'} · ${r.ultimo_lead.telefone} · ${fmtData(r.ultimo_lead.criado_em)}` : '—'}<br>
+        <strong>Próxima mensagem:</strong> ${r.proxima_mensagem ? `FU${r.proxima_mensagem.sequencia_fu} msg${r.proxima_mensagem.etapa_seq} · ${r.proxima_mensagem.telefone} · ${fmtData(r.proxima_mensagem.proximo_envio)}` : '—'}<br>
+        <strong>Último envio:</strong> ${fmtData(fila.ultimo_envio_em)}<br>
+        <strong>Último webhook:</strong> ${fmtData((r.cliente || {}).ultimo_webhook_em)}<br>
+        <strong>Último erro Z-API:</strong> ${(r.cliente || {}).ultimo_erro_zapi ? `${(r.cliente || {}).ultimo_erro_zapi} · ${fmtData((r.cliente || {}).ultimo_erro_zapi_em)}` : '—'}<br>
+        <strong>Relatório diário:</strong> ${r.relatorio_diario_ativo ? 'ativo' : 'desativado no Railway'}
+      </div>`;
+  } catch(e) {
+    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar operação: ' + e.message + '</div>';
+  }
+}
+
+async function carregarFilaFollowup(id) {
+  const wrap = document.getElementById('fu-fila-box');
+  if (!wrap) return;
+  wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando fila...</div>';
+  try {
+    const rows = await api('/movatak/admin/clientes/' + id + '/fila-followup?limit=60');
+    if (!rows.length) {
+      wrap.innerHTML = '<div style="font-size:13px;color:var(--text3)">Nenhuma mensagem na fila.</div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="max-height:280px;overflow:auto;border:1px solid var(--border);border-radius:10px">
+        <table style="font-size:12px">
+          <thead>
+            <tr>
+              <th>Lead</th><th>FU</th><th>Próximo envio</th><th>Status</th><th>Ação</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map(r => `
+              <tr>
+                <td><strong>${r.nome || 'Sem nome'}</strong><br><span class="td-mono">${r.telefone || ''}</span></td>
+                <td class="td-mono">FU${r.sequencia_fu || 1} · msg${r.etapa_seq}</td>
+                <td class="td-mono">${fmtData(r.proximo_envio)}</td>
+                <td><span class="badge ${r.status === 'pendente' ? 'badge-green' : 'badge-gray'}">${r.status}</span></td>
+                <td>
+                  ${r.status === 'pendente'
+                    ? `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${r.lead_id})">Pausar</button>`
+                    : `<button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="reativarLeadFU(${r.lead_id})">Reativar FU2</button>`}
+                  <button class="btn-cancel" style="padding:6px 8px;font-size:11px;margin-top:4px" onclick="carregarHistoricoLead(${r.lead_id})">Histórico</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch(e) {
+    wrap.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar fila: ' + e.message + '</div>';
+  }
+}
+
+async function carregarHistoricoLead(leadId) {
+  const box = document.getElementById('fu-historico-box');
+  if (!box) return;
+  box.innerHTML = '<div style="font-size:13px;color:var(--text3)">Carregando histórico...</div>';
+  try {
+    const r = await api('/movatak/admin/leads/' + leadId + '/historico');
+    const lead = r.lead || {};
+    const eventos = r.eventos || [];
+    box.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg2);margin-top:12px">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${lead.nome || 'Sem nome'} · ${lead.telefone || ''}</div>
+            <div style="font-size:12px;color:var(--text2)">Etapa: ${lead.etapa || '—'} · Vendedor: ${lead.vendedor_nome || '—'}</div>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="marcarLeadCliente(${lead.id})">Cliente</button>
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="descartarLeadPainel(${lead.id})">Descartar</button>
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="pausarLeadFU(${lead.id})">Pausar FU</button>
+            <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="document.getElementById('fu-historico-box').innerHTML=''">Fechar</button>
+          </div>
+        </div>
+        <div style="max-height:260px;overflow:auto">
+          ${eventos.length ? eventos.map(ev => `
+            <div style="border-left:2px solid var(--accent);padding:0 0 12px 10px;margin-left:4px">
+              <div style="font-size:12px;color:var(--text);font-weight:700">${ev.tipo}</div>
+              <div style="font-size:12px;color:var(--text2);line-height:1.4">${ev.descricao || ''}</div>
+              <div style="font-size:11px;color:var(--text3);font-family:var(--mono)">${fmtData(ev.criado_em)}</div>
+            </div>
+          `).join('') : '<div style="font-size:13px;color:var(--text3)">Sem eventos registrados ainda. Eventos novos aparecerão após aplicar a migração v1.8.0.</div>'}
+        </div>
+      </div>`;
+  } catch(e) {
+    box.innerHTML = '<div style="font-size:13px;color:var(--red)">Erro ao carregar histórico: ' + e.message + '</div>';
+  }
+}
+
+async function enviarRelatorioDiarioAgora() {
+  try {
+    const r = await api('/movatak/admin/clientes/' + fuId + '/relatorio-diario/enviar', {
+      method: 'POST', body: JSON.stringify({})
+    });
+    document.getElementById('fu-err').textContent = 'Relatório enviado para o WhatsApp do dono.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao enviar relatório: ' + e.message;
+  }
+}
+
+function exportarLeadsCSV() {
+  if (!fuId) return;
+  const url = API_BASE + '/movatak/admin/clientes/' + fuId + '/leads.csv';
+  fetch(url, { headers: { 'x-movatak-secret': secret } })
+    .then(r => { if (!r.ok) throw new Error('Erro ' + r.status); return r.blob(); })
+    .then(blob => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'leads-movatak.csv';
+      document.body.appendChild(a); a.click(); a.remove();
+    })
+    .catch(e => { document.getElementById('fu-err').textContent = 'Erro ao exportar CSV: ' + e.message; });
+}
+
+async function pausarLeadFU(leadId) {
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/followup/pausar', { method: 'PATCH', body: JSON.stringify({}) });
+    carregarOperacao(fuId);
+    carregarFilaFollowup(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao pausar lead: ' + e.message;
+  }
+}
+
+async function reativarLeadFU(leadId) {
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/followup/reativar', {
+      method: 'PATCH',
+      body: JSON.stringify({ sequencia_fu: 2, enviar_imediato: true })
+    });
+    carregarOperacao(fuId);
+    carregarFilaFollowup(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao reativar lead: ' + e.message;
+  }
+}
+
+async function testarGatilhoAtual() {
+  const texto = document.getElementById('fu-trigger-teste').value.trim();
+  const box = document.getElementById('fu-trigger-resultado');
+  if (!texto) { box.textContent = 'Digite uma mensagem para testar.'; return; }
+  try {
+    const r = await api('/movatak/admin/clientes/' + fuId + '/testar-gatilho', {
+      method: 'POST',
+      body: JSON.stringify({ texto })
+    });
+    box.innerHTML = r.bateu
+      ? '<span style="color:var(--green)">Gatilho reconhecido. Esse texto dispara o FU1.</span>'
+      : '<span style="color:var(--red)">Gatilho não reconhecido. Ajuste a frase-gatilho.</span>';
+  } catch(e) {
+    box.textContent = 'Erro no teste: ' + e.message;
+  }
+}
+
+
+async function testarZapiAgora() {
+  try {
+    const telefone = prompt('Telefone para receber o teste Z-API. Deixe em branco para usar o WhatsApp do dono ou o admin Movatak.') || '';
+    await api('/movatak/admin/clientes/' + fuId + '/testar-zapi', {
+      method: 'POST',
+      body: JSON.stringify({ telefone })
+    });
+    document.getElementById('fu-err').textContent = 'Teste Z-API enviado com sucesso.';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro no teste Z-API: ' + e.message;
+  }
+}
+
+async function carregarTemplatesFollowup() {
+  const sel = document.getElementById('fu-template-select');
+  try {
+    const rows = await api('/movatak/admin/templates-followup?cliente_id=' + fuId);
+    templatesFollowupCache = rows || [];
+    const options = '<option value="">Escolha um modelo pronto</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}${t.tipo === 'cliente' ? ' (seu)' : ''}</option>`).join('');
+    if (sel) sel.innerHTML = options;
+    document.querySelectorAll('.campanha-template-select').forEach(csel => {
+      const atual = csel.dataset.value || csel.value || '';
+      csel.innerHTML = '<option value="">Sem template</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
+      csel.value = atual;
+    });
+    const campSel = document.getElementById('fu-campanha-template');
+    if (campSel) {
+      const prevVal = editandoCampanhaId ? campSel.value : '';
+      campSel.innerHTML = '<option value="">Template vinculado</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
+      if (prevVal) campSel.value = prevVal;
+    }
+  } catch(e) {
+    if (sel) sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
+  }
+}
+
+// Carrega as mensagens do template selecionado nos campos abaixo, SEM salvar nada.
+// Só visualização — para salvar de fato, o usuário usa "Aplicar template".
+async function previewTemplateFollowup() {
+  const sel = document.getElementById('fu-template-select');
+  const template = sel ? sel.value : '';
+  const statusEl = document.getElementById('fu-template-status');
+  if (!template) return;
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Carregando mensagens do template...'; }
+    const t = await api('/movatak/admin/clientes/' + fuId + '/template-conteudo?template=' + encodeURIComponent(template));
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    const fu = t.followup_v2 || {};
+    const fu1 = fu.fu1 || {};
+    const fu2 = fu.fu2 || {};
+    setVal('fu1-msg1', fu1.msg1);
+    setVal('fu1-msg2', fu1.msg2);
+    setVal('fu2-msg1', fu2.msg1);
+    setVal('fu2-msg2', fu2.msg2);
+    setVal('fu2-msg3', fu2.msg3);
+    setVal('fu-trigger', t.trigger_msg);
+    const cmd = t.comandos || {};
+    const joinCmd = (a) => Array.isArray(a) ? a.join(', ') : (a || '');
+    setVal('fu-cmd-convertido', joinCmd(cmd.convertido));
+    setVal('fu-cmd-descartar', joinCmd(cmd.descartar));
+    setVal('fu-cmd-desfazer', joinCmd(cmd.desfazer));
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Pré-visualizando "' + (t.nome || '') + '". Para salvar como follow-up do cliente, clique em Aplicar template.'; }
+  } catch (e) {
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Erro ao carregar template: ' + e.message; }
+  }
+}
+
+async function aplicarTemplateFollowup() {
+  const sel = document.getElementById('fu-template-select');
+  const template = sel ? sel.value : '';
+  if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template primeiro.'; return; }
+  if (!confirm('Aplicar este template vai preencher as mensagens do follow-up, comandos e, se o modelo tiver, a frase-gatilho. Continuar?')) return;
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/aplicar-template', {
+      method: 'POST',
+      body: JSON.stringify({ template })
+    });
+    document.getElementById('fu-err').textContent = 'Template aplicado. Reabrindo configurações...';
+    await abrirFU(fuId);
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao aplicar template: ' + e.message;
+  }
+}
+
+async function criarTemplateFollowup() {
+  const box = document.getElementById('fu-template-create-box');
+  if (!box) return;
+  box.style.display = box.style.display === 'none' || !box.style.display ? 'block' : 'none';
+  const input = document.getElementById('fu-template-nome');
+  if (box.style.display === 'block' && input) input.focus();
+}
+
+async function cancelarCriarTemplateFollowup() {
+  const box = document.getElementById('fu-template-create-box');
+  if (box) box.style.display = 'none';
+  const input = document.getElementById('fu-template-nome');
+  if (input) input.value = '';
+}
+
+async function salvarTemplateFollowupAtual() {
+  const statusEl = document.getElementById('fu-template-status');
+  const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('Salvar modelo'));
+  const nome = (document.getElementById('fu-template-nome')?.value || '').trim();
+  if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome do template.'; if(statusEl) statusEl.textContent=''; return; }
+
+  const comandosFromInput = (id) => (document.getElementById(id)?.value || '')
+    .split(/[,;\n]+/).map(s => s.trim()).filter(Boolean);
+
+  const followup_v2 = {
+    fu1: {
+      msg1: document.getElementById('fu1-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu1-msg2')?.value.trim() || ''
+    },
+    fu2: {
+      msg1: document.getElementById('fu2-msg1')?.value.trim() || '',
+      msg2: document.getElementById('fu2-msg2')?.value.trim() || '',
+      msg3: document.getElementById('fu2-msg3')?.value.trim() || ''
+    }
+  };
+
+  if (!followup_v2.fu1.msg1 && !followup_v2.fu1.msg2 && !followup_v2.fu2.msg1 && !followup_v2.fu2.msg2 && !followup_v2.fu2.msg3) {
+    document.getElementById('fu-err').textContent = 'Preencha pelo menos uma mensagem do FU1 ou FU2 antes de criar o template.';
+    if(statusEl) statusEl.textContent='';
+    return;
+  }
+
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Salvando template...'; }
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+    const res = await api('/movatak/admin/clientes/' + fuId + '/templates-followup', {
+      method: 'POST',
+      body: JSON.stringify({
+        nome,
+        trigger_msg: document.getElementById('fu-trigger')?.value.trim() || '',
+        followup_v2,
+        comandos: {
+          convertido: comandosFromInput('fu-cmd-convertido'),
+          descartar: comandosFromInput('fu-cmd-descartar'),
+          desfazer: comandosFromInput('fu-cmd-desfazer')
+        }
+      })
+    });
+    document.getElementById('fu-err').textContent = '';
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Template criado com sucesso.'; }
+    await carregarTemplatesFollowup();
+    const sel = document.getElementById('fu-template-select');
+    if (sel && res.id) sel.value = res.id;
+    cancelarCriarTemplateFollowup();
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao criar template: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao salvar template.'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Salvar modelo'; }
+  }
+}
+async function popularSelectQuestTemplateCampanha(clienteId) {
+  const sel = document.getElementById('fu-campanha-quest-template');
+  if (!sel) return;
+  try {
+    const rows = await api('/movatak/admin/clientes/' + clienteId + '/questionario-templates');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Questionário do cliente (padrão)</option>' +
+      (rows || []).map(t => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join('');
+    sel.value = prev;
+  } catch (e) { /* mantém só o padrão */ }
+}
+
+async function carregarCampanhas(id) {
+  const box = document.getElementById('fu-campanhas-box');
+  if (!box) return;
+  box.innerHTML = '<div style="font-size:13px;color:var(--text3);margin-top:10px">Carregando campanhas...</div>';
+  await popularSelectQuestTemplateCampanha(id);
+  try {
+    const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
+    fuCampanhas = rows;
+    box.innerHTML = rows.length ? `
+      <div style="overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:14px;background:var(--bg2)">
+        <table style="font-size:12px;min-width:1180px;width:100%">
+          <thead>
+            <tr>
+              <th style="min-width:190px">Campanha</th>
+              <th style="min-width:300px">Frase-gatilho</th>
+              <th style="min-width:170px">Template</th>
+              <th style="min-width:125px">Investimento</th>
+              <th>Leads</th>
+              <th>Vendas</th>
+              <th>Conv.</th>
+              <th>CPL</th>
+              <th>CPV</th>
+              <th>Status</th>
+              <th style="min-width:90px">Ações</th>
+            </tr>
+          </thead>
+          <tbody>${rows.map(c => `
+            <tr>
+              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong>${c.questionario_ativo === false ? '<div style="margin-top:4px;font-size:10px;color:var(--amber);font-family:var(--sans)">Sem autoatendimento (só follow-up)</div>' : ''}</td>
+              <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}${c.gatilho_compartilhado ? '<div style="margin-top:6px;color:var(--amber);font-family:var(--sans);font-size:11px">Gatilho compartilhado com ' + c.campanhas_mesmo_gatilho + ' campanhas. Métrica por gatilho, não por campanha única.</div>' : ''}</td>
+              <td style="white-space:normal">${escapeHtml(c.template_nome || '—')}</td>
+              <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
+              <td class="td-mono">${c.leads || 0}</td>
+              <td class="td-green">${c.vendas || 0}</td>
+              <td>${c.conversao || '0.0'}%</td>
+              <td class="td-mono">${c.cpl ? 'R$ ' + c.cpl : '—'}</td>
+              <td class="td-mono">${c.custo_venda ? 'R$ ' + c.custo_venda : '—'}</td>
+              <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativa' : 'Inativa'}</span></td>
+              <td style="white-space:nowrap"><button class="btn-add-small" style="padding:4px 10px;font-size:11px;margin-right:6px" onclick="editarCampanha(${c.id})">Editar</button><button class="btn-remove" title="Excluir campanha" onclick="excluirCampanha(${c.id})">×</button></td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>` : '<div style="font-size:13px;color:var(--text3);margin-top:10px">Nenhuma campanha cadastrada ainda.</div>';
+  } catch(e) {
+    box.innerHTML = '<div style="font-size:13px;color:var(--red);margin-top:10px">Erro ao carregar campanhas: ' + e.message + '</div>';
+  }
+}
+
+
+let fuCampanhas = [];
+let editandoCampanhaId = null;
+
+async function excluirCampanha(campanhaId) {
+  if (!confirm('Excluir esta campanha/origem? Ela será removida da tela e deixará de atribuir novos leads.')) return;
+  const statusEl = document.getElementById('fu-campanha-status');
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Excluindo campanha...'; }
+    await api('/movatak/admin/campanhas/' + campanhaId, { method: 'DELETE' });
+    await carregarCampanhas(fuId);
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha excluída.'; }
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao excluir campanha: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao excluir campanha.'; }
+  }
+}
+
+async function excluirTemplateFollowupSelecionado() {
+  const sel = document.getElementById('fu-template-select');
+  const template = sel ? sel.value : '';
+  const statusEl = document.getElementById('fu-template-status');
+  if (!template) { document.getElementById('fu-err').textContent = 'Escolha um template personalizado para excluir.'; return; }
+  if (!template.startsWith('custom:')) {
+    document.getElementById('fu-err').textContent = 'Templates padrão não podem ser excluídos. Apenas templates personalizados deste cliente.';
+    return;
+  }
+  const id = template.replace('custom:', '').replace(/\D/g, '');
+  if (!id) return;
+  if (!confirm('Excluir este template personalizado?')) return;
+  try {
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = 'Excluindo template...'; }
+    await api('/movatak/admin/templates-followup/' + id, { method: 'DELETE' });
+    await carregarTemplatesFollowup(fuId);
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Template excluído.'; }
+    document.getElementById('fu-err').textContent = '';
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao excluir template: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao excluir template.'; }
+  }
+}
+
+async function adicionarCampanha(btn) {
+  const statusEl = document.getElementById('fu-campanha-status');
+  const nome = document.getElementById('fu-campanha-nome').value.trim();
+  const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
+  const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
+  const investimento_valor = document.getElementById('fu-campanha-investimento').value.trim();
+  const template_id = document.getElementById('fu-campanha-template').value;
+  const questEl = document.getElementById('fu-campanha-questionario');
+  const questionario_ativo = questEl ? questEl.checked : true;
+  const qtSel = document.getElementById('fu-campanha-quest-template');
+  const questionario_template_id = qtSel && qtSel.value ? parseInt(qtSel.value, 10) : null;
+  if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
+  if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
+  if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = editandoCampanhaId ? 'Salvando...' : 'Adicionando...'; }
+    if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = editandoCampanhaId ? 'Salvando alterações...' : 'Cadastrando campanha...'; }
+    if (editandoCampanhaId) {
+      await api('/movatak/admin/campanhas/' + editandoCampanhaId, {
+        method: 'PATCH',
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id })
+      });
+    } else {
+      await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
+        method: 'POST',
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id })
+      });
+    }
+    cancelarEdicaoCampanha();
+    await carregarCampanhas(fuId);
+    document.getElementById('fu-err').textContent = '';
+    if (statusEl) { statusEl.style.color = 'var(--green)'; statusEl.textContent = 'Campanha salva com gatilho, investimento e template vinculados.'; }
+  } catch(e) {
+    document.getElementById('fu-err').textContent = 'Erro ao salvar campanha: ' + e.message;
+    if (statusEl) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Falha ao salvar campanha.'; }
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = editandoCampanhaId ? 'Salvar edição' : 'Adicionar'; }
+  }
+}
+
+function editarCampanha(id) {
+  const c = (fuCampanhas || []).find(x => x.id === id);
+  if (!c) return;
+  document.getElementById('fu-campanha-nome').value = c.nome || '';
+  document.getElementById('fu-campanha-gatilho').value = c.gatilho || '';
+  document.getElementById('fu-campanha-investimento-tipo').value = c.investimento_tipo === 'total' ? 'total' : 'diario';
+  document.getElementById('fu-campanha-investimento').value = (c.investimento_valor != null ? c.investimento_valor : (c.investimento != null ? c.investimento : ''));
+  const campSel = document.getElementById('fu-campanha-template');
+  const targetVal = c.template_id != null ? String(c.template_id) : '';
+  campSel.value = targetVal;
+  // Se a opção não existe no select (cache ainda não carregado ou id não bateu), injeta temporariamente
+  if (targetVal && campSel.value !== targetVal) {
+    const opt = document.createElement('option');
+    opt.value = targetVal;
+    opt.setAttribute('data-fallback', '1');
+    opt.textContent = c.template_nome || ('Template #' + targetVal);
+    campSel.appendChild(opt);
+    campSel.value = targetVal;
+  }
+  editandoCampanhaId = id;
+  const questEl = document.getElementById('fu-campanha-questionario');
+  if (questEl) questEl.checked = c.questionario_ativo !== false;
+  const qtSel = document.getElementById('fu-campanha-quest-template');
+  if (qtSel) qtSel.value = c.questionario_template_id != null ? String(c.questionario_template_id) : '';
+  const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Salvar edição';
+  const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = '';
+  const statusEl = document.getElementById('fu-campanha-status');
+  if (statusEl) { statusEl.style.color = 'var(--amber)'; statusEl.textContent = 'Editando: ' + (c.nome || '') + '. Ajuste os campos acima e clique em Salvar edição.'; }
+  document.getElementById('fu-campanha-nome').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelarEdicaoCampanha() {
+  editandoCampanhaId = null;
+  ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  const t = document.getElementById('fu-campanha-template');
+  if (t) {
+    // Remove opções injetadas como fallback (não são do cache oficial)
+    Array.from(t.querySelectorAll('option[data-fallback]')).forEach(o => o.remove());
+    t.value = '';
+  }
+  const tipo = document.getElementById('fu-campanha-investimento-tipo'); if (tipo) tipo.value = 'diario';
+  const questEl = document.getElementById('fu-campanha-questionario'); if (questEl) questEl.checked = true;
+  const qtSel = document.getElementById('fu-campanha-quest-template'); if (qtSel) qtSel.value = '';
+  const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Adicionar';
+  const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = 'none';
+}
+
+async function marcarLeadCliente(leadId) {
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/cliente', { method: 'PATCH', body: JSON.stringify({}) });
+    await carregarHistoricoLead(leadId); carregarOperacao(fuId); carregarFilaFollowup(fuId);
+  } catch(e) { document.getElementById('fu-err').textContent = 'Erro ao marcar cliente: ' + e.message; }
+}
+
+async function descartarLeadPainel(leadId) {
+  if (!confirm('Descartar este lead?')) return;
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/descartar', { method: 'PATCH', body: JSON.stringify({}) });
+    await carregarHistoricoLead(leadId); carregarOperacao(fuId); carregarFilaFollowup(fuId);
+  } catch(e) { document.getElementById('fu-err').textContent = 'Erro ao descartar lead: ' + e.message; }
+}
+
+// Auto refresh a cada 2 minutos
+setInterval(() => {
+  if (!secret) return;
+  if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+    carregarFunilAtendimento();
+  } else {
+    carregarTudo();
+  }
+}, 120000);
+
+// ============================================================
+// QUESTIONÁRIO CONSULTIVO — editor por cliente
+// ============================================================
+let questState = { clienteId: null, templateId: null, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
+let questTemplatesCache = [];
+let questSeq = 0;
+
+const QUEST_TIPOS = [
+  { v: 'texto',   t: 'Texto livre' },
+  { v: 'opcoes',  t: 'Opções (numeradas)' },
+  { v: 'sim_nao', t: 'Sim ou Não' },
+  { v: 'cep',     t: 'CEP (verifica cobertura)' }
+];
+
+let diagClienteId = null;
+function abrirDiagnostico(id) {
+  diagClienteId = id;
+  document.getElementById('diag-telefone').value = '';
+  document.getElementById('diag-resultado').innerHTML = '';
+  document.getElementById('modal-diagnostico').classList.add('open');
+  setTimeout(() => { const el = document.getElementById('diag-telefone'); if (el) el.focus(); }, 100);
+}
+
+async function rodarDiagnostico() {
+  const tel = document.getElementById('diag-telefone').value.trim();
+  const box = document.getElementById('diag-resultado');
+  if (!tel) { box.innerHTML = '<div class="fu-hint" style="color:var(--amber)">Digite um telefone.</div>'; return; }
+  box.innerHTML = '<div class="fu-hint">Buscando...</div>';
+  try {
+    const d = await api('/movatak/admin/clientes/' + diagClienteId + '/diagnostico?telefone=' + encodeURIComponent(tel));
+    if (!d.encontrado) {
+      box.innerHTML = '<div class="fu-hint" style="color:var(--amber)">Nenhum lead encontrado. Variantes buscadas: ' + (d.variantes_buscadas || []).join(', ') + '</div>';
+      return;
+    }
+    const L = d.lead;
+    const linha = (k, v) => `<div style="display:flex;gap:10px;padding:5px 0;border-bottom:1px solid var(--border)"><span style="color:var(--text3);min-width:150px;font-size:12px">${k}</span><span style="font-size:13px;color:var(--text)">${escapeHtml(String(v == null ? '—' : v))}</span></div>`;
+    const badge = (txt, cor) => `<span style="background:${cor};color:#fff;font-size:11px;padding:2px 8px;border-radius:10px">${escapeHtml(txt)}</span>`;
+    const estadoQuest = (d.questionario_estado || []).map(e =>
+      `<div style="font-size:12px;color:var(--text2);padding:3px 0">#${e.id} — passo ${e.passo_idx}, ${e.tentativas_invalidas || 0} erro(s), ${badge(e.status, e.status === 'em_andamento' ? 'var(--blue)' : (e.status === 'concluido' ? 'var(--green)' : 'var(--text3)'))}</div>`
+    ).join('') || '<div class="fu-hint">Nenhum questionário registrado.</div>';
+    const eventos = (d.eventos || []).map(ev =>
+      `<div style="font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)"><span style="color:var(--accent)">${escapeHtml(ev.tipo)}</span> <span style="color:var(--text3)">— ${escapeHtml(ev.descricao || '')}</span><br><span style="color:var(--text3);font-size:11px">${new Date(ev.criado_em).toLocaleString('pt-BR')}</span></div>`
+    ).join('') || '<div class="fu-hint">Nenhum evento.</div>';
+    const fups = (d.followups || []).map(f =>
+      `<div style="font-size:12px;color:var(--text2);padding:2px 0">FU${f.sequencia_fu || 1} msg${f.etapa_seq} — ${badge(f.status, f.status === 'pendente' ? 'var(--amber)' : 'var(--text3)')} ${f.proximo_envio ? '<span style="color:var(--text3)">' + new Date(f.proximo_envio).toLocaleString('pt-BR') + '</span>' : ''}</div>`
+    ).join('') || '<div class="fu-hint">Nenhum follow-up.</div>';
+
+    box.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:12px">
+        <div style="font-weight:700;margin-bottom:8px">${escapeHtml(L.nome || 'Lead')} ${L.automacao_pausada ? badge('automação pausada', 'var(--red)') : ''}</div>
+        ${linha('Telefone', L.telefone)}
+        ${linha('Etapa', L.etapa)}
+        ${linha('Campanha', L.campanha)}
+        ${linha('Gatilho detectado', L.gatilho_detectado)}
+        ${linha('Template follow-up', L.template_followup)}
+        ${linha('Fonte do questionário', L.fonte_questionario)}
+        ${linha('Criado em', new Date(L.criado_em).toLocaleString('pt-BR'))}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">Questionário</div>${estadoQuest}
+          <div style="font-weight:600;font-size:13px;margin:12px 0 8px">Follow-ups</div>${fups}
+        </div>
+        <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px;max-height:300px;overflow-y:auto">
+          <div style="font-weight:600;font-size:13px;margin-bottom:8px">Eventos recentes</div>${eventos}
+        </div>
+      </div>`;
+  } catch (e) {
+    box.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+async function abrirQuestionario(id) {
+  questState = { clienteId: id, templateId: null, passos: [], regras: [], planos: [], introImagem: '', finalImagem: '' };
+  document.getElementById('quest-err').textContent = '';
+  document.getElementById('modal-quest').classList.add('open');
+  await carregarListaTemplatesQuest(id);
+  await carregarQuestNoEditor();
+}
+
+// Carrega o seletor de modelos de autoatendimento (cliente + templates).
+async function carregarListaTemplatesQuest(clienteId) {
+  const sel = document.getElementById('quest-template-select');
+  if (!sel) return;
+  try {
+    const rows = await api('/movatak/admin/clientes/' + clienteId + '/questionario-templates');
+    questTemplatesCache = rows || [];
+    const opts = ['<option value="">Questionário do cliente (padrão)</option>']
+      .concat(questTemplatesCache.map(t => `<option value="${t.id}">${escapeHtml(t.nome)} (${t.qtd_passos} pergunta${t.qtd_passos === 1 ? '' : 's'})</option>`));
+    sel.innerHTML = opts.join('');
+    sel.value = questState.templateId ? String(questState.templateId) : '';
+    const delBtn = document.getElementById('btn-quest-tpl-del');
+    if (delBtn) delBtn.style.display = questState.templateId ? '' : 'none';
+  } catch (e) {
+    sel.innerHTML = '<option value="">Questionário do cliente (padrão)</option>';
+  }
+}
+
+// Carrega no editor o conteúdo do destino atual (cliente ou template).
+async function carregarQuestNoEditor() {
+  const id = questState.clienteId;
+  try {
+    let r;
+    if (questState.templateId) {
+      r = await api('/movatak/admin/questionario-templates/' + questState.templateId);
+      r.planos = await carregarPlanosQuest(id);
+    } else {
+      r = await api('/movatak/admin/clientes/' + id + '/questionario');
+    }
+    questState.planos = r.planos || [];
+    questState.passos = (r.passos || []).map(p => ({
+      id: p.id || ('q' + (++questSeq)),
+      tipo: p.tipo || 'texto',
+      pergunta: p.pergunta || '',
+      pergunta_curta: p.pergunta_curta || '',
+      opcoes: Array.isArray(p.opcoes) ? p.opcoes : [],
+      imagem: p.imagem || '',
+      delay_segundos: Math.max(0, parseInt(p.delay_segundos ?? p.delaySegundos ?? 0, 10) || 0),
+      aguardar: p.aguardar !== false,
+      encerrar_apos: !!p.encerrar_apos,
+      saltos: (p.saltos && typeof p.saltos === 'object') ? p.saltos : {}
+    }));
+    questState.introImagem = r.intro_imagem || '';
+    questState.finalImagem = r.final_imagem || '';
+    questState.regras = (r.recomendacao || []).map(g => ({
+      plano_id: g.plano_id != null ? String(g.plano_id) : '',
+      condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
+    }));
+    // Campos exclusivos do cliente (não existem em template): desabilita visualmente quando em template
+    const ehTemplate = !!questState.templateId;
+    document.getElementById('quest-ativo').checked = ehTemplate ? true : !!r.ativo;
+    document.getElementById('quest-ativo').disabled = ehTemplate;
+    document.getElementById('quest-acao-arquivar').checked = !ehTemplate && !!r.acao_arquivar_ao_final;
+    document.getElementById('quest-acao-nao-lido').checked = !ehTemplate && !!r.acao_marcar_nao_lido;
+    document.getElementById('quest-intro').value = r.intro || '';
+    document.getElementById('quest-final').value = r.final || '';
+    document.getElementById('quest-comando-parar').value = r.comando_parar || '';
+    document.getElementById('quest-comando-ativar').value = r.comando_ativar || '';
+    // Lembrete de inatividade: converte minutos salvos para tempo+unidade amigável.
+    const lmEl = document.getElementById('quest-lembrete-msg');
+    const ltEl = document.getElementById('quest-lembrete-tempo');
+    const luEl = document.getElementById('quest-lembrete-unidade');
+    if (lmEl) lmEl.value = r.quest_lembrete_msg || '';
+    const min = r.quest_lembrete_minutos || 0;
+    if (ltEl && luEl) {
+      if (min > 0 && min % 60 === 0) { ltEl.value = min / 60; luEl.value = 'horas'; }
+      else if (min > 0) { ltEl.value = min; luEl.value = 'minutos'; }
+      else { ltEl.value = ''; luEl.value = 'horas'; }
+    }
+    document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
+    renderQuestPassos();
+    renderQuestRegras();
+    renderQuestImg('intro');
+    renderQuestImg('final');
+    if (!ehTemplate) carregarCobertura(id);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+async function carregarPlanosQuest(clienteId) {
+  try {
+    const r = await api('/movatak/admin/clientes/' + clienteId + '/questionario');
+    return r.planos || [];
+  } catch (e) { return []; }
+}
+
+async function trocarTemplateQuest() {
+  const sel = document.getElementById('quest-template-select');
+  questState.templateId = sel.value ? parseInt(sel.value, 10) : null;
+  const delBtn = document.getElementById('btn-quest-tpl-del');
+  if (delBtn) delBtn.style.display = questState.templateId ? '' : 'none';
+  await carregarQuestNoEditor();
+}
+
+async function novoTemplateQuest() {
+  const nome = prompt('Nome do novo modelo de autoatendimento (ex: DTF Têxtil, Provedor):');
+  if (!nome || !nome.trim()) return;
+  const status = document.getElementById('quest-tpl-status');
+  try {
+    if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Criando modelo...'; }
+    const res = await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario-templates', {
+      method: 'POST',
+      body: JSON.stringify({ nome: nome.trim(), intro: '', final: '', passos: [], recomendacao: [] })
+    });
+    questState.templateId = res.id;
+    await carregarListaTemplatesQuest(questState.clienteId);
+    await carregarQuestNoEditor();
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Modelo "' + nome.trim() + '" criado. Edite as perguntas e clique em Salvar.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao criar modelo: ' + e.message; }
+  }
+}
+
+async function excluirTemplateQuest() {
+  if (!questState.templateId) return;
+  if (!confirm('Excluir este modelo de autoatendimento? As campanhas que o usam voltarão ao questionário do cliente.')) return;
+  const status = document.getElementById('quest-tpl-status');
+  try {
+    await api('/movatak/admin/questionario-templates/' + questState.templateId, { method: 'DELETE' });
+    questState.templateId = null;
+    await carregarListaTemplatesQuest(questState.clienteId);
+    await carregarQuestNoEditor();
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Modelo excluído.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao excluir: ' + e.message; }
+  }
+}
+
+function fecharQuestionario() {
+  document.getElementById('modal-quest').classList.remove('open');
+}
+
+function renderQuestPassos() {
+  const wrap = document.getElementById('quest-passos');
+  if (!questState.passos.length) {
+    wrap.innerHTML = '<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhuma pergunta. Adicione a primeira abaixo.</div>';
+    return;
+  }
+  wrap.innerHTML = questState.passos.map((p, i) => {
+    const tipoSel = QUEST_TIPOS.map(o => `<option value="${o.v}" ${p.tipo === o.v ? 'selected' : ''}>${o.t}</option>`).join('');
+    const opcoesField = p.tipo === 'opcoes'
+      ? `<input type="text" class="fu-textarea quest-mini" placeholder="Opções separadas por vírgula. Ex: Trabalho, Estudo, Jogos" value="${escAttr(p.opcoes.join(', '))}" oninput="questSetPasso(${i},'opcoes',this.value)">`
+      : '';
+    // UI de saltos condicionais (opções e sim/não)
+    let saltosField = '';
+    if (p.tipo === 'opcoes' || p.tipo === 'sim_nao') {
+      const labels = p.tipo === 'sim_nao' ? ['Sim', 'Não'] : (p.opcoes || []);
+      if (labels.length) {
+        const destinos = (selIdx) => {
+          const atual = (p.saltos && p.saltos[String(selIdx)]) || '';
+          const optsPerg = questState.passos
+            .map((pp, j) => ({ pp, num: j + 1 }))
+            .filter(x => x.num - 1 !== i && (x.pp.id || '').trim())
+            .map(x => `<option value="${escAttr(x.pp.id)}" ${atual === x.pp.id ? 'selected' : ''}>→ Pergunta #${x.num}${x.pp.pergunta_curta ? ' ('+escAttr(x.pp.pergunta_curta)+')' : ''}</option>`).join('');
+          return `<option value="" ${!atual ? 'selected' : ''}>Seguir normal</option>${optsPerg}<option value="__fim__" ${atual === '__fim__' ? 'selected' : ''}>Encerrar (recomendar)</option>`;
+        };
+        saltosField = `<div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:8px;margin:4px 0">
+          <div class="fu-hint" style="margin-bottom:6px">Saltos condicionais — para onde ir conforme a escolha:</div>
+          ${labels.map((lab, k) => `<div style="display:flex;align-items:center;gap:8px;margin:4px 0">
+            <span style="font-size:12px;color:var(--text2);min-width:90px">${k + 1} - ${escapeHtml(lab)}</span>
+            <select class="fu-textarea quest-mini" style="margin:0;max-width:260px" onchange="questSetSalto(${i},${k + 1},this.value)">${destinos(k + 1)}</select>
+          </div>`).join('')}
+        </div>`;
+      }
+    }
+    return `<div class="quest-card">
+      <div class="quest-card-head">
+        <span class="quest-num">#${i + 1}</span>
+        <select class="quest-mini" onchange="questSetPasso(${i},'tipo',this.value)">${tipoSel}</select>
+        <span style="flex:1"></span>
+        <button class="quest-iconbtn" onclick="questMovePasso(${i},-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+        <button class="quest-iconbtn" onclick="questMovePasso(${i},1)" ${i === questState.passos.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="quest-iconbtn quest-del" onclick="questRemovePasso(${i})">✕</button>
+      </div>
+      <input type="text" class="fu-textarea quest-mini" placeholder="Pergunta enviada ao lead" value="${escAttr(p.pergunta)}" oninput="questSetPasso(${i},'pergunta',this.value)">
+      ${opcoesField}
+      ${saltosField}
+      <div class="quest-row2">
+        <input type="text" class="fu-textarea quest-mini" placeholder="ID p/ regras (ex: pessoas)" value="${escAttr(p.id)}" oninput="questSetPasso(${i},'id',this.value)">
+        <input type="text" class="fu-textarea quest-mini" placeholder="Rótulo curto no resumo (opcional)" value="${escAttr(p.pergunta_curta)}" oninput="questSetPasso(${i},'pergunta_curta',this.value)">
+      </div>
+      <div class="quest-delay-row">
+        <label>Espera antes de enviar</label>
+        <input type="number" min="0" step="1" class="fu-textarea quest-mini" value="${escAttr(p.delay_segundos || 0)}" oninput="questSetPasso(${i},'delay_segundos',this.value)">
+        <span>segundos</span>
+      </div>
+      ${imgControl(p.imagem, `questUploadPasso(${i},this)`, `questRemoveImgPasso(${i})`)}
+      <label class="quest-aguardar"><input type="checkbox" ${p.aguardar !== false ? 'checked' : ''} onchange="questSetPasso(${i},'aguardar',this.checked)"> Aguardar resposta do lead <span class="quest-aguardar-hint">(desmarque p/ só enviar material e seguir)</span></label>
+      <label class="quest-aguardar"><input type="checkbox" ${p.encerrar_apos ? 'checked' : ''} onchange="questSetPasso(${i},'encerrar_apos',this.checked)"> Encerrar após esta pergunta <span class="quest-aguardar-hint">(vai direto para a mensagem final, ignorando as perguntas abaixo)</span></label>
+    </div>`;
+  }).join('');
+}
+
+function questSetSalto(i, indiceOpcao, destino) {
+  if (!questState.passos[i]) return;
+  if (!questState.passos[i].saltos) questState.passos[i].saltos = {};
+  if (destino) questState.passos[i].saltos[String(indiceOpcao)] = destino;
+  else delete questState.passos[i].saltos[String(indiceOpcao)];
+}
+
+function questSetPasso(i, campo, valor) {
+  if (!questState.passos[i]) return;
+  if (campo === 'opcoes') {
+    questState.passos[i].opcoes = valor.split(',').map(s => s.trim()).filter(Boolean);
+  } else if (campo === 'delay_segundos') {
+    questState.passos[i].delay_segundos = Math.max(0, parseInt(valor, 10) || 0);
+  } else {
+    questState.passos[i][campo] = valor;
+  }
+  if (campo === 'tipo') renderQuestPassos();
+}
+function questAddPasso() {
+  questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', delay_segundos: 0, aguardar: true, encerrar_apos: false, saltos: {} });
+  renderQuestPassos();
+}
+function questRemovePasso(i) { questState.passos.splice(i, 1); renderQuestPassos(); }
+function questMovePasso(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= questState.passos.length) return;
+  const t = questState.passos[i]; questState.passos[i] = questState.passos[j]; questState.passos[j] = t;
+  renderQuestPassos();
+}
+
+function renderQuestRegras() {
+  const wrap = document.getElementById('quest-regras');
+  if (!wrap) return;
+  const passosOpcoes = questState.passos.filter(p => p.tipo === 'opcoes');
+  const maxScore = passosOpcoes.reduce((s, p) => s + (Array.isArray(p.opcoes) ? p.opcoes.length : 0), 0);
+  const planosHtml = (questState.planos || []).length
+    ? questState.planos.map(p => `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <span>${escAttr(p.nome)}${p.valor != null ? ' — R$ ' + formatarValorPlanoBR(p.valor) : ''}</span>
+        <span style="color:var(--accent);font-family:var(--mono)">nota mín. ${p.nota_minima || 0}</span>
+      </div>`).join('')
+    : '<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhum plano cadastrado. Cadastre os planos na tela de edição do cliente (botão Editar).</div>';
+  wrap.innerHTML = `
+    <div class="fu-hint" style="font-size:12px;color:var(--text2);line-height:1.5;margin-bottom:10px">
+      A recomendação é <strong>automática por pontuação</strong>. Cada pergunta de "Opções numeradas" pontua pela posição da opção escolhida: a 1ª vale 1, a 2ª vale 2, e assim por diante (a última vale o nº de opções). A soma define o plano: o lead recebe o de <strong>maior nota mínima</strong> que alcançar.
+      <br>Pontuação máxima com as perguntas atuais: <strong style="color:var(--accent)">${maxScore}</strong>.
+    </div>
+    <div class="quest-card">${planosHtml}</div>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:8px">Cadastre os planos e ajuste a "nota mínima" de cada um na tela de <strong>edição do cliente</strong>.</div>`;
+}
+
+function imgControl(url, uploadCall, removeCall) {
+  if (url) {
+    const ehVideo = /\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(url);
+    const preview = ehVideo
+      ? `<video src="${escAttr(url)}" muted style="height:46px;border-radius:8px;border:1px solid var(--border2)"></video>`
+      : `<img src="${escAttr(url)}">`;
+    return `<div class="quest-img">${preview}<button class="quest-imglink" onclick="${removeCall}">remover ${ehVideo ? 'vídeo' : 'imagem'}</button></div>`;
+  }
+  return `<label class="quest-imgbtn">📎 Imagem ou vídeo<input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" hidden onchange="${uploadCall}"></label>`;
+}
+async function subirImagem(file) {
+  const dataUrl = await new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = () => rej(new Error('falha ao ler arquivo'));
+    r.readAsDataURL(file);
+  });
+  const r = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
+  return r.url;
+}
+async function questUploadPasso(i, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    questState.passos[i].imagem = await subirImagem(f);
+    document.getElementById('quest-err').textContent = '';
+    renderQuestPassos();
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveImgPasso(i) { questState.passos[i].imagem = ''; renderQuestPassos(); }
+function renderQuestImg(tipo) {
+  const url = tipo === 'intro' ? questState.introImagem : questState.finalImagem;
+  const el = document.getElementById('quest-' + tipo + '-img');
+  if (el) el.innerHTML = imgControl(url, `questUploadMidia('${tipo}',this)`, `questRemoveMidia('${tipo}')`);
+}
+async function questUploadMidia(tipo, input) {
+  const f = input.files && input.files[0]; if (!f) return;
+  document.getElementById('quest-err').textContent = 'Enviando imagem...';
+  try {
+    const url = await subirImagem(f);
+    if (tipo === 'intro') questState.introImagem = url; else questState.finalImagem = url;
+    document.getElementById('quest-err').textContent = '';
+    renderQuestImg(tipo);
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro no upload: ' + e.message; }
+}
+function questRemoveMidia(tipo) {
+  if (tipo === 'intro') questState.introImagem = ''; else questState.finalImagem = '';
+  renderQuestImg(tipo);
+}
+
+async function salvarQuestionario() {
+  const btn = document.getElementById('btn-quest-save');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  document.getElementById('quest-err').textContent = '';
+  try {
+    // Lembrete de inatividade: converte tempo+unidade para minutos.
+    const lembreteMsg = (document.getElementById('quest-lembrete-msg')?.value || '').trim();
+    const lembreteTempo = parseInt(document.getElementById('quest-lembrete-tempo')?.value, 10) || 0;
+    const lembreteUnidade = document.getElementById('quest-lembrete-unidade')?.value || 'horas';
+    const lembreteMinutos = lembreteTempo > 0
+      ? (lembreteUnidade === 'horas' ? lembreteTempo * 60 : lembreteTempo)
+      : null;
+    const passos = questState.passos
+      .filter(p => (p.pergunta || '').trim())
+      .map(p => ({
+        id: (p.id || '').trim() || ('q' + (++questSeq)),
+        tipo: p.tipo,
+        pergunta: p.pergunta.trim(),
+        pergunta_curta: (p.pergunta_curta || '').trim(),
+        opcoes: p.tipo === 'opcoes' ? (p.opcoes || []) : [],
+        imagem: p.imagem || '',
+        delay_segundos: Math.max(0, parseInt(p.delay_segundos, 10) || 0),
+        aguardar: p.aguardar !== false,
+        encerrar_apos: !!p.encerrar_apos,
+        saltos: (p.tipo === 'opcoes' || p.tipo === 'sim_nao') && p.saltos && Object.keys(p.saltos).length ? p.saltos : undefined
+      }));
+    // Destino: template de autoatendimento OU questionário do cliente.
+    if (questState.templateId) {
+      await api('/movatak/admin/questionario-templates/' + questState.templateId, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          intro: document.getElementById('quest-intro').value,
+          final: document.getElementById('quest-final').value,
+          comando_parar: document.getElementById('quest-comando-parar').value.trim(),
+          comando_ativar: document.getElementById('quest-comando-ativar').value.trim(),
+          intro_imagem: questState.introImagem || '',
+          final_imagem: questState.finalImagem || '',
+          passos,
+          recomendacao: []
+        })
+      });
+      await carregarListaTemplatesQuest(questState.clienteId);
+    } else {
+      await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          ativo: document.getElementById('quest-ativo').checked,
+          intro: document.getElementById('quest-intro').value,
+          final: document.getElementById('quest-final').value,
+          comando_parar: document.getElementById('quest-comando-parar').value.trim(),
+          comando_ativar: document.getElementById('quest-comando-ativar').value.trim(),
+          intro_imagem: questState.introImagem || '',
+          final_imagem: questState.finalImagem || '',
+          passos,
+          recomendacao: [],
+          acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
+          acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked,
+          quest_lembrete_msg: lembreteMsg,
+          quest_lembrete_minutos: lembreteMinutos
+        })
+      });
+    }
+    btn.textContent = '✓ Salvo';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar Auto Atendimento'; }, 1500);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro ao salvar: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Salvar Auto Atendimento';
+  }
+}
+
+async function carregarCobertura(id) {
+  try {
+    const r = await api('/movatak/admin/clientes/' + id + '/cobertura');
+    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
+  } catch (e) { /* silencioso */ }
+}
+async function salvarCobertura() {
+  const btn = document.getElementById('btn-cob-save');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const modo = document.querySelector('input[name="cob-modo"]:checked').value;
+    const r = await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', {
+      method: 'POST',
+      body: JSON.stringify({ modo, ceps: document.getElementById('quest-ceps').value })
+    });
+    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
+    document.getElementById('quest-ceps').value = '';
+    btn.textContent = '✓ ' + (r.inseridos || 0) + ' adicionados';
+    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar CEPs'; }, 1800);
+  } catch (e) {
+    document.getElementById('quest-err').textContent = 'Erro nos CEPs: ' + e.message;
+    btn.disabled = false; btn.textContent = 'Salvar CEPs';
+  }
+}
+async function limparCobertura() {
+  if (!confirm('Apagar todos os CEPs cadastrados deste cliente?')) return;
+  try {
+    await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', { method: 'DELETE' });
+    document.getElementById('quest-cob-total').textContent = '0 CEPs cadastrados';
+  } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
+}
+
+// ── Credenciais de acesso ao portal do cliente ──
+let _credClienteId = null;
+async function abrirCredenciais(clienteId) {
+  _credClienteId = clienteId;
+  document.getElementById('cred-email').value = '';
+  document.getElementById('cred-senha').value = '';
+  document.getElementById('cred-msg').textContent = '';
+  document.getElementById('cred-hint').textContent = 'Carregando...';
+  document.getElementById('modal-credenciais').classList.add('open');
+  try {
+    const c = await api('/movatak/admin/clientes/' + clienteId + '/dados');
+    document.getElementById('cred-cliente-nome').textContent = c.nome || '';
+    document.getElementById('cred-email').value = c.portal_email || '';
+    document.getElementById('cred-hint').textContent = c.portal_tem_senha
+      ? '✓ Senha já definida. Preencha o campo senha apenas se quiser trocar.'
+      : '⚠️ Nenhuma senha definida ainda. Defina uma para o cliente conseguir entrar.';
+    // Mostra quando o cliente trocou a senha por último (se trocou).
+    const msgEl = document.getElementById('cred-msg');
+    if (c.portal_senha_trocada_em) {
+      const dt = new Date(c.portal_senha_trocada_em);
+      const quando = dt.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      msgEl.style.color = 'var(--text2)';
+      msgEl.textContent = '🔄 O cliente trocou a senha por último em ' + quando + '.';
+    } else {
+      msgEl.textContent = '';
+    }
+  } catch (e) {
+    document.getElementById('cred-hint').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+function fecharCredenciais() {
+  document.getElementById('modal-credenciais').classList.remove('open');
+  _credClienteId = null;
+}
+async function salvarCredenciais() {
+  if (!_credClienteId) return;
+  const email = document.getElementById('cred-email').value.trim();
+  const senha = document.getElementById('cred-senha').value.trim();
+  const msg = document.getElementById('cred-msg');
+  const btn = document.getElementById('btn-cred-save');
+  if (!email) { msg.style.color = 'var(--red)'; msg.textContent = 'Informe o email de acesso.'; return; }
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    const body = { portal_email: email };
+    if (senha) body.portal_senha = senha;
+    await api('/movatak/admin/clientes/' + _credClienteId + '/credenciais-portal', { method: 'PATCH', body: JSON.stringify(body) });
+    msg.style.color = 'var(--green)';
+    msg.textContent = '✓ Credenciais salvas. Envie email e senha para o cliente.';
+    document.getElementById('cred-senha').value = '';
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = 'Erro: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar credenciais';
+  }
+}
+
+function abrirReset() {
+  document.getElementById('reset-tel').value = '';
+  document.getElementById('reset-msg').textContent = '';
+  document.getElementById('modal-reset').classList.add('open');
+}
+function fecharReset() {
+  document.getElementById('modal-reset').classList.remove('open');
+}
+async function executarReset() {
+  const tel = (document.getElementById('reset-tel').value || '').replace(/\D/g, '');
+  const msg = document.getElementById('reset-msg');
+  if (tel.length < 8) { msg.style.color = 'var(--red)'; msg.textContent = 'Informe um telefone válido (com DDD).'; return; }
+  if (!confirm('Resetar o número ' + tel + '? Isso apaga o lead e todo o histórico dele.')) return;
+  const btn = document.getElementById('btn-reset-go');
+  btn.disabled = true; btn.textContent = 'Resetando...';
+  try {
+    const r = await api('/movatak/admin/reset-lead', { method: 'POST', body: JSON.stringify({ telefone: tel }) });
+    msg.style.color = 'var(--green)';
+    msg.textContent = r.removidos > 0
+      ? '✓ ' + r.removidos + ' lead(s) apagado(s). Mande a frase-gatilho de novo pra testar.'
+      : 'Nenhum lead encontrado com esse número (já está limpo).';
+    if (secret) {
+      if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+        carregarFunilAtendimento();
+      } else {
+        carregarTudo();
+      }
+    }
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = 'Erro: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Resetar lead';
+  }
+}
+
+function parseValorPlanoNumero(v) {
+  if (v === null || v === undefined || v === '') return null;
+  let raw = String(v).trim().replace(/[R$\s]/g, '');
   if (!raw) return null;
 
-  // Aceita 99,90 / 99.90 / 1.299,90 / 1,299.90.
   const lastComma = raw.lastIndexOf(',');
   const lastDot = raw.lastIndexOf('.');
   let normalized = raw;
 
+  // Aceita BR e US: 99,90 / 99.90 / 1.299,90 / 1,299.90
   if (lastComma >= 0 && lastDot >= 0) {
-    if (lastComma > lastDot) {
-      normalized = raw.replace(/\./g, '').replace(',', '.');
-    } else {
-      normalized = raw.replace(/,/g, '');
-    }
+    normalized = lastComma > lastDot
+      ? raw.replace(/\./g, '').replace(',', '.')
+      : raw.replace(/,/g, '');
   } else if (lastComma >= 0) {
     normalized = raw.replace(/\./g, '').replace(',', '.');
   } else if (lastDot >= 0) {
     const parts = raw.split('.');
-    // Quando há mais de um ponto, trata os anteriores como milhar.
     normalized = parts.length > 2 ? parts.slice(0, -1).join('') + '.' + parts.at(-1) : raw;
   }
 
-  const n = parseFloat(normalized);
-  return Number.isFinite(n) ? n : null;
+  const num = Number(normalized);
+  return Number.isFinite(num) ? num : null;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
+function normalizarValorPlano(v) {
+  const num = parseValorPlanoNumero(v);
+  return num === null ? '' : num.toFixed(2);
 }
 
-function normalizarDelayQuestionario(passo) {
-  const n = parseInt(passo && (passo.delay_segundos ?? passo.delaySegundos ?? passo.delay), 10);
-  if (!Number.isFinite(n) || n <= 0) return 0;
-  return Math.min(n, 300); // limite operacional: 5 minutos por mensagem
+function formatarValorPlanoBR(v) {
+  const num = parseValorPlanoNumero(v);
+  if (num === null) return String(v ?? '');
+  return num.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function formatarValorPlanoInput(v) {
+  return formatarValorPlanoBR(v);
+}
+
+function escAttr(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 
-const TEMPLATES_FOLLOWUP = {
-  provedor: {
-    nome: 'Provedor de Internet',
-    trigger_msg: 'Olá! Tenho interesse nos planos de internet.',
-    followup_v2: {
-      fu1: {
-        msg1: 'Oi {nome}! Tudo bem? Recebemos seu interesse nos planos de internet. Posso te ajudar a escolher o melhor plano?',
-        msg2: '{nome}, temos opções com internet rápida e suporte próximo. Me diga sua cidade/bairro para verificarmos a disponibilidade.'
-      },
-      fu2: {
-        msg1: '{nome}, passando para saber se ainda deseja contratar sua internet. Posso continuar seu atendimento?',
-        msg2: 'Oi {nome}! Ainda consigo te ajudar com a instalação. Quer que eu veja as condições para sua região?',
-        msg3: '{nome}, último contato por aqui. Se quiser retomar a contratação, é só me chamar.'
+// ── Funil de Atendimento ────────────────────────────────────
+
+function formatarDataCurta(v) {
+  if (!v) return '—';
+  try { return new Date(v).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }); }
+  catch(e) { return '—'; }
+}
+
+function abrirWhatsLead(telefone) {
+  const tel = String(telefone || '').replace(/\D/g, '');
+  if (!tel) return;
+  window.open('https://wa.me/' + tel, '_blank');
+}
+
+function ehPaginaFunilAtendimento() {
+  try {
+    return new URLSearchParams(window.location.search).get('funil') === '1' || (!!_vendedorToken && !!document.getElementById('funil-board'));
+  } catch(e) { return false; }
+}
+
+// ── Tempo real (Socket.io) ──────────────────────────────────
+// Conecta ao backend e atualiza a conversa aberta na hora + o kanban
+// com debounce, sem substituir o polling de segurança existente.
+let _socketFunil = null;
+let _kanbanReloadTimer = null;
+
+function agendarReloadKanban() {
+  if (_kanbanReloadTimer) clearTimeout(_kanbanReloadTimer);
+  _kanbanReloadTimer = setTimeout(() => {
+    _kanbanReloadTimer = null;
+    if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
+      carregarFunilAtendimento();
+    }
+  }, 3000);
+}
+
+function iniciarSocketFunil(clienteId) {
+  if (typeof io === 'undefined') return; // CDN não carregou; segue com polling
+  if ((!secret && !_vendedorToken) || !clienteId) return;
+  try {
+    if (_socketFunil) { _socketFunil.disconnect(); }
+    _socketFunil = io(API_BASE, { auth: { secret: secret || null, vendedorToken: _vendedorToken || null }, transports: ['websocket', 'polling'] });
+
+    _socketFunil.on('connect', () => {
+      _socketFunil.emit('entrar-cliente', clienteId);
+    });
+
+    _socketFunil.on('mensagem:nova', (payload) => {
+      const leadId = payload && payload.leadId;
+      const mensagem = payload && payload.mensagem;
+      // 1) Se a conversa desse lead está aberta no painel lateral, adiciona na hora
+      if (leadId && window._painelLeadId && String(leadId) === String(window._painelLeadId)) {
+        adicionarMensagemAoPainel(mensagem);
       }
-    },
-    boas_vindas_msg: 'Seja bem-vindo(a){nome}! Seu atendimento foi encaminhado e em breve nossa equipe passa os próximos passos.'
-  },
-  dtfuv: {
-    nome: 'DTF UV / Estampas',
-    trigger_msg: 'PROV >> Olá! Tenho interesse nas estampas e gostaria de informações.',
-    followup_v2: {
-      fu1: {
-        msg1: 'Oi {nome}! Tudo bem? Recebemos seu interesse nas estampas. Vou te passar as informações e tirar suas dúvidas.',
-        msg2: '{nome}, nossas estampas ajudam a identificar equipamentos com acabamento profissional e alta durabilidade. Posso te mostrar os modelos?'
-      },
-      fu2: {
-        msg1: '{nome}, passando para saber se ainda deseja seguir com as estampas. Posso retomar seu atendimento?',
-        msg2: 'Oi {nome}! Ainda temos disponibilidade para produção. Quer que eu te envie as opções?',
-        msg3: '{nome}, último contato por aqui. Se quiser fechar suas estampas depois, é só me chamar.'
-      }
-    },
-    boas_vindas_msg: 'A DTFclub agradece a preferência. Daremos nosso melhor para que suas estampas cheguem com a qualidade de sempre.'
-  },
-  generico: {
-    nome: 'Genérico Comercial',
-    trigger_msg: 'Olá! Tenho interesse e gostaria de informações.',
-    followup_v2: {
-      fu1: {
-        msg1: 'Oi {nome}! Tudo bem? Recebemos seu contato e estou à disposição para te ajudar.',
-        msg2: '{nome}, posso te passar as informações e tirar suas dúvidas por aqui.'
-      },
-      fu2: {
-        msg1: '{nome}, passando para saber se ainda posso te ajudar.',
-        msg2: 'Oi {nome}! Ainda ficou alguma dúvida sobre o atendimento?',
-        msg3: '{nome}, vou encerrar por aqui, mas se quiser retomar é só chamar.'
-      }
-    },
-    boas_vindas_msg: 'Seja bem-vindo(a){nome}! Obrigado pela preferência.'
+      // 2) Atualiza o kanban (com debounce para aguentar rajadas)
+      agendarReloadKanban();
+    });
+
+    // Mensagem apagada em outra aba/sessão — remove o balão se a conversa estiver aberta aqui.
+    _socketFunil.on('mensagem:apagada', (payload) => {
+      const conversaId = payload && payload.conversaId;
+      if (!conversaId) return;
+      const bolha = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
+      if (bolha) bolha.remove();
+    });
+  } catch (e) {
+    // Falha de socket nunca pode derrubar a tela; o polling continua valendo.
+    console.warn('[socket] não conectou:', e.message);
   }
-};
-
-// ============================================================
-// Mensagens de follow up por etapa
-// ============================================================
-const MSGS_FOLLOWUP = {
-  1: (nome) => `Oi${nome ? ' ' + nome : ''}! Tudo bem? Passei aqui pra saber se ficou alguma dúvida sobre o que conversamos. Estou à disposição!`,
-  2: (nome) => `${nome || 'Olá'}! Só reforçando que ainda temos disponibilidade pra você. Se quiser retomar a conversa, é só chamar aqui.`,
-  3: (_) => `Ei! Não quero ser chato, mas queria dar uma última passada antes de seguir em frente. Tem algo que posso esclarecer pra facilitar sua decisão?`,
-  4: (_) => `Último recado da minha parte! Se em algum momento fizer sentido retomar, estarei aqui. Abraço!`
-};
-
-const DIAS_FOLLOWUP = { 1: 1, 2: 3, 3: 7, 4: 14 };
-// Follow up em 2 blocos: FU1 imediatas, FU2 (D+0, D+1, D+3)
-const DIAS_FOLLOWUP_V2 = {
-  fu1: { 1: 0, 2: 0 },
-  fu2: { 1: 0, 2: 1, 3: 3 }
-};
-
-// Agenda follow-up no novo formato FU1/FU2.
-// sequenciaFu: 1 = boas-vindas imediatas; 2 = reativação.
-async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = true) {
-  const chave = 'fu' + sequenciaFu;
-  const diasPorMensagem = DIAS_FOLLOWUP_V2[chave];
-
-  if (!diasPorMensagem) {
-    throw new Error('Sequencia de follow-up invalida: ' + sequenciaFu);
-  }
-
-  if (limparFila) {
-    await query('DELETE FROM movatak_followup WHERE lead_id = $1', [leadId]);
-  }
-
-  const agora = new Date();
-
-  for (const [etapa, dias] of Object.entries(diasPorMensagem)) {
-    const proximo = new Date(agora);
-    proximo.setDate(proximo.getDate() + dias);
-
-    await query(
-      `INSERT INTO movatak_followup
-         (lead_id, cliente_id, etapa_seq, proximo_envio, status, sequencia_fu, data_entrada)
-       VALUES ($1, $2, $3, $4, 'pendente', $5, $6)`,
-      [leadId, clienteId, parseInt(etapa), proximo.toISOString(), sequenciaFu, agora.toISOString()]
-    );
-  }
-
-  await registrarEventoLead(
-    leadId,
-    clienteId,
-    'followup_agendado',
-    `FU${sequenciaFu} agendado`,
-    { sequencia_fu: sequenciaFu, limpar_fila: limparFila }
-  );
 }
 
-// Envia imediatamente as mensagens pendentes de um lead.
-// Usado principalmente no FU1, para não depender do cron de 10 minutos.
-// Se a Z-API falhar, mantém a mensagem como pendente para o cron tentar de novo.
-async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) {
-  const params = [leadId];
-  let filtroSequencia = '';
-
-  if (apenasSequenciaFu !== null && apenasSequenciaFu !== undefined) {
-    params.push(apenasSequenciaFu);
-    filtroSequencia = ` AND COALESCE(f.sequencia_fu, 1) = $2`;
+// Acrescenta uma única mensagem ao final da conversa aberta, sem refazer tudo.
+function adicionarMensagemAoPainel(m) {
+  if (!m) return;
+  const box = document.getElementById('painel-conversa');
+  if (!box) return;
+  // Evita duplicar: se já existe um balão com esse id na tela, ignora.
+  if (m.id && box.querySelector('[data-conversa-id="' + m.id + '"]')) return;
+  // Mantém o cache usado pelo botão de responder.
+  if (m.id && !(painelConversasCache || []).some(x => Number(x.id) === Number(m.id))) {
+    painelConversasCache.push(m);
   }
+  // Se ainda está com o placeholder de "nenhuma mensagem", limpa primeiro
+  if (box.querySelector('div[style*="text-align:center"]')) box.innerHTML = '';
+  const tmp = document.createElement('div');
+  tmp.innerHTML = renderBolhaMensagemPainel(m);
+  const el = tmp.firstElementChild;
+  if (el) box.appendChild(el);
+  rolarConversaParaFim();
+}
 
-  const r = await query(
-    `SELECT f.*, l.telefone, l.nome, l.etapa,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
-            camp.id AS campanha_id, camp.nome AS campanha_nome,
-            t.followup_v2 AS template_followup_v2, t.nome AS template_nome_debug
-       FROM movatak_followup f
-       JOIN movatak_leads l ON l.id = f.lead_id
-       JOIN movatak_clientes c ON c.id = f.cliente_id
-       LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
-       LEFT JOIN movatak_followup_templates t
-              ON t.id = COALESCE(camp.template_id, l.template_id_origem) AND t.ativo = true
-      WHERE f.lead_id = $1
-        AND f.status = 'pendente'
-        AND f.proximo_envio <= NOW()
-        ${filtroSequencia}
-      ORDER BY COALESCE(f.sequencia_fu, 1), f.etapa_seq`,
-    params
-  );
 
-  if (!r.rows.length) {
-    console.log(`[followup][imediato] nenhuma mensagem pendente para lead ${leadId}`);
+// ── Layout modular do funil + menu de respostas rápidas ───────
+const FUNIL_LAYOUT_STORAGE_PREFIX = 'movatak_funil_layout_';
+
+function getFunilLayoutGrid() {
+  return document.getElementById('funil-layout-grid');
+}
+
+function getFunilLayoutKey() {
+  const id = funilState && funilState.clienteId ? String(funilState.clienteId) : 'global';
+  return FUNIL_LAYOUT_STORAGE_PREFIX + id;
+}
+
+function colunaFunilEstaOculta(coluna) {
+  const grid = getFunilLayoutGrid();
+  return !!(grid && grid.classList.contains('hide-' + coluna));
+}
+
+function contarColunasFunilVisiveis() {
+  const cols = ['inbox', 'kanban', 'chat'];
+  return cols.filter(c => !colunaFunilEstaOculta(c)).length;
+}
+
+function salvarLayoutFunil() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  const prefs = {
+    inbox: grid.classList.contains('hide-inbox'),
+    kanban: grid.classList.contains('hide-kanban'),
+    chat: grid.classList.contains('hide-chat')
+  };
+  try { localStorage.setItem(getFunilLayoutKey(), JSON.stringify(prefs)); } catch(e) {}
+  atualizarBotoesLayoutFunil();
+}
+
+function restaurarLayoutFunil() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  try {
+    const prefs = JSON.parse(localStorage.getItem(getFunilLayoutKey()) || '{}');
+    ['inbox', 'kanban', 'chat'].forEach(c => {
+      grid.classList.toggle('hide-' + c, !!prefs[c]);
+    });
+    // Segurança: nunca deixa as três colunas sumirem ao mesmo tempo.
+    if (['inbox','kanban','chat'].every(c => grid.classList.contains('hide-' + c))) {
+      grid.classList.remove('hide-chat');
+    }
+  } catch(e) {}
+  atualizarBotoesLayoutFunil();
+}
+
+function atualizarBotoesLayoutFunil() {
+  ['inbox', 'kanban', 'chat'].forEach(c => {
+    const btn = document.getElementById('layout-btn-' + c);
+    if (!btn) return;
+    const oculto = colunaFunilEstaOculta(c);
+    btn.classList.toggle('is-hidden', oculto);
+    btn.classList.toggle('is-active', !oculto);
+    btn.title = oculto ? 'Mostrar coluna' : 'Ocultar coluna';
+  });
+}
+
+function toggleColunaFunil(coluna) {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  const cls = 'hide-' + coluna;
+  const vaiOcultar = !grid.classList.contains(cls);
+  if (vaiOcultar && contarColunasFunilVisiveis() <= 1) {
+    const st = document.getElementById('funil-status');
+    if (st) {
+      st.style.color = 'var(--amber)';
+      st.textContent = 'Pelo menos uma coluna precisa ficar visível.';
+      setTimeout(() => { if (st.textContent.includes('Pelo menos')) st.textContent = ''; }, 2200);
+    }
     return;
   }
+  grid.classList.toggle(cls);
+  salvarLayoutFunil();
+}
 
-  for (const row of r.rows) {
-    try {
-      if (row.etapa !== 'followup') {
-        console.log(`[followup][imediato] lead ${leadId} ignorado porque etapa=${row.etapa}`);
-        continue;
-      }
+function mostrarTodasColunasFunil() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  grid.classList.remove('hide-inbox', 'hide-kanban', 'hide-chat');
+  salvarLayoutFunil();
+}
 
-      const fuData = followupDataDaLinha(row);
-      const seqKey = 'fu' + (row.sequencia_fu || 1);
-      const msgs = fuData[seqKey] || {};
-      const msgText = msgs['msg' + row.etapa_seq];
-      const templateFonte = row.template_followup_v2 ? `template:${row.template_nome_debug}` : 'cliente:followup_msgs_v2';
-      console.log(`[imediato][fu] lead=${leadId} campanha=${row.campanha_nome||'—'} fonte=${templateFonte} seq=${seqKey} etapa=${row.etapa_seq}`);
+function garantirColunaFunilVisivel(coluna) {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  grid.classList.remove('hide-' + coluna);
+  salvarLayoutFunil();
+}
 
-      if (!msgText || !String(msgText).trim()) {
-        await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
-        console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} vazia; marcada como enviada -> lead ${leadId}`);
-        continue;
-      }
+function posicionarQuickMenuPainel() {
+  const wrap = document.getElementById('quick-menu-painel');
+  const dropdown = document.getElementById('painel-msgs-rapidas-grid');
+  const trigger = wrap ? wrap.querySelector('.quick-menu-trigger') : null;
+  if (!wrap || !dropdown || !trigger || !wrap.classList.contains('open')) return;
 
-      const msg = String(msgText).replace(/{nome}/g, row.nome || 'Lead');
+  const margem = 12;
+  const rect = trigger.getBoundingClientRect();
+  const largura = Math.min(360, window.innerWidth - (margem * 2));
+  const alturaMaxima = Math.max(220, Math.min(420, rect.top - (margem * 2)));
+  let left = rect.right - largura;
+  left = Math.max(margem, Math.min(left, window.innerWidth - largura - margem));
 
-      if (!(await podeEnviarMensagemAutomatica(leadId))) {
-        await query(`UPDATE movatak_followup SET status = 'pausado', erro_envio = 'limite anti-spam diario atingido' WHERE id = $1`, [row.id]);
-        await registrarEventoLead(leadId, row.cliente_id, 'anti_spam', 'Mensagem automática pausada por limite diário', { followup_id: row.id });
-        console.log(`[anti-spam] limite diario atingido -> lead ${leadId}`);
-        continue;
-      }
+  dropdown.style.width = largura + 'px';
+  dropdown.style.maxHeight = alturaMaxima + 'px';
+  dropdown.style.left = left + 'px';
+  dropdown.style.top = Math.max(margem, rect.top - alturaMaxima - 8) + 'px';
+  dropdown.style.right = 'auto';
+  dropdown.style.bottom = 'auto';
+}
 
-      await zapiEnviar(
-        row.zapi_instance,
-        row.zapi_token,
-        row.zapi_client_token,
-        row.telefone,
-        msg
-      );
-
-      await query(
-        `UPDATE movatak_followup
-            SET status = 'enviado', enviado_em = NOW(), erro_envio = NULL, tentativas_envio = COALESCE(tentativas_envio, 0) + 1
-          WHERE id = $1`,
-        [row.id]
-      );
-      registrarConversa(leadId, row.cliente_id, 'saida', msg || '', null, null, null, null, 'followup').catch(() => null);
-      await registrarEventoLead(
-        leadId,
-        row.cliente_id,
-        'mensagem_enviada',
-        `FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada`,
-        { followup_id: row.id, sequencia_fu: row.sequencia_fu || 1, etapa_seq: row.etapa_seq }
-      );
-      console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada -> lead ${leadId}`);
-    } catch (e) {
-      await query(
-        `UPDATE movatak_followup
-            SET erro_envio = $1, tentativas_envio = COALESCE(tentativas_envio, 0) + 1
-          WHERE id = $2`,
-        [String(e.message || e).slice(0, 500), row.id]
-      ).catch(() => null);
-      await registrarErroZapi(row.cliente_id, e.message, { lead_id: leadId, followup_id: row.id });
-      await registrarEventoLead(leadId, row.cliente_id, 'erro_envio', 'Erro ao enviar mensagem de follow-up', { erro: e.message, followup_id: row.id });
-      console.error(`[followup][imediato] erro ao enviar lead ${leadId} fila ${row.id}:`, e.message);
-      // Não marca como enviado. O cron tentará reenviar depois.
-    }
+function toggleQuickMenuPainel(ev) {
+  if (ev) ev.stopPropagation();
+  const wrap = document.getElementById('quick-menu-painel');
+  if (!wrap) return;
+  wrap.classList.toggle('open');
+  if (wrap.classList.contains('open')) {
+    setTimeout(posicionarQuickMenuPainel, 0);
   }
 }
 
-// Se o lead ficou 1h sem responder ao FU1, entra no FU2.
-async function migrarFU1ParaFU2() {
-  const r = await query(
-    `SELECT DISTINCT l.id AS lead_id, l.cliente_id
-     FROM movatak_leads l
-     JOIN movatak_followup f ON f.lead_id = l.id
-     WHERE l.etapa = 'followup'
-       AND COALESCE(f.sequencia_fu, 1) = 1
-       AND COALESCE(f.data_entrada, l.atualizado_em, l.criado_em) <= NOW() - INTERVAL '1 hour'
-       AND NOT EXISTS (
-         SELECT 1 FROM movatak_followup f2
-         WHERE f2.lead_id = l.id
-           AND f2.sequencia_fu = 2
-           AND f2.status = 'pendente'
-       )`,
-    []
-  );
-
-  for (const row of r.rows) {
-    await query('DELETE FROM movatak_followup WHERE lead_id = $1 AND COALESCE(sequencia_fu, 1) = 1', [row.lead_id]);
-    await agendarFollowupV2(row.lead_id, row.cliente_id, 2, false);
-    await registrarEventoLead(row.lead_id, row.cliente_id, 'migrado_fu2', 'Lead migrou automaticamente do FU1 para o FU2 após 1h sem resposta');
-    console.log(`[cron] FU1 -> FU2 migrado -> lead ${row.lead_id}`);
-  }
+function fecharQuickMenuPainel() {
+  const wrap = document.getElementById('quick-menu-painel');
+  if (wrap) wrap.classList.remove('open');
 }
 
-// ============================================================
-// ROTA 1 — Webhook de mensagem recebida
-// Z-API → POST /webhook/mensagem
-// ============================================================
-app.post('/movatak/webhook/mensagem', async (req, res) => {
-  try {
-    const { phone, text, senderName } = req.body;
-    if (!phone || !text) return res.json({ ok: true });
-
-    const mensagem = (text || '').trim().toLowerCase();
-    const telefone = phone.replace(/\D/g, '');
-
-    // Buscar cliente com trigger que bate com a mensagem
-    // Não usa ILIKE direto porque pequenas diferenças como "PROV>>" vs "PROV >>" quebravam o disparo.
-    const r = await query(
-      `SELECT * FROM movatak_clientes WHERE ativo = true AND trigger_msg IS NOT NULL`,
-      []
-    );
-    const cliente = r.rows.find(c => textoBateGatilho(mensagem, c.trigger_msg));
-    if (!cliente) return res.json({ ok: true });
-
-    // Verificar se lead já existe para evitar duplicata (tolerante ao 9º dígito)
-    const _varDup = variantesTelefone(telefone);
-    const existe = await query(
-      `SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varDup.map((_, i) => '$' + (i + 2)).join(',')})`,
-      [cliente.id, ..._varDup]
-    );
-    if (existe.rows.length) return res.json({ ok: true });
-
-    // Criar lead direto em FU1
-    const novoLead = await query(
-      `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa)
-       VALUES ($1, $2, $3, 'followup')
-       RETURNING id`,
-      [cliente.id, telefone, senderName || null]
-    );
-
-    await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota /webhook/mensagem', { telefone, origem: 'webhook/mensagem' });
-    await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
-    await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
-
-    // Etiquetar no WhatsApp
-    await zapiEtiquetar(
-      cliente.zapi_instance,
-      cliente.zapi_token,
-      cliente.zapi_client_token,
-      telefone,
-      'Lead'
-    );
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[webhook/mensagem]', e.message);
-    res.status(500).json({ error: e.message });
-  }
+document.addEventListener('click', (ev) => {
+  const wrap = document.getElementById('quick-menu-painel');
+  if (wrap && !wrap.contains(ev.target)) wrap.classList.remove('open');
 });
+window.addEventListener('resize', posicionarQuickMenuPainel);
+window.addEventListener('scroll', posicionarQuickMenuPainel, true);
 
-// ============================================================
-// ROTA 2 — Webhook de etiqueta aplicada
-// Z-API → POST /webhook/etiqueta
-// ============================================================
-app.post('/movatak/webhook/etiqueta', async (req, res) => {
-  try {
-    // Payload Z-API label_association
-    const { phone, label, instanceId } = req.body;
-    if (!phone || !label) return res.json({ ok: true });
 
-    const telefone = phone.replace(/\D/g, '');
-    const etiqueta = (label || '').toLowerCase();
 
-    // Buscar cliente pela instância
-    const rc = await query(
-      'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
-      [instanceId]
-    );
-    if (!rc.rows.length) return res.json({ ok: true });
-
-    const cliente = rc.rows[0];
-
-    // Buscar lead (tolerante ao 9º dígito)
-    const _varRl = variantesTelefone(telefone);
-    const rl = await query(
-      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varRl.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-      [cliente.id, ..._varRl]
-    );
-    if (!rl.rows.length) return res.json({ ok: true });
-
-    const lead = rl.rows[0];
-
-    // ---- Follow Up ----
-    if (etiqueta === 'follow up' || etiqueta === 'followup') {
-      await query(
-        `UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
-        [lead.id]
-      );
-
-      // Follow-up manual entra no FU2 (reativacao)
-      await agendarFollowupV2(lead.id, cliente.id, 2, true);
-    }
-
-    // ---- Registrar log de etiqueta (auditoria) ----
-    await query(
-      'INSERT INTO movatak_etiqueta_log (lead_id, cliente_id, etiqueta) VALUES ($1, $2, $3)',
-      [lead.id, cliente.id, etiqueta]
-    );
-
-    // ---- Detecção de vendedor ----
-    const vendedores = await query(
-      'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true',
-      [cliente.id]
-    );
-    const vendedorDetectado = vendedores.rows.find(v =>
-      etiqueta.toLowerCase() === ('vendedor - ' + v.nome.toLowerCase())
-    );
-
-    if (vendedorDetectado) {
-      // Verificar troca suspeita — se já tinha outro vendedor
-      const vendedorAnterior = await query(
-        `SELECT el.etiqueta FROM movatak_etiqueta_log el
-         WHERE el.lead_id = $1
-           AND el.etiqueta ILIKE 'vendedor - %'
-           AND el.aplicado_em < NOW() - INTERVAL '10 seconds'
-         ORDER BY el.aplicado_em DESC LIMIT 1`,
-        [lead.id]
-      );
-
-      if (vendedorAnterior.rows.length && vendedorAnterior.rows[0].etiqueta.toLowerCase() !== etiqueta.toLowerCase()) {
-        // TROCA SUSPEITA DETECTADA
-        const alertMsg = `⚠️ *Alerta: Troca de vendedor detectada*\n\n*Cliente:* ${cliente.nome}\n*Lead:* ${lead.telefone}\n*Vendedor anterior:* ${vendedorAnterior.rows[0].etiqueta}\n*Trocado para:* ${etiqueta}\n*Horário:* ${new Date().toLocaleString('pt-BR')}`;
-
-        // Alerta para Movatak (você)
-        await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, MOVATAK_ADMIN_WA, alertMsg);
-
-        // Alerta para dono da empresa
-        if (cliente.whatsapp_dono) {
-          await enviarAlerta(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, cliente.whatsapp_dono, alertMsg);
-        }
-
-        console.log(`[alerta] Troca de vendedor detectada → lead ${lead.id}`);
-      }
-
-      // Atribuir vendedor ao lead (primeiro a aplicar ganha)
-      if (!lead.vendedor_id) {
-        await query(
-          'UPDATE movatak_leads SET vendedor_id = $1, atualizado_em = NOW() WHERE id = $2',
-          [vendedorDetectado.id, lead.id]
-        );
-      }
-    }
-
-    // ---- Cliente (venda fechada) ----
-    if (etiqueta === 'cliente' || vendedorDetectado) {
-      if (etiqueta === 'cliente' || vendedorDetectado) {
-        await query(
-          `UPDATE movatak_leads SET etapa = 'cliente', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`,
-          [lead.id]
-        );
-
-        await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-          [lead.id]
-        );
-      }
-    }
-
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[webhook/etiqueta]', e.message);
-    res.status(500).json({ error: e.message });
+// Abre o modal de Template (acionado pelo botão do topo). Separado de Msgs rápidas
+// e Agenda. O template é uma AJUDA: aplica colunas do nicho; o usuário continua livre
+// pra excluir/criar qualquer coluna depois.
+function abrirTemplateFunil() {
+  if (!funilState.clienteId) return;
+  let modal = document.getElementById('modal-template-funil');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-template-funil';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
   }
-});
-
-// ============================================================
-// CRON — Disparador de follow up (roda a cada hora)
-// ============================================================
-cron.schedule('*/10 * * * *', async () => {
-  console.log('[cron] Verificando fila de follow up (10 min)...');
-  try {
-    await migrarFU1ParaFU2();
-
-    const r = await query(
-    `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
-            camp.id AS campanha_id, camp.nome AS campanha_nome,
-            t.followup_v2 AS template_followup_v2, t.nome AS template_nome_debug
-     FROM movatak_followup f
-     JOIN movatak_leads l ON l.id = f.lead_id
-     JOIN movatak_clientes c ON c.id = f.cliente_id
-     LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
-     LEFT JOIN movatak_followup_templates t
-            ON t.id = COALESCE(camp.template_id, l.template_id_origem) AND t.ativo = true
-     WHERE f.status = 'pendente'
-       AND f.proximo_envio <= NOW()`,
-      []
-    );
-
-    for (const row of r.rows) {
-      try {
-        if (row.etapa !== 'followup') continue;
-        
-        const fu_data = followupDataDaLinha(row);
-        const seq_key = 'fu' + (row.sequencia_fu || 1);
-        const msgs = fu_data[seq_key] || {};
-        const msg_text = msgs['msg' + row.etapa_seq];
-        const templateFonte = row.template_followup_v2 ? `template:${row.template_nome_debug}` : 'cliente:followup_msgs_v2';
-        console.log(`[cron][fu] lead=${row.lead_id} campanha=${row.campanha_nome||'—'} fonte=${templateFonte} seq=${seq_key} etapa=${row.etapa_seq}`);
-        
-        if (!msg_text || !msg_text.trim()) {
-          await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
-          continue;
-        }
-
-        const msg = msg_text.replace(/{nome}/g, row.nome || 'Lead');
-        await zapiEnviar(
-          row.zapi_instance,
-          row.zapi_token,
-          row.zapi_client_token,
-          row.telefone,
-          msg
-        );
-
-        await query(
-          `UPDATE movatak_followup
-              SET status = 'enviado', enviado_em = NOW(), erro_envio = NULL, tentativas_envio = COALESCE(tentativas_envio, 0) + 1
-            WHERE id = $1`,
-          [row.id]
-        );
-        registrarConversa(row.lead_id, row.cliente_id, 'saida', msg || '', null, null, null, null, 'followup').catch(() => null);
-        await registrarEventoLead(row.lead_id, row.cliente_id, 'mensagem_enviada', `FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada pelo cron`, { followup_id: row.id });
-
-        console.log(`[cron] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviado → lead ${row.lead_id}`);
-      } catch (e) {
-        await query(
-          `UPDATE movatak_followup SET erro_envio = $1, tentativas_envio = COALESCE(tentativas_envio, 0) + 1 WHERE id = $2`,
-          [String(e.message || e).slice(0, 500), row.id]
-        ).catch(() => null);
-        await registrarErroZapi(row.cliente_id, e.message, { lead_id: row.lead_id, followup_id: row.id });
-        await registrarEventoLead(row.lead_id, row.cliente_id, 'erro_envio', 'Erro ao enviar mensagem pelo cron', { erro: e.message, followup_id: row.id });
-        console.error(`[cron] Erro lead ${row.lead_id}:`, e.message);
-      }
-    }
-  } catch (e) {
-    console.error('[cron] Erro geral:', e.message);
-  }
-});
-
-
-// ============================================================
-// CRON — Alerta CPL ultrapassou teto (roda a cada hora)
-// ============================================================
-cron.schedule('30 * * * *', async () => {
-  try {
-    const clientes = await query(
-      `SELECT c.*, COUNT(l.id) AS total_leads
-       FROM movatak_clientes c
-       LEFT JOIN movatak_leads l ON l.cliente_id = c.id AND l.etapa != 'descartado'
-       WHERE c.ativo = true AND c.verba_diaria IS NOT NULL AND c.teto_cpl IS NOT NULL
-       GROUP BY c.id`,
-      []
-    );
-
-    for (const c of clientes.rows) {
-      const totalLeads = parseInt(c.total_leads || 0);
-      if (totalLeads === 0) continue;
-      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(c.criado_em).getTime()) / 86400000));
-      const verbaTotalGasta = parseFloat(c.verba_diaria) * Math.min(diasRodando, 90);
-      const cpl = verbaTotalGasta / totalLeads;
-
-      if (cpl > parseFloat(c.teto_cpl)) {
-        const msg = `🚨 *Alerta CPL — ${c.nome}*\n\nCPL atual: *R$ ${cpl.toFixed(2)}*\nTeto acordado: *R$ ${parseFloat(c.teto_cpl).toFixed(2)}*\n\nRevise as campanhas ou aumente a verba.`;
-        await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, MOVATAK_ADMIN_WA, msg);
-        if (c.whatsapp_dono) {
-          await enviarAlerta(c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono, msg);
-        }
-        console.log(`[cron-cpl] Alerta enviado → ${c.nome} CPL R${cpl.toFixed(2)}`);
-      }
-    }
-  } catch(e) {
-    console.error('[cron-cpl]', e.message);
-  }
-});
-
-// ============================================================
-// CRON — Alerta de lead parado sem etiqueta após 24h
-// ============================================================
-cron.schedule('0 9 * * *', async () => {
-  try {
-    const leads = await query(
-      `SELECT l.*, c.nome AS cliente_nome, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.whatsapp_dono
-       FROM movatak_leads l
-       JOIN movatak_clientes c ON c.id = l.cliente_id
-       WHERE l.etapa = 'lead'
-         AND l.criado_em <= NOW() - INTERVAL '24 hours'
-         AND c.ativo = true`,
-      []
-    );
-
-    for (const lead of leads.rows) {
-      const msg = `⏰ *Lead parado há mais de 24h*\n\n*Cliente:* ${lead.cliente_nome}\n*Lead:* ${lead.telefone}${lead.nome ? ' (' + lead.nome + ')' : ''}\n\nEsse lead ainda não recebeu etiqueta Follow Up ou Cliente. Verifique com a equipe de vendas.`;
-      await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, MOVATAK_ADMIN_WA, msg);
-      if (lead.whatsapp_dono) {
-        await enviarAlerta(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.whatsapp_dono, msg);
-      }
-      console.log(`[cron-parado] Alerta lead parado → ${lead.id}`);
-    }
-  } catch(e) {
-    console.error('[cron-parado]', e.message);
-  }
-});
-
-// ============================================================
-// CRON — Relatório diário para o dono do cliente
-// Ative com MOVATAK_RELATORIO_DIARIO=true
-// ============================================================
-async function montarRelatorioDiarioCliente(clienteId) {
-  const r = await query(
-    `SELECT c.nome, c.whatsapp_dono, c.zapi_instance, c.zapi_token, c.zapi_client_token,
-            COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE - INTERVAL '1 day') AS leads_ontem,
-            COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day') AS vendas_ontem,
-            COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup,
-            COUNT(l.id) FILTER (WHERE l.etapa = 'descartado' AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day') AS descartados_ontem
-       FROM movatak_clientes c
-       LEFT JOIN movatak_leads l ON l.cliente_id = c.id
-      WHERE c.id = $1
-      GROUP BY c.id`,
-    [clienteId]
-  );
-  if (!r.rows.length) return null;
-  const c = r.rows[0];
-  const vend = await query(
-    `SELECT v.nome, COUNT(l.id) AS vendas
-       FROM movatak_vendedores v
-       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
-        AND l.etapa = 'cliente'
-        AND DATE(l.atualizado_em) = CURRENT_DATE - INTERVAL '1 day'
-      WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
-      GROUP BY v.id, v.nome
-      ORDER BY vendas DESC
-      LIMIT 1`,
-    [clienteId]
-  );
-  const top = vend.rows[0];
-  return {
-    cliente: c,
-    mensagem: `📊 *Resumo de ontem — ${c.nome}*
-
-` +
-      `Leads recebidos: *${c.leads_ontem || 0}*
-` +
-      `Vendas marcadas: *${c.vendas_ontem || 0}*
-` +
-      `Em follow-up agora: *${c.em_followup || 0}*
-` +
-      `Descartados ontem: *${c.descartados_ontem || 0}*
-` +
-      `Melhor vendedor: *${top && parseInt(top.vendas || 0) > 0 ? `${top.nome} — ${top.vendas}` : 'sem vendas registradas'}*
-
-` +
-      `_Relatório automático Movatak FollowUp CRM_`
-  };
+  modal.innerHTML = `
+    <div class="modal" style="max-width:480px">
+      <h3>🧩 Template de funil por nicho</h3>
+      <p style="font-size:13px;color:var(--text2);line-height:1.5;margin:10px 0 14px">
+        Escolha um modelo pronto de etapas para o segmento do cliente. As colunas do modelo
+        que ainda não existem serão criadas. <strong>As colunas atuais são preservadas</strong> —
+        o template é uma ajuda, não substitui o que você já montou. Depois de aplicar, você
+        continua livre pra excluir ou criar qualquer coluna.
+      </p>
+      <label class="fu-label">Modelo de nicho</label>
+      <select id="template-modelo-nicho" class="fu-textarea" style="min-height:auto;padding:10px 12px">
+        <option value="">Selecione um modelo...</option>
+        <option value="estetica">Clínica de estética</option>
+        <option value="barbearia">Barbearia</option>
+        <option value="salao">Salão de beleza</option>
+        <option value="odontologia">Clínica odontológica</option>
+        <option value="provedor">Provedor de internet</option>
+        <option value="assistencia">Assistência técnica</option>
+        <option value="grafica_dtf">DTF / Gráfica</option>
+        <option value="generico">Comercial genérico</option>
+      </select>
+      <div id="template-status" class="fu-hint" style="margin-top:10px"></div>
+      <div class="modal-btns" style="margin-top:16px">
+        <button class="btn-cancel" onclick="fecharTemplateFunil()">Cancelar</button>
+        <button class="btn-save" onclick="aplicarModeloNichoFunil()">Aplicar template</button>
+      </div>
+    </div>`;
+  modal.classList.add('open');
 }
 
-async function enviarRelatorioDiarioClientes() {
-  const enabled = String(process.env.MOVATAK_RELATORIO_DIARIO || '').toLowerCase() === 'true';
-  if (!enabled) return;
-  const clientes = await query(
-    `SELECT id FROM movatak_clientes WHERE ativo = true AND whatsapp_dono IS NOT NULL AND whatsapp_dono <> ''`,
-    []
-  );
-  for (const row of clientes.rows) {
-    try {
-      const rel = await montarRelatorioDiarioCliente(row.id);
-      if (!rel || !rel.cliente.whatsapp_dono) continue;
-      await zapiEnviar(rel.cliente.zapi_instance, rel.cliente.zapi_token, rel.cliente.zapi_client_token, rel.cliente.whatsapp_dono, rel.mensagem);
-      console.log(`[relatorio-diario] enviado -> cliente ${row.id}`);
-    } catch (e) {
-      console.error('[relatorio-diario]', e.message);
-    }
-  }
+function fecharTemplateFunil() {
+  const modal = document.getElementById('modal-template-funil');
+  if (modal) modal.classList.remove('open');
 }
 
-cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/Sao_Paulo' });
-
-// Reativador de questionário: lembrete por inatividade e devolução ao follow-up.
-cron.schedule('*/15 * * * *', async () => {
-  await processarQuestionariosParados();
-});
-
-// ============================================================
-// WEBHOOK — Lead respondeu (parar sequência)
-// Z-API dispara quando lead envia qualquer mensagem
-// Verificar se está em followup e pausar
-// ============================================================
-app.post('/movatak/webhook/resposta', async (req, res) => {
+async function aplicarModeloNichoFunil() {
+  if (!funilState.clienteId) return;
+  // Lê do modal de template (novo) ou, como fallback, do select antigo da toolbar.
+  const sel = document.getElementById('template-modelo-nicho') || document.getElementById('funil-modelo-nicho');
+  const nicho = sel ? sel.value : '';
+  const status = document.getElementById('template-status') || document.getElementById('funil-status');
+  if (!nicho) { if (status) { status.style.color='var(--amber)'; status.textContent='Selecione um modelo de nicho.'; } return; }
+  if (status) { status.style.color='var(--text2)'; status.textContent='Aplicando template...'; }
   try {
-    const { phone, instanceId } = req.body;
-    if (!phone) return res.json({ ok: true });
-
-    const telefone = phone.replace(/\D/g, '');
-
-    const rc = await query(
-      'SELECT id FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
-      [instanceId]
-    );
-    if (!rc.rows.length) return res.json({ ok: true });
-
-    const clienteId = rc.rows[0].id;
-
-    const _varResp = variantesTelefone(telefone);
-    const rl = await query(
-      `SELECT id FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varResp.map((_, i) => '$' + (i + 2)).join(',')}) AND etapa = 'followup'`,
-      [clienteId, ..._varResp]
-    );
-    if (!rl.rows.length) return res.json({ ok: true });
-
-    const leadId = rl.rows[0].id;
-
-    await query(
-      `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
-      [leadId]
-    );
-
-    await query(
-      `UPDATE movatak_followup SET status = 'pausado'
-       WHERE lead_id = $1 AND status = 'pendente'`,
-      [leadId]
-    );
-
-    console.log(`[resposta] Follow up pausado e lead voltou para atendimento → lead ${leadId}`);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[webhook/resposta]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ============================================================
-// API — App do cliente (somente leitura)
-// ============================================================
-
-// Dashboard — métricas do período
-// Cliente troca a própria senha (autenticado pelo app_token).
-// Exige a senha atual para confirmar. Registra a data da troca.
-app.patch('/movatak/app/trocar-senha', authCliente, async (req, res) => {
-  try {
-    const senhaAtual = String((req.body && req.body.senha_atual) || '');
-    const senhaNova = String((req.body && req.body.senha_nova) || '');
-    if (!senhaNova || senhaNova.length < 4) return res.status(400).json({ error: 'A nova senha deve ter pelo menos 4 caracteres.' });
-
-    const r = await query('SELECT portal_senha_hash FROM movatak_clientes WHERE id = $1', [req.clienteId]);
-    const atualHash = r.rows.length ? r.rows[0].portal_senha_hash : null;
-    // Se já existe senha, exige a atual correta. Se não existe ainda, permite definir.
-    if (atualHash && atualHash !== hashSenha(senhaAtual)) {
-      return res.status(401).json({ error: 'Senha atual incorreta.' });
-    }
-    await query(
-      'UPDATE movatak_clientes SET portal_senha_hash = $1, portal_senha_trocada_em = NOW() WHERE id = $2',
-      [hashSenha(senhaNova), req.clienteId]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// ── PORTAL DO CLIENTE — Login por email e senha ──────────────
-// Valida email+senha do cliente e devolve o app_token (usado nas demais chamadas).
-app.post('/movatak/app/login', async (req, res) => {
-  try {
-    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
-    const senha = String((req.body && req.body.senha) || '');
-    if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
-
-    const r = await query(
-      'SELECT id, nome, app_token, portal_senha_hash FROM movatak_clientes WHERE LOWER(portal_email) = $1 AND ativo = true',
-      [email]
-    );
-    if (!r.rows.length) return res.status(401).json({ error: 'Email ou senha inválidos.' });
-    const cli = r.rows[0];
-    if (!cli.portal_senha_hash || cli.portal_senha_hash !== hashSenha(senha)) {
-      return res.status(401).json({ error: 'Email ou senha inválidos.' });
-    }
-    res.json({ app_token: cli.app_token, nome: cli.nome });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Retorna a identidade do cliente autenticado (para o portal montar o funil).
-app.get('/movatak/app/me', authCliente, async (req, res) => {
-  res.json({ id: req.clienteId, nome: req.clienteNome, permissoes: req.clientePermissoes });
-});
-
-app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
-  try {
-    const { dias = 30 } = req.query;
-    const clienteId = req.clienteId;
-
-    const r = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado')                          AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente')                              AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')                             AS em_followup,
-         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)                AS leads_hoje,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE) AS vendas_hoje,
-         ROUND(
-           100.0 * COUNT(*) FILTER (WHERE etapa = 'cliente') /
-           NULLIF(COUNT(*) FILTER (WHERE etapa != 'descartado'), 0), 1
-         )                                                                      AS taxa_conversao
-       FROM movatak_leads
-       WHERE cliente_id = $1
-         AND criado_em >= NOW() - ($2 || ' days')::INTERVAL`,
-      [clienteId, parseInt(dias)]
-    );
-
-    const planoTop = await query(
-      `SELECT p.nome, COUNT(*) AS total
-       FROM movatak_leads l
-       JOIN movatak_planos p ON p.id = l.plano_id
-       WHERE l.cliente_id = $1
-         AND l.etapa = 'cliente'
-         AND l.criado_em >= NOW() - ($2 || ' days')::INTERVAL
-       GROUP BY p.nome
-       ORDER BY total DESC
-       LIMIT 1`,
-      [clienteId, parseInt(dias)]
-    );
-
-    const leadsPorDia = await query(
-      `SELECT DATE(criado_em) AS dia, COUNT(*) AS leads
-       FROM movatak_leads
-       WHERE cliente_id = $1
-         AND criado_em >= NOW() - ($2 || ' days')::INTERVAL
-       GROUP BY dia
-       ORDER BY dia`,
-      [clienteId, parseInt(dias)]
-    );
-
-    // CPL calculado: verba_diaria x dias / total_leads
-    const clienteData = await query(
-      'SELECT teto_cpl, verba_diaria, criado_em FROM movatak_clientes WHERE id = $1',
-      [clienteId]
-    );
-    const cd = clienteData.rows[0] || {};
-    const totalLeads = parseInt(r.rows[0].total_leads || 0);
-    let cpl_calculado = null;
-    let alerta_cpl = false;
-    if (cd.verba_diaria && totalLeads > 0) {
-      const diasRodando = Math.max(1, Math.ceil((Date.now() - new Date(cd.criado_em).getTime()) / 86400000));
-      const verbaTotalGasta = parseFloat(cd.verba_diaria) * Math.min(diasRodando, parseInt(dias));
-      cpl_calculado = (verbaTotalGasta / totalLeads).toFixed(2);
-      if (cd.teto_cpl && parseFloat(cpl_calculado) > parseFloat(cd.teto_cpl)) {
-        alerta_cpl = true;
-      }
-    }
-
-    res.json({
-      periodo_dias: parseInt(dias),
-      ...r.rows[0],
-      plano_top: planoTop.rows[0] || null,
-      leads_por_dia: leadsPorDia.rows,
-      cpl_calculado,
-      teto_cpl: cd.teto_cpl || null,
-      alerta_cpl
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/aplicar-nicho', {
+      method: 'POST', body: JSON.stringify({ nicho, sincronizar_whatsapp: false })
     });
+    if (status) { status.style.color='var(--green)'; status.textContent='✓ Template aplicado ao kanban.'; }
+    fecharTemplateFunil();
+    mostrarToast('Template aplicado ao kanban.', 'sucesso');
+    await carregarFunilAtendimento();
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (status) { status.style.color='var(--red)'; status.textContent='Erro ao aplicar template: ' + e.message; }
   }
-});
-
-// ============================================================
-// API — Painel Movatak (seus dados internos)
-// ============================================================
-
-// Listar todos os clientes com resumo
-app.get('/movatak/admin/clientes', authMovatakOuApp, async (req, res) => {
-  try {
-    // Modo cliente (portal): retorna SOMENTE a própria operação.
-    const filtroCliente = req.ehCliente ? ' WHERE c.id = $1' : '';
-    const params = req.ehCliente ? [req.clienteId] : [];
-    const r = await query(
-      `SELECT c.id, c.nome, c.whatsapp, c.ativo, c.criado_em,
-              COUNT(l.id) AS total_leads,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS convertidos,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'followup') AS em_followup,
-              COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE) AS leads_hoje,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE) AS vendas_hoje
-       FROM movatak_clientes c
-       LEFT JOIN movatak_leads l ON l.cliente_id = c.id${filtroCliente}
-       GROUP BY c.id
-       ORDER BY c.criado_em DESC`,
-      params
-    );
-    res.json(r.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Cadastrar cliente novo (onboarding)
-app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
-  try {
-    await garantirColunasClientesPortal();
-    const {
-      nome, whatsapp, zapi_instance, zapi_token, zapi_client_token,
-      trigger_msg, teto_cpl, planos, permissoes_portal, nicho
-    } = req.body;
-
-    if (!nome || !whatsapp || !zapi_instance || !zapi_token || !zapi_client_token) {
-      return res.status(400).json({ error: 'Campos obrigatorios: nome, whatsapp, zapi_instance, zapi_token, zapi_client_token' });
-    }
-
-    const triggerPadrao = (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : 'USAR_GATILHOS_DAS_CAMPANHAS';
-    const app_token = gerarToken('mvtk');
-
-    const r = await query(
-      `INSERT INTO movatak_clientes
-         (nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, app_token, permissoes_portal)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)
-       RETURNING id, app_token`,
-      [nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, triggerPadrao, teto_cpl || null, app_token, JSON.stringify(normalizarPermissoes(permissoes_portal))]
-    );
-
-    const nichoNormalizado = normalizarNichoCliente(nicho);
-    if (nichoNormalizado) {
-      await query('UPDATE movatak_clientes SET nicho=$1, agenda_ativa=true WHERE id=$2', [nichoNormalizado, r.rows[0].id]).catch(() => null);
-      await aplicarTemplateNichoCliente(r.rows[0].id, nichoNormalizado, { sincronizar: false }).catch(e => console.error('[nicho][novo-cliente]', e.message));
-    } else {
-      await garantirFunilPadraoCliente(r.rows[0].id).catch(() => null);
-    }
-
-    const clienteId = r.rows[0].id;
-
-    if (Array.isArray(planos) && planos.length) {
-      for (const p of planos) {
-        await query(
-          'INSERT INTO movatak_planos (cliente_id, nome, valor) VALUES ($1, $2, $3)',
-          [clienteId, p.nome, p.valor || null]
-        );
-      }
-    }
-
-    res.json({ id: clienteId, app_token: r.rows[0].app_token });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Buscar dados de um cliente para edição (sem expor token/client-token)
-app.get('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirColunasClientesPortal();
-    const r = await query(
-      `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
-              boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay,
-              ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha_trocada_em,
-              CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
-       FROM movatak_clientes WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-    res.json(r.rows[0]);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Editar dados de um cliente. Token e client-token só são alterados se enviados.
-// Salva APENAS as credenciais de acesso ao portal (email/senha) de um cliente.
-// Endpoint dedicado — não exige os campos do cadastro completo.
-app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (req, res) => {
-  try {
-    const portal_email = req.body ? req.body.portal_email : undefined;
-    const portal_senha = req.body ? req.body.portal_senha : undefined;
-    const campos = [], valores = [];
-    let idx = 1;
-    if (portal_email !== undefined) {
-      campos.push('portal_email = $' + idx++);
-      valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null);
-    }
-    if (portal_senha) {
-      campos.push('portal_senha_hash = $' + idx++);
-      valores.push(hashSenha(portal_senha));
-    }
-    if (!campos.length) return res.status(400).json({ error: 'Nada para salvar.' });
-    valores.push(req.params.id);
-    const r = await query(
-      `UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id`,
-      valores
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirColunasClientesPortal();
-    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha } = req.body;
-
-    // Modo cliente (portal): NUNCA altera dados sensíveis (WhatsApp, Z-API, CPL,
-    // permissões, credenciais do portal). Preserva os valores atuais do banco e
-    // ignora qualquer tentativa de mudá-los, mesmo que venham forjados no corpo.
-    if (req.ehCliente) {
-      const atual = await query(
-        'SELECT nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, teto_cpl FROM movatak_clientes WHERE id = $1',
-        [req.params.id]
-      );
-      if (!atual.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-      const a = atual.rows[0];
-      whatsapp = a.whatsapp;
-      zapi_instance = a.zapi_instance;
-      zapi_token = undefined;          // não troca
-      zapi_client_token = undefined;   // não troca
-      teto_cpl = a.teto_cpl;
-      if (nome === undefined || nome === null || !String(nome).trim()) nome = a.nome;
-      // Bloqueia campos administrativos vindos do cliente.
-      permissoes_portal = undefined;
-      portal_email = undefined;
-      portal_senha = undefined;
-    }
-
-    if (!nome || !whatsapp || !zapi_instance) {
-      return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
-    }
-
-    const triggerPadrao = (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : 'USAR_GATILHOS_DAS_CAMPANHAS';
-    const campos = ['nome = $1', 'whatsapp = $2', 'zapi_instance = $3', 'trigger_msg = $4', 'teto_cpl = $5'];
-    const valores = [nome, whatsapp, zapi_instance, triggerPadrao, teto_cpl ? parseFloat(teto_cpl) : null];
-    let idx = 6;
-    if (nicho !== undefined) { campos.push('nicho = $' + idx); valores.push(normalizarNichoCliente(nicho) || null); idx++; }
-    if (agenda_ativa !== undefined) { campos.push('agenda_ativa = $' + idx); valores.push(!!agenda_ativa); idx++; }
-    if (permissoes_portal) { campos.push('permissoes_portal = $' + idx + '::jsonb'); valores.push(JSON.stringify(normalizarPermissoes(permissoes_portal))); idx++; }
-    if (acao_arquivar_ao_final !== undefined) { campos.push('acao_arquivar_ao_final = $' + idx); valores.push(!!acao_arquivar_ao_final); idx++; }
-    if (acao_marcar_nao_lido !== undefined) { campos.push('acao_marcar_nao_lido = $' + idx); valores.push(!!acao_marcar_nao_lido); idx++; }
-    if (boas_vindas_lead_msg1 !== undefined) { campos.push('boas_vindas_lead_msg1 = $' + idx); valores.push(boas_vindas_lead_msg1 || null); idx++; }
-    if (boas_vindas_lead_msg2 !== undefined) { campos.push('boas_vindas_lead_msg2 = $' + idx); valores.push(boas_vindas_lead_msg2 || null); idx++; }
-    if (boas_vindas_lead_delay !== undefined) { campos.push('boas_vindas_lead_delay = $' + idx); valores.push(parseInt(boas_vindas_lead_delay) || 5); idx++; }
-    if (ia_oferta !== undefined) { campos.push('ia_oferta = $' + idx); valores.push(ia_oferta || null); idx++; }
-    if (ia_tom !== undefined) { campos.push('ia_tom = $' + idx); valores.push(ia_tom || null); idx++; }
-    if (ia_resumo !== undefined) { campos.push('ia_resumo = $' + idx); valores.push(ia_resumo || null); idx++; }
-    if (portal_email !== undefined) { campos.push('portal_email = $' + idx); valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null); idx++; }
-    if (portal_senha) { campos.push('portal_senha_hash = $' + idx); valores.push(hashSenha(portal_senha)); idx++; }
-
-    if (zapi_token && zapi_token.trim()) {
-      campos.push('zapi_token = $' + idx);
-      valores.push(zapi_token.trim());
-      idx++;
-    }
-    if (zapi_client_token && zapi_client_token.trim()) {
-      campos.push('zapi_client_token = $' + idx);
-      valores.push(zapi_client_token.trim());
-      idx++;
-    }
-
-    valores.push(req.params.id);
-    await query(
-      `UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx}`,
-      valores
-    );
-    const nichoAplicar = normalizarNichoCliente(nicho);
-    if (nicho !== undefined && nichoAplicar) {
-      await aplicarTemplateNichoCliente(req.params.id, nichoAplicar, { sincronizar: false }).catch(e => console.error('[nicho][editar-cliente]', e.message));
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Leads de um cliente específico
-app.get('/movatak/admin/clientes/:id/leads', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT l.*, p.nome AS plano_nome, s.nome AS setor_nome, s.cor AS setor_cor
-       FROM movatak_leads l
-       LEFT JOIN movatak_planos p ON p.id = l.plano_id
-       LEFT JOIN movatak_setores s ON s.id = l.setor_id
-       WHERE l.cliente_id = $1
-       ORDER BY l.criado_em DESC
-       LIMIT 200`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Buscar mensagens de follow up de um cliente
-app.get('/movatak/admin/clientes/:id/ausencia', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT ausencia_msg_padrao, ausencia_horarios, ausencia_datas FROM movatak_clientes WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const row = r.rows[0];
-    res.json({
-      ausencia_msg_padrao: row.ausencia_msg_padrao || '',
-      ausencia_horarios: Array.isArray(row.ausencia_horarios) ? row.ausencia_horarios : [],
-      ausencia_datas: Array.isArray(row.ausencia_datas) ? row.ausencia_datas : []
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/clientes/:id/ausencia', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const { ausencia_msg_padrao, ausencia_horarios, ausencia_datas } = req.body || {};
-    const horarios = Array.isArray(ausencia_horarios) ? ausencia_horarios : [];
-    const datas = Array.isArray(ausencia_datas) ? ausencia_datas : [];
-    await query(
-      `UPDATE movatak_clientes
-         SET ausencia_msg_padrao = $1, ausencia_horarios = $2::jsonb, ausencia_datas = $3::jsonb
-       WHERE id = $4`,
-      [ausencia_msg_padrao || null, JSON.stringify(horarios), JSON.stringify(datas), req.params.id]
-    );
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg, comandos
-       FROM movatak_clientes WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-
-    const row = r.rows[0];
-
-    // Garante compatibilidade com bancos que ainda tenham mensagens no formato antigo.
-    const legado = row.followup_msgs || {};
-    const padrao = {
-      fu1: {
-        msg1: 'Oi {nome}! Tudo bem? Passei aqui pra saber se ficou alguma duvida. Estou a disposicao!',
-        msg2: '{nome}! Ainda temos disponibilidade pra voce. Se quiser retomar a conversa, e so chamar!'
-      },
-      fu2: {
-        msg1: '',
-        msg2: '',
-        msg3: ''
-      }
-    };
-
-    const v2 = row.followup_msgs_v2 || {
-      fu1: {
-        msg1: legado.msg1 || padrao.fu1.msg1,
-        msg2: legado.msg2 || padrao.fu1.msg2
-      },
-      fu2: {
-        msg1: legado.msg3 || padrao.fu2.msg1,
-        msg2: legado.msg4 || padrao.fu2.msg2,
-        msg3: legado.msg5 || padrao.fu2.msg3
-      }
-    };
-
-    const followup_v2 = {
-      fu1: {
-        msg1: (v2.fu1 && v2.fu1.msg1) || padrao.fu1.msg1,
-        msg2: (v2.fu1 && v2.fu1.msg2) || padrao.fu1.msg2
-      },
-      fu2: {
-        msg1: (v2.fu2 && v2.fu2.msg1) || '',
-        msg2: (v2.fu2 && v2.fu2.msg2) || '',
-        msg3: (v2.fu2 && v2.fu2.msg3) || ''
-      }
-    };
-
-    // Retorna em formatos diferentes para não quebrar o admin.html, mesmo que ele esteja lendo nomes antigos.
-    res.json({
-      followup_v2,
-      followup_msgs_v2: followup_v2,
-      fu1: followup_v2.fu1,
-      fu2: followup_v2.fu2,
-      msg1: followup_v2.fu1.msg1,
-      msg2: followup_v2.fu1.msg2,
-      msg3: followup_v2.fu2.msg1,
-      msg4: followup_v2.fu2.msg2,
-      msg5: followup_v2.fu2.msg3,
-      boas_vindas_msg: row.boas_vindas_msg || 'Seja bem-vindo(a){nome}! Estamos muito felizes em ter voce conosco. Em breve entraremos em contato com os proximos passos. Qualquer duvida, e so chamar!',
-      verba_diaria: row.verba_diaria || null,
-      whatsapp_dono: row.whatsapp_dono || null,
-      trigger_msg: row.trigger_msg || '',
-      comandos: row.comandos || { followup: [], convertido: [], descartar: [], desfazer: [] },
-      comando_followup: ((row.comandos || {}).followup || []).join(', '),
-      comando_convertido: ((row.comandos || {}).convertido || []).join(', '),
-      comando_descartar: ((row.comandos || {}).descartar || []).join(', '),
-      comando_desfazer: ((row.comandos || {}).desfazer || []).join(', ')
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Atualizar mensagens de follow up de um cliente (novo formato: 2 blocos)
-app.patch('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const { boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg } = req.body;
-
-    // O painel pode enviar como followup_v2, followup_msgs_v2, fu1/fu2 ou campos soltos.
-    // Esta normalização evita o problema de "aparece na tela, mas não grava".
-    const recebido = req.body.followup_v2 || req.body.followup_msgs_v2 || {};
-    const followup_v2 = {
-      fu1: {
-        msg1: String((recebido.fu1 && recebido.fu1.msg1) || (req.body.fu1 && req.body.fu1.msg1) || req.body.fu1_msg1 || req.body.msg1 || '').trim(),
-        msg2: String((recebido.fu1 && recebido.fu1.msg2) || (req.body.fu1 && req.body.fu1.msg2) || req.body.fu1_msg2 || req.body.msg2 || '').trim()
-      },
-      fu2: {
-        msg1: String((recebido.fu2 && recebido.fu2.msg1) || (req.body.fu2 && req.body.fu2.msg1) || req.body.fu2_msg1 || req.body.msg3 || '').trim(),
-        msg2: String((recebido.fu2 && recebido.fu2.msg2) || (req.body.fu2 && req.body.fu2.msg2) || req.body.fu2_msg2 || req.body.msg4 || '').trim(),
-        msg3: String((recebido.fu2 && recebido.fu2.msg3) || (req.body.fu2 && req.body.fu2.msg3) || req.body.fu2_msg3 || req.body.msg5 || '').trim()
-      }
-    };
-
-    await query(
-      `UPDATE movatak_clientes
-         SET followup_msgs_v2 = $1::jsonb,
-             boas_vindas_msg = $2,
-             verba_diaria = $3,
-             whatsapp_dono = $4,
-             trigger_msg = COALESCE($5, trigger_msg)
-       WHERE id = $6`,
-      [
-        JSON.stringify(followup_v2),
-        boas_vindas_msg || null,
-        verba_diaria ? parseFloat(String(verba_diaria).replace(',', '.')) : null,
-        whatsapp_dono ? String(whatsapp_dono).replace(/\D/g, '') : null,
-        (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : null,
-        req.params.id
-      ]
-    );
-
-    // Alguns admin.html salvam todos os blocos pela própria rota /followup.
-    // Se vierem comandos no mesmo payload, salva também para não perder o bloco 6 da tela.
-    const temComandosNoPayload = req.body.comandos || req.body.followup || req.body.convertido || req.body.descartar || req.body.desfazer ||
-      req.body.comando_followup || req.body.comando_convertido || req.body.comando_vendido || req.body.comando_descartar || req.body.comando_desfazer || req.body.comando_estornar;
-    let comandosSalvos = null;
-    if (temComandosNoPayload) {
-      comandosSalvos = extrairComandosDoBody(req.body);
-      await query(
-        'UPDATE movatak_clientes SET comandos = $1::jsonb WHERE id = $2',
-        [JSON.stringify(comandosSalvos), req.params.id]
-      );
-      console.log('[comandos][salvo-via-followup]', JSON.stringify({ clienteId: req.params.id, comandos: comandosSalvos }));
-    }
-
-    console.log('[followup][salvo]', JSON.stringify({ clienteId: req.params.id, followup_v2 }));
-    res.json({ ok: true, followup_v2, comandos: comandosSalvos });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Atualizar plano de um lead (quando atendente informa qual plano foi vendido)
-app.patch('/movatak/admin/leads/:id/plano', ...exigeLead, async (req, res) => {
-  try {
-    const { plano_id } = req.body;
-    await query(
-      'UPDATE movatak_leads SET plano_id = $1, atualizado_em = NOW() WHERE id = $2',
-      [plano_id, req.params.id]
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// Listar vendedores de um cliente
-app.get('/movatak/admin/clientes/:id/vendedores', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirColunasVendedoresPortal();
-    const r = await query(
-      `SELECT id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em,
-              CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha
-         FROM movatak_vendedores
-        WHERE cliente_id = $1 AND COALESCE(ativo, true) = true
-        ORDER BY nome`,
-      [req.params.id]
-    );
-    // Setores de cada vendedor (pra marcar os checkboxes no cadastro).
-    const sv = await query(
-      `SELECT sv.vendedor_id, sv.setor_id FROM movatak_setor_vendedores sv
-         JOIN movatak_vendedores v ON v.id = sv.vendedor_id
-        WHERE v.cliente_id = $1`,
-      [req.params.id]
-    ).catch(() => ({ rows: [] }));
-    const setoresPorVend = {};
-    sv.rows.forEach(row => {
-      (setoresPorVend[row.vendedor_id] = setoresPorVend[row.vendedor_id] || []).push(Number(row.setor_id));
-    });
-    const rows = r.rows.map(v => ({ ...v, setor_ids: setoresPorVend[v.id] || [] }));
-    res.json(rows);
-  } catch(e) {
-    console.error('[admin/vendedores:list]', e.message);
-    // Fallback para bancos antigos/parcialmente migrados: permite o painel abrir e mostra os dados básicos.
-    try {
-      const r2 = await query(
-        `SELECT id, cliente_id, nome, NULL::text AS comando, NULL::text AS email_acesso,
-                NULL::text AS acesso_token, ativo, criado_em, false AS tem_senha
-           FROM movatak_vendedores
-          WHERE cliente_id = $1 AND COALESCE(ativo, true) = true
-          ORDER BY nome`,
-        [req.params.id]
-      );
-      return res.json(r2.rows);
-    } catch(e2) {
-      console.error('[admin/vendedores:list:fallback]', e2.message);
-      res.status(500).json({ error: e.message });
-    }
-  }
-});
-
-// Cadastrar vendedor e criar etiqueta na Z-API
-app.post('/movatak/admin/clientes/:id/vendedores', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirColunasVendedoresPortal();
-    const { nome, email_acesso, senha_acesso, comando } = req.body;
-    if (!nome) return res.status(400).json({ error: 'Nome obrigatorio.' });
-
-    const rc = await query('SELECT * FROM movatak_clientes WHERE id = $1', [req.params.id]);
-    if (!rc.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-    const cliente = rc.rows[0];
-
-    // Salvar vendedor — etiqueta deve ser criada manualmente no WhatsApp Business
-    // com o nome exato: 'Vendedor - ' + nome
-    const r = await query(
-      `INSERT INTO movatak_vendedores (cliente_id, nome, email_acesso, senha_hash, acesso_token, comando)
-       VALUES ($1,$2,$3,$4,$5,$6)
-       RETURNING id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em`,
-      [req.params.id, nome, email_acesso || null, hashSenha(senha_acesso), gerarToken('vend'), comando ? String(comando).trim().toLowerCase() : null]
-    );
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Remover vendedor
-app.delete('/movatak/admin/clientes/:clienteId/vendedores/:id', authMovatak, async (req, res) => {
-  try {
-    await query('UPDATE movatak_vendedores SET ativo = false WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// Setores (filas) — atendimento dividido por departamento dentro do mesmo WhatsApp
-// ============================================================
-
-// Listar setores de um cliente, com a lista de vendedores vinculados a cada um
-app.get('/movatak/admin/clientes/:id/setores', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT s.id, s.cliente_id, s.nome, s.cor, s.mensagem_saudacao, s.ordem_bot, s.ativo, s.criado_em,
-              COALESCE(
-                json_agg(
-                  json_build_object('id', v.id, 'nome', v.nome)
-                ) FILTER (WHERE v.id IS NOT NULL), '[]'
-              ) AS vendedores
-         FROM movatak_setores s
-         LEFT JOIN movatak_setor_vendedores sv ON sv.setor_id = s.id
-         LEFT JOIN movatak_vendedores v ON v.id = sv.vendedor_id AND COALESCE(v.ativo, true) = true
-        WHERE s.cliente_id = $1 AND COALESCE(s.ativo, true) = true
-        GROUP BY s.id
-        ORDER BY s.ordem_bot, s.nome`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch(e) {
-    console.error('[admin/setores:list]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Criar setor novo
-app.post('/movatak/admin/clientes/:id/setores', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const { nome, cor, mensagem_saudacao, ordem_bot, vendedor_ids } = req.body;
-    if (!nome) return res.status(400).json({ error: 'Nome do setor é obrigatório.' });
-
-    const rc = await query('SELECT id FROM movatak_clientes WHERE id = $1', [req.params.id]);
-    if (!rc.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-
-    const r = await query(
-      `INSERT INTO movatak_setores (cliente_id, nome, cor, mensagem_saudacao, ordem_bot)
-       VALUES ($1,$2,$3,$4,$5)
-       RETURNING id, cliente_id, nome, cor, mensagem_saudacao, ordem_bot, ativo, criado_em`,
-      [req.params.id, nome, cor || '#3B82F6', mensagem_saudacao || null, parseInt(ordem_bot) || 0]
-    );
-    const setor = r.rows[0];
-
-    // Vincula vendedores já na criação, se a lista foi enviada
-    if (Array.isArray(vendedor_ids) && vendedor_ids.length) {
-      for (const vid of vendedor_ids) {
-        await query(
-          `INSERT INTO movatak_setor_vendedores (setor_id, vendedor_id)
-           VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-          [setor.id, parseInt(vid)]
-        );
-      }
-    }
-
-    res.json(setor);
-  } catch(e) {
-    console.error('[admin/setores:create]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Editar setor (nome, cor, mensagem, ordem)
-app.patch('/movatak/admin/setores/:id', ...exigeSetor, async (req, res) => {
-  try {
-    const { nome, cor, mensagem_saudacao, ordem_bot } = req.body;
-    const r = await query(
-      `UPDATE movatak_setores
-          SET nome = COALESCE($1, nome),
-              cor = COALESCE($2, cor),
-              mensagem_saudacao = COALESCE($3, mensagem_saudacao),
-              ordem_bot = COALESCE($4, ordem_bot)
-        WHERE id = $5
-        RETURNING id, cliente_id, nome, cor, mensagem_saudacao, ordem_bot, ativo, criado_em`,
-      [nome || null, cor || null, mensagem_saudacao || null, ordem_bot != null ? parseInt(ordem_bot) : null, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Setor não encontrado.' });
-    res.json(r.rows[0]);
-  } catch(e) {
-    console.error('[admin/setores:edit]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Remover setor (soft delete)
-app.delete('/movatak/admin/setores/:id', ...exigeSetor, async (req, res) => {
-  try {
-    await query('UPDATE movatak_setores SET ativo = false WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch(e) {
-    console.error('[admin/setores:delete]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Vincular ou desvincular um vendedor de um setor
-app.post('/movatak/admin/setores/:id/vendedores', ...exigeSetor, async (req, res) => {
-  try {
-    const { vendedor_id } = req.body;
-    if (!vendedor_id) return res.status(400).json({ error: 'vendedor_id é obrigatório.' });
-    await query(
-      `INSERT INTO movatak_setor_vendedores (setor_id, vendedor_id)
-       VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [req.params.id, parseInt(vendedor_id)]
-    );
-    res.json({ ok: true });
-  } catch(e) {
-    console.error('[admin/setores:vincular-vendedor]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/movatak/admin/setores/:id/vendedores/:vendedorId', ...exigeSetor, async (req, res) => {
-  try {
-    await query(
-      'DELETE FROM movatak_setor_vendedores WHERE setor_id = $1 AND vendedor_id = $2',
-      [req.params.id, req.params.vendedorId]
-    );
-    res.json({ ok: true });
-  } catch(e) {
-    console.error('[admin/setores:desvincular-vendedor]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Transferir um lead para outro setor (e opcionalmente outro vendedor) — segue o
-// mesmo padrão de auditoria já usado em /movatak/admin/leads/:id/vendedor
-app.patch('/movatak/admin/leads/:id/setor', ...exigeLead, async (req, res) => {
-  try {
-    const setorDestinoId = req.body && req.body.setor_id ? parseInt(req.body.setor_id) : null;
-    const vendedorDestinoId = req.body && req.body.vendedor_id ? parseInt(req.body.vendedor_id) : null;
-    if (!setorDestinoId) return res.status(400).json({ error: 'setor_id é obrigatório.' });
-
-    const lead = await query(
-      'SELECT id, cliente_id, setor_id, vendedor_id FROM movatak_leads WHERE id = $1',
-      [req.params.id]
-    );
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const leadAtual = lead.rows[0];
-
-    const setorDestino = await query(
-      'SELECT id, nome, cliente_id FROM movatak_setores WHERE id = $1',
-      [setorDestinoId]
-    );
-    if (!setorDestino.rows.length) return res.status(404).json({ error: 'Setor de destino não encontrado.' });
-    if (setorDestino.rows[0].cliente_id !== leadAtual.cliente_id) {
-      return res.status(400).json({ error: 'Setor de destino não pertence ao mesmo cliente do lead.' });
-    }
-
-    if (vendedorDestinoId) {
-      await query(
-        `UPDATE movatak_leads SET setor_id = $1, vendedor_id = $2, atualizado_em = NOW() WHERE id = $3`,
-        [setorDestinoId, vendedorDestinoId, req.params.id]
-      );
-    } else {
-      await query(
-        `UPDATE movatak_leads SET setor_id = $1, atualizado_em = NOW() WHERE id = $2`,
-        [setorDestinoId, req.params.id]
-      );
-    }
-
-    // Move o lead para a PRIMEIRA coluna do kanban desse setor (menor ordem).
-    // Regra do Ronaldo: a 1ª coluna de cada setor é a "lista de leads" daquele setor.
-    let colunaDestino = null;
-    const primeiraColuna = await query(
-      `SELECT id, nome FROM movatak_funil_colunas
-        WHERE cliente_id = $1 AND ativo = true AND setor_id = $2
-        ORDER BY ordem ASC, id ASC LIMIT 1`,
-      [leadAtual.cliente_id, setorDestinoId]
-    );
-    if (primeiraColuna.rows.length) {
-      colunaDestino = primeiraColuna.rows[0];
-      await query(
-        `UPDATE movatak_leads SET funil_coluna_id = $1, atualizado_em = NOW() WHERE id = $2`,
-        [colunaDestino.id, req.params.id]
-      );
-    }
-
-    await registrarEventoLead(
-      req.params.id,
-      leadAtual.cliente_id,
-      'transferencia_setor',
-      `Lead transferido para o setor ${setorDestino.rows[0].nome}`,
-      {
-        setor_origem_id: leadAtual.setor_id,
-        setor_destino_id: setorDestinoId,
-        vendedor_origem_id: leadAtual.vendedor_id,
-        vendedor_destino_id: vendedorDestinoId || leadAtual.vendedor_id
-      }
-    );
-
-    res.json({
-      ok: true,
-      setor_nome: setorDestino.rows[0].nome,
-      coluna_destino: colunaDestino ? colunaDestino.nome : null
-    });
-  } catch(e) {
-    console.error('[admin/leads:transferir-setor]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Marca o lead como lido (padrão) ou não lido (body: { nao_lida: true }) —
-// chamado ao abrir o painel de conversa, ou manualmente via "Marcar como não lida".
-app.patch('/movatak/admin/leads/:id/marcar-lida', ...exigeLead, async (req, res) => {
-  try {
-    const naoLida = !!(req.body && req.body.nao_lida);
-    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, req.params.id]);
-    res.json({ ok: true, nao_lida: naoLida });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Retorna a foto de perfil do lead. Usa cache de 24h (foto_atualizada_em). Se estiver
-// vazia ou velha, busca no Z-API uma vez e salva. A URL do WhatsApp expira ~48h, por
-// isso renovamos sob demanda em vez de guardar para sempre.
-app.get('/movatak/admin/leads/:id/foto', ...exigeLead, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT l.id, l.telefone, l.foto_url, l.foto_atualizada_em,
-              c.zapi_instance, c.zapi_token, c.zapi_client_token
-         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const lead = r.rows[0];
-    const agora = Date.now();
-    const idade = lead.foto_atualizada_em ? (agora - new Date(lead.foto_atualizada_em).getTime()) : Infinity;
-    const cacheValido = lead.foto_url && idade < 24 * 3600 * 1000;
-    if (cacheValido) return res.json({ foto_url: lead.foto_url });
-
-    if (!lead.zapi_instance || !lead.zapi_token || !lead.zapi_client_token || !lead.telefone) {
-      return res.json({ foto_url: lead.foto_url || null });
-    }
-    const foto = await zapiBuscarFoto(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone);
-    if (foto) {
-      await query(`UPDATE movatak_leads SET foto_url=$1, foto_atualizada_em=NOW() WHERE id=$2`, [foto, lead.id]).catch(() => null);
-    }
-    res.json({ foto_url: foto || lead.foto_url || null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Arquiva/desarquiva um lead na caixa de entrada (não afeta o WhatsApp real,
-// é só organização dentro do CRM — diferente de acao_arquivar_ao_final).
-app.patch('/movatak/admin/leads/:id/arquivar', ...exigeLead, async (req, res) => {
-  try {
-    const arquivado = req.body && typeof req.body.arquivado === 'boolean' ? req.body.arquivado : true;
-    await query(`UPDATE movatak_leads SET arquivado = $1, atualizado_em = NOW() WHERE id = $2`, [arquivado, req.params.id]);
-    res.json({ ok: true, arquivado });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Ranking de vendedores
-app.get('/movatak/admin/clientes/:id/ranking', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT v.nome, COUNT(l.id) AS vendas, COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos
-       FROM movatak_vendedores v
-       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
-       WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
-       GROUP BY v.id, v.nome
-       ORDER BY fechamentos DESC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Ranking de vendedores para o app do cliente
-app.get('/movatak/app/ranking', authCliente, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT v.nome,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') AS fechamentos,
-              COUNT(l.id) AS leads_atribuidos
-       FROM movatak_vendedores v
-       LEFT JOIN movatak_leads l ON l.vendedor_id = v.id
-       WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
-       GROUP BY v.id, v.nome
-       ORDER BY fechamentos DESC`,
-      [req.clienteId]
-    );
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Evolução semanal (últimos 90 dias) para o app do cliente
-app.get('/movatak/app/evolucao', authCliente, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT
-         DATE_TRUNC('week', criado_em) AS semana,
-         COUNT(*) AS leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente') AS convertidos
-       FROM movatak_leads
-       WHERE cliente_id = $1
-         AND criado_em >= NOW() - INTERVAL '90 days'
-       GROUP BY semana
-       ORDER BY semana`,
-      [req.clienteId]
-    );
-    res.json(r.rows);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Resumo completo para o app do cliente (somente leitura, via app_token)
-app.get('/movatak/app/resumo', authCliente, async (req, res) => {
-  try {
-    const id = req.clienteId;
-    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
-      ? parseInt(req.query.dias) : 30;
-    const leadPeriodoSQL = dias === 0
-      ? "DATE(criado_em) = CURRENT_DATE"
-      : `criado_em >= NOW() - INTERVAL '${dias} days'`;
-    const vendaPeriodoSQL = dias === 0
-      ? "DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE"
-      : `COALESCE(convertido_em, atualizado_em) >= NOW() - INTERVAL '${dias} days'`;
-
-    // Métricas do período: leads pela data de entrada; vendas pela data de conversão.
-    const m = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado' AND ${leadPeriodoSQL})  AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND ${vendaPeriodoSQL})     AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')                           AS em_followup,
-         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)               AS leads_hoje,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE) AS vendas_hoje
-       FROM movatak_leads
-       WHERE cliente_id = $1`,
-      [id]
-    );
-
-    // Leads por hora do dia atual
-    const h = await query(
-      `SELECT EXTRACT(HOUR FROM criado_em)::int AS hora, COUNT(*) AS leads
-       FROM movatak_leads
-       WHERE cliente_id = $1 AND DATE(criado_em) = CURRENT_DATE
-       GROUP BY hora ORDER BY hora`,
-      [id]
-    );
-    const leadsPorHora = Array.from({ length: 24 }, (_, i) => {
-      const found = h.rows.find(r => r.hora === i);
-      return { hora: i, leads: found ? parseInt(found.leads) : 0 };
-    });
-
-    // Vendas por vendedor no período
-    const v = await query(
-      `SELECT vd.nome,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND ${vendaPeriodoSQL.replace(/COALESCE\(convertido_em, atualizado_em\)/g, 'COALESCE(l.convertido_em, l.atualizado_em)')}) AS fechamentos,
-              COUNT(l.id) FILTER (WHERE ${leadPeriodoSQL.replace(/criado_em/g, 'l.criado_em')}) AS leads_atribuidos
-       FROM movatak_vendedores vd
-       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id AND l.cliente_id = $1
-       WHERE vd.cliente_id = $1 AND COALESCE(vd.ativo, true) = true
-       GROUP BY vd.id, vd.nome
-       ORDER BY fechamentos DESC`,
-      [id]
-    );
-
-    // CPL calculado
-    const cd = await query(
-      'SELECT teto_cpl, verba_diaria, criado_em FROM movatak_clientes WHERE id = $1',
-      [id]
-    );
-    const dados = cd.rows[0] || {};
-    const totalLeads = parseInt(m.rows[0].total_leads || 0);
-    let investimento_total_campanhas = null;
-    try {
-      const inv = await query(
-        `SELECT COALESCE(SUM(COALESCE(investimento_valor, verba_diaria, 0)),0) AS total
-           FROM movatak_campanhas
-          WHERE cliente_id = $1 AND COALESCE(ativo, true) = true`,
-        [id]
-      );
-      investimento_total_campanhas = inv.rows[0] ? inv.rows[0].total : null;
-    } catch(e) {}
-    let cpl_calculado = null, alerta_cpl = false;
-    const investimentoBase = parseFloat(investimento_total_campanhas || 0) > 0 ? parseFloat(investimento_total_campanhas) : (dados.verba_diaria ? parseFloat(dados.verba_diaria) : null);
-    if (investimentoBase && totalLeads > 0) {
-      cpl_calculado = (investimentoBase / totalLeads).toFixed(2);
-      if (dados.teto_cpl && parseFloat(cpl_calculado) > parseFloat(dados.teto_cpl)) alerta_cpl = true;
-    }
-
-    // Comparativo com período anterior
-    const baseDias = dias === 0 ? 1 : dias;
-    const comparativo = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado')  AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente')      AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')     AS em_followup
-       FROM movatak_leads
-       WHERE cliente_id = $1
-         AND criado_em >= NOW() - ($2 || ' days')::INTERVAL * 2
-         AND criado_em <  NOW() - ($2 || ' days')::INTERVAL`,
-      [id, baseDias]
-    );
-
-    const campanhaTop = await query(
-      `SELECT c.nome, COUNT(l.id)::int AS leads,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas
-         FROM movatak_campanhas c
-         LEFT JOIN movatak_leads l ON l.campanha_id = c.id
-        WHERE c.cliente_id = $1
-          AND l.criado_em >= NOW() - ($2 || ' days')::INTERVAL
-        GROUP BY c.id, c.nome
-        ORDER BY vendas DESC, leads DESC
-        LIMIT 1`, [id, baseDias]
-    ).catch(() => ({ rows: [] }));
-
-    const permissoes = req.clientePermissoes || normalizarPermissoes({});
-    const totalAtual = parseInt(m.rows[0].total_leads || 0);
-    const convAtual = parseInt(m.rows[0].convertidos || 0);
-    const totalAnt = parseInt((comparativo.rows[0] || {}).total_leads || 0);
-    const convAnt = parseInt((comparativo.rows[0] || {}).convertidos || 0);
-    const melhorVendedor = (v.rows || [])[0] || null;
-    const resumo_executivo = `${req.clienteNome || 'Sua campanha'} recebeu ${totalAtual} lead${totalAtual === 1 ? '' : 's'} no período e gerou ${convAtual} venda${convAtual === 1 ? '' : 's'}. ` +
-      `${melhorVendedor ? 'Melhor vendedor: ' + melhorVendedor.nome + ' com ' + melhorVendedor.fechamentos + ' venda(s). ' : ''}` +
-      `${campanhaTop.rows[0] ? 'Campanha destaque: ' + campanhaTop.rows[0].nome + '. ' : ''}` +
-      `${parseInt(m.rows[0].em_followup || 0)} lead(s) seguem em follow-up.`;
-
-    res.json({
-      cliente_nome: req.clienteNome,
-      periodo_dias: dias,
-      ...m.rows[0],
-      leads_por_hora: leadsPorHora,
-      vendedores: permissoes.ver_vendedores ? v.rows : [],
-      permissoes,
-      resumo_executivo,
-      comparativo: { total_leads: totalAnt, convertidos: convAnt, delta_leads: totalAtual - totalAnt, delta_convertidos: convAtual - convAnt },
-      campanha_top: campanhaTop.rows[0] || null,
-      investimento_total_campanhas,
-      cpl_calculado: permissoes.ver_cpl ? cpl_calculado : null,
-      teto_cpl: permissoes.ver_cpl ? (dados.teto_cpl || null) : null,
-      alerta_cpl: permissoes.ver_cpl ? alerta_cpl : false
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// Campanhas no portal do cliente
-app.get('/movatak/app/campanhas', authCliente, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    if (!req.clientePermissoes.ver_campanhas) return res.json([]);
-    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
-    const periodo = dias === 0 ? "AND DATE(l.criado_em) = CURRENT_DATE" : `AND l.criado_em >= NOW() - INTERVAL '${dias} days'`;
-    const r = await query(
-      `WITH camp AS (
-           SELECT c.*,
-                  COUNT(*) OVER (PARTITION BY c.cliente_id, LOWER(TRIM(COALESCE(c.gatilho,'')))) AS qtd_mesmo_gatilho
-             FROM movatak_campanhas c
-            WHERE c.cliente_id = $1
-              AND c.excluida_em IS NULL
-        )
-        SELECT c.id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.ativo, t.nome AS template_nome,
-              c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
-              (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
-              COUNT(l.id)::int AS leads,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
-              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao,
-              COALESCE(c.investimento_valor, c.verba_diaria, 0) AS investimento,
-              CASE WHEN COUNT(l.id) > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id),0))::numeric, 2) ELSE NULL END AS cpl,
-              CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
-         FROM camp c
-         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
-         LEFT JOIN movatak_leads l
-           ON (CASE WHEN c.qtd_mesmo_gatilho > 1
-                    THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
-                    ELSE l.campanha_id = c.id
-               END) ${periodo}
-        GROUP BY c.id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.ativo, c.qtd_mesmo_gatilho, t.nome
-        ORDER BY c.ativo DESC, vendas DESC, leads DESC`,
-      [req.clienteId]
-    );
-    res.json(r.rows);
-  } catch(e) { if (erroEstruturaBanco(e)) return res.json([]); res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/app/eventos', authCliente, async (req, res) => {
-  try {
-    if (!req.clientePermissoes.ver_eventos) return res.json([]);
-    const r = await query(
-      `SELECT e.id, e.tipo, e.descricao, e.criado_em, l.nome, l.telefone, l.etapa
-         FROM movatak_lead_eventos e
-         LEFT JOIN movatak_leads l ON l.id = e.lead_id
-        WHERE e.cliente_id = $1
-        ORDER BY e.criado_em DESC
-        LIMIT 25`, [req.clienteId]
-    );
-    res.json(r.rows);
-  } catch(e) { if (erroEstruturaBanco(e)) return res.json([]); res.status(500).json({ error: e.message }); }
-});
-
-
-
-app.get('/movatak/app/exportar-leads', authCliente, async (req, res) => {
-  try {
-    if (!req.clientePermissoes.exportar_csv) return res.status(403).json({ error: 'Exportação não liberada para este acesso.' });
-    const r = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em,
-              v.nome AS vendedor, c.nome AS campanha
-         FROM movatak_leads l
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-         LEFT JOIN movatak_campanhas c ON c.id = l.campanha_id
-        WHERE l.cliente_id = $1
-        ORDER BY l.criado_em DESC
-        LIMIT 5000`, [req.clienteId]
-    );
-    const esc = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
-    const linhas = [['ID','Nome','Telefone','Etapa','Vendedor','Campanha','Criado em','Atualizado em'].map(esc).join(',')]
-      .concat(r.rows.map(x => [x.id,x.nome,x.telefone,x.etapa,x.vendedor,x.campanha,x.criado_em,x.atualizado_em].map(esc).join(',')));
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="leads-movatak.csv"');
-    res.send('\ufeff' + linhas.join('\n'));
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/app/configuracoes', authCliente, async (req, res) => {
-  try {
-    const dados = await query('SELECT followup_msgs_v2, boas_vindas_msg, trigger_msg, comandos, permissoes_portal FROM movatak_clientes WHERE id = $1', [req.clienteId]);
-    const vendedores = req.clientePermissoes.editar_vendedores ? await query(
-      `SELECT id, nome, comando, email_acesso, acesso_token, CASE WHEN senha_hash IS NULL OR senha_hash = '' THEN false ELSE true END AS tem_senha FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true ORDER BY nome`, [req.clienteId]
-    ) : { rows: [] };
-    let templates = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({ id, nome: t.nome, tipo: 'padrao' }));
-    if (req.clientePermissoes.editar_campanhas || req.clientePermissoes.editar_followup) {
-      try {
-        const custom = (await listarTemplatesCustom(req.clienteId)).map(t => ({ id: 'custom:' + t.id, nome: t.nome, tipo: 'cliente' }));
-        templates = [...templates, ...custom];
-      } catch(e) {}
-    }
-    res.json({ permissoes: req.clientePermissoes, cliente: dados.rows[0] || {}, vendedores: vendedores.rows, templates });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/app/followup', authCliente, async (req, res) => {
-  try {
-    if (!req.clientePermissoes.editar_followup) return res.status(403).json({ error: 'Este cliente não tem permissão para editar follow-up.' });
-    const { followup_v2, boas_vindas_msg } = req.body || {};
-    await query(`UPDATE movatak_clientes SET followup_msgs_v2 = COALESCE($1::jsonb, followup_msgs_v2), boas_vindas_msg = COALESCE($2, boas_vindas_msg) WHERE id = $3`,
-      [followup_v2 ? JSON.stringify(followup_v2) : null, boas_vindas_msg || null, req.clienteId]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/app/vendedores', authCliente, async (req, res) => {
-  try {
-    if (!req.clientePermissoes.editar_vendedores) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar vendedores.' });
-    const { nome, comando, email_acesso, senha_acesso } = req.body || {};
-    if (!nome) return res.status(400).json({ error: 'Nome obrigatório.' });
-    const r = await query(`INSERT INTO movatak_vendedores (cliente_id, nome, comando, email_acesso, senha_hash, acesso_token) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, nome, comando, email_acesso, acesso_token`,
-      [req.clienteId, String(nome).trim(), comando ? String(comando).trim().toLowerCase() : null, email_acesso || null, hashSenha(senha_acesso), gerarToken('vend')]);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/app/vendedores/:id', authCliente, async (req, res) => {
-  try {
-    if (!req.clientePermissoes.editar_vendedores) return res.status(403).json({ error: 'Este cliente não tem permissão para editar vendedores.' });
-    const { nome, comando, email_acesso, senha_acesso } = req.body || {};
-    const campos = [], valores = [];
-    let idx = 1;
-    if (nome !== undefined) { campos.push('nome = $' + idx++); valores.push(String(nome).trim()); }
-    if (comando !== undefined) { campos.push('comando = $' + idx++); valores.push(comando ? String(comando).trim().toLowerCase() : null); }
-    if (email_acesso !== undefined) { campos.push('email_acesso = $' + idx++); valores.push(email_acesso ? String(email_acesso).trim().toLowerCase() : null); }
-    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenha(senha_acesso)); }
-    if (!campos.length) return res.json({ ok: true });
-    valores.push(req.clienteId, req.params.id);
-    const r = await query(`UPDATE movatak_vendedores SET ${campos.join(', ')} WHERE cliente_id = $${idx++} AND id = $${idx} RETURNING id, nome, comando, email_acesso, acesso_token`, valores);
-    if (!r.rows.length) return res.status(404).json({ error: 'Vendedor não encontrado.' });
-    res.json({ ok: true, vendedor: r.rows[0] });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/app/campanhas', authCliente, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    if (!req.clientePermissoes.editar_campanhas) return res.status(403).json({ error: 'Este cliente não tem permissão para cadastrar campanhas.' });
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id } = req.body || {};
-    if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
-    const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
-    if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória.' });
-    const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
-    const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
-    // A partir da v2.1.3 permitimos o mesmo gatilho em mais de uma campanha.
-    // Observação: quando isso acontece, a atribuição exata por campanha fica compartilhada pelo gatilho.
-    const templateDbId = await resolverTemplateCampanha(req.clienteId, template_id);
-    const r = await query(`INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo) VALUES ($1,$2,$3,$4,$5,$6,$7,true) RETURNING *`,
-      [req.clienteId, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId]);
-    res.json(r.rows[0]);
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Atualizar whatsapp_dono
-app.patch('/movatak/admin/clientes/:id/dono', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const { whatsapp_dono } = req.body;
-    await query('UPDATE movatak_clientes SET whatsapp_dono = $1 WHERE id = $2', [whatsapp_dono, req.params.id]);
-    res.json({ ok: true });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// ROTA UNIFICADA — Webhook Z-API (substitui /webhook/mensagem,
-// /webhook/etiqueta e /webhook/resposta)
-// Trata: novo lead, comandos #followup/#convertido/#vendedor,
-// pausa de followup ao responder. Repassa payload ao rastreiobot.
-// ============================================================
-const RASTREIOBOT_URL = process.env.RASTREIOBOT_URL || 'https://rastreiobot-production-e904.up.railway.app';
-
-// Normaliza texto para comparar comandos e gatilhos
-function normalizarTexto(t) {
-  return (t || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
-// Normalização mais agressiva para frase-gatilho de tráfego.
-// Corrige diferenças comuns como "PROV>>" vs "PROV >>", acentos e espaços duplicados.
-function normalizarComandoComparacao(t) {
-  return normalizarTexto(t)
-    .replace(/#\s+/g, '#')
-    .replace(/\s+/g, ' ')
-    .trim();
+function garantirModalAgendaFunil() {
+  let modal = document.getElementById('modal-agenda-funil');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'modal-agenda-funil';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:920px;position:relative;max-height:90vh;overflow-y:auto">
+      <button class="modal-x" onclick="fecharAgendaFunil()" title="Fechar">✕</button>
+      <h3>Agenda</h3>
+      <div class="fu-hint" id="agenda-funil-sub" style="margin-bottom:14px">Agendamentos integrados ao lead e ao kanban.</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;margin-bottom:10px">Novo agendamento</div>
+          <label class="fu-label">Lead</label>
+          <select id="agenda-lead-id" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></select>
+          <label class="fu-label">Título</label>
+          <input id="agenda-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none" placeholder="Ex: Consulta de avaliação">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div><label class="fu-label">Data</label><input type="date" id="agenda-data" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></div>
+            <div><label class="fu-label">Hora</label><input type="time" id="agenda-hora" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div><label class="fu-label">Tipo</label><select id="agenda-tipo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="atendimento">Atendimento</option><option value="consulta">Consulta</option><option value="avaliacao">Avaliação</option><option value="instalacao">Instalação</option><option value="suporte">Suporte</option><option value="retorno">Retorno</option><option value="reuniao">Reunião</option></select></div>
+            <div><label class="fu-label">Coluna ao agendar</label><select id="agenda-coluna" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"><option value="">Automática</option></select></div>
+          </div>
+          <label class="fu-label">Observação</label>
+          <textarea id="agenda-obs" class="fu-textarea" style="min-height:64px" placeholder="Observações internas..."></textarea>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="agenda-mover" checked> mover lead para a coluna do agendamento</label>
+          <label style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="agenda-lembrete" onchange="document.getElementById('agenda-lembrete-min').style.display=this.checked?'inline-block':'none'"> 🔔 receber lembrete visual antes do horário</label>
+          <div style="margin-top:6px"><select id="agenda-lembrete-min" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;display:none;max-width:200px"><option value="5">5 minutos antes</option><option value="15">15 minutos antes</option><option value="30">30 minutos antes</option><option value="60">1 hora antes</option></select></div>
+          <div class="modal-btns" style="margin-top:12px"><button class="btn-save" onclick="salvarAgendamentoFunil()">Salvar agendamento</button></div>
+          <div id="agenda-status" class="fu-hint" style="margin-top:8px"></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase">Próximos agendamentos</div>
+            <button class="btn-cancel" style="padding:6px 10px;font-size:12px" onclick="carregarAgendaFunil()">Atualizar</button>
+          </div>
+          <div id="agenda-lista"><div class="fu-hint">Carregando...</div></div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
 }
 
-function normalizarGatilho(t) {
-  return normalizarTexto(t)
-    .replace(/\s*>>\s*/g, '>>')
-    .replace(/[\u2018\u2019]/g, "'")
-    .replace(/[\u201c\u201d]/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
+async function abrirAgendaFunil() {
+  if (!funilState.clienteId) return;
+  const modal = garantirModalAgendaFunil();
+  modal.classList.add('open');
+  preencherAgendaForm();
+  await carregarAgendaFunil();
 }
 
-function textoBateGatilho(texto, gatilho) {
-  const msg = normalizarGatilho(texto);
-  const trigger = normalizarGatilho(gatilho);
-  if (!trigger || !msg) return false;
-
-  // Match forte: a mensagem contém o gatilho inteiro (cliente colou a frase do anúncio).
-  if (msg.includes(trigger)) return true;
-
-  // Match reverso (gatilho contém a mensagem): só vale quando a mensagem é
-  // substancial — pelo menos 12 caracteres e 3 palavras. Isso evita que respostas
-  // curtas do questionário ("Esse", "internet", "sim") sejam confundidas com o
-  // gatilho só por aparecerem dentro da frase do anúncio.
-  const msgPalavras = msg.split(' ').filter(Boolean).length;
-  const msgSubstancial = msg.length >= 12 && msgPalavras >= 3;
-  if (msgSubstancial && trigger.includes(msg)) return true;
-
-  // Fallback seguro: ignora o prefixo antes de >> e compara o corpo da frase.
-  // Ex.: "PROV>> Olá!..." e "PROV >> Olá!..."
-  const corpoMsg = msg.includes('>>') ? msg.split('>>').slice(1).join('>>').trim() : msg;
-  const corpoTrigger = trigger.includes('>>') ? trigger.split('>>').slice(1).join('>>').trim() : trigger;
-  if (!corpoTrigger || !corpoMsg) return false;
-  if (corpoMsg.includes(corpoTrigger)) return true;
-  const corpoMsgSubstancial = corpoMsg.length >= 12 && corpoMsg.split(' ').filter(Boolean).length >= 3;
-  return corpoMsgSubstancial && corpoTrigger.includes(corpoMsg);
+function fecharAgendaFunil() {
+  const modal = document.getElementById('modal-agenda-funil');
+  if (modal) modal.classList.remove('open');
 }
 
-// Verifica se o texto contém algum dos comandos da lista
-function contemComando(texto, comandos) {
-  if (!Array.isArray(comandos) || !comandos.length) return false;
-  const t = normalizarComandoComparacao(texto);
-  if (!t) return false;
-  return comandos.some(cmd => {
-    const c = normalizarComandoComparacao(cmd);
-    if (!c) return false;
-    if (t === c) return true;
-    // Comandos com # são delimitados e intencionais: podem aparecer em qualquer
-    // posição da mensagem (ex.: "Fechado! #ana").
-    if (c.startsWith('#')) return t.includes(c);
-    // Comandos sem # (ex.: slug de nome "ana") exigem correspondência como
-    // PALAVRA ISOLADA, para não casar com substrings ("banana", "semana").
-    const re = new RegExp('(^|[^a-z0-9])' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '([^a-z0-9]|$)');
-    return re.test(t);
+function preencherAgendaForm() {
+  const leadSel = document.getElementById('agenda-lead-id');
+  const colSel = document.getElementById('agenda-coluna');
+  if (leadSel) {
+    const leads = (funilState.leads || []).filter(l => !l.arquivado);
+    leadSel.innerHTML = '<option value="">— sem lead vinculado —</option>' + leads.map(l => `<option value="${l.id}">${escapeHtml(l.nome || l.telefone || ('Lead #' + l.id))}</option>`).join('');
+    if (window._painelLeadId) leadSel.value = String(window._painelLeadId);
+  }
+  if (colSel) {
+    colSel.innerHTML = '<option value="">Automática pelo tipo</option>' + (funilState.colunas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+  }
+  const d = new Date();
+  const dataEl = document.getElementById('agenda-data');
+  const horaEl = document.getElementById('agenda-hora');
+  if (dataEl && !dataEl.value) dataEl.value = d.toISOString().slice(0,10);
+  if (horaEl && !horaEl.value) horaEl.value = String(d.getHours()).padStart(2,'0') + ':00';
+  const tituloEl = document.getElementById('agenda-titulo');
+  if (tituloEl && !tituloEl.value) tituloEl.value = 'Atendimento agendado';
+}
+
+const AGENDA_STATUS = [
+  ['agendado','Agendado','#6b7280'],
+  ['confirmado','Confirmado','#2563eb'],
+  ['compareceu','Compareceu','#16a34a'],
+  ['faltou','Faltou','#dc2626'],
+  ['reagendar','Reagendar','#d97706'],
+  ['concluido','Concluído','#15803d'],
+  ['cancelado','Cancelado','#9ca3af']
+];
+
+function agendaStatusInfo(st) {
+  return AGENDA_STATUS.find(s => s[0] === st) || AGENDA_STATUS[0];
+}
+
+async function carregarAgendaFunil() {
+  const lista = document.getElementById('agenda-lista');
+  if (!lista || !funilState.clienteId) return;
+  lista.innerHTML = '<div class="fu-hint">Carregando...</div>';
+  try {
+    const itens = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=45');
+    if (!itens.length) { lista.innerHTML = '<div class="fu-hint">Nenhum agendamento próximo.</div>'; return; }
+    lista.innerHTML = itens.map(a => {
+      const data = new Date(a.inicio).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+      const si = agendaStatusInfo(a.status);
+      const cancelado = a.status === 'cancelado';
+      const opcoesStatus = AGENDA_STATUS.map(s => `<option value="${s[0]}" ${s[0]===a.status?'selected':''}>${s[1]}</option>`).join('');
+      const btnAbrirLead = a.lead_id
+        ? `<button class="btn-add-small" style="padding:4px 8px;font-size:11px" onclick="abrirLeadDaAgenda(${a.lead_id})" title="Abrir conversa do lead">💬 Abrir lead</button>`
+        : '';
+      return `<div class="agenda-item-card" style="${cancelado?'opacity:.55':''}">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+          <div>
+            <strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong>
+            <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div>
+          </div>
+          <div style="text-align:right">
+            <span style="font-size:11px;color:var(--accent);font-family:var(--mono);white-space:nowrap;display:block">${data}</span>
+            <span style="font-size:10px;color:#fff;background:${si[2]};border-radius:4px;padding:1px 7px;display:inline-block;margin-top:3px">${si[1]}</span>
+          </div>
+        </div>
+        ${a.observacao ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">${escapeHtml(a.observacao)}</div>` : ''}
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">
+          <select onchange="mudarStatusAgendamento(${a.id}, this.value)" style="font-size:11px;padding:4px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text)" ${cancelado?'disabled':''}>
+            ${opcoesStatus}
+          </select>
+          ${btnAbrirLead}
+          <button class="btn-remove" style="margin-left:auto" title="Excluir agendamento" onclick="excluirAgendamento(${a.id})">×</button>
+        </div>
+      </div>`;
+    }).join('');
+  } catch (e) { lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>'; }
+}
+
+// Muda o status do agendamento. Se houver coluna vinculada (status->coluna), pergunta
+// se quer mover o lead pra ela.
+async function mudarStatusAgendamento(id, status) {
+  const body = { status };
+  // Oferece mover o lead para a coluna escolhida (se o usuário quiser).
+  const moverCol = await escolherColunaParaStatus();
+  if (moverCol) body.mover_para_coluna_id = moverCol;
+  try {
+    await api('/movatak/admin/agendamentos/' + id + '/status', { method: 'PATCH', body: JSON.stringify(body) });
+    mostrarToast('Status atualizado.' + (body.mover_para_coluna_id ? ' Lead movido.' : ''), 'sucesso');
+    await carregarAgendaFunil();
+    if (body.mover_para_coluna_id) await carregarFunilAtendimento();
+  } catch (e) {
+    mostrarToast('Erro ao mudar status: ' + e.message, 'erro');
+  }
+}
+
+// Pergunta (opcional) para qual coluna mover o lead ao mudar status. Retorna o id ou null.
+function escolherColunaParaStatus() {
+  return new Promise(resolve => {
+    const cols = (funilState.colunas || []);
+    if (!cols.length) return resolve(null);
+    let modal = document.getElementById('modal-agenda-mover');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'modal-agenda-mover';
+      modal.className = 'modal-overlay';
+      document.body.appendChild(modal);
+    }
+    const opcoes = cols.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+    modal.innerHTML = `
+      <div class="modal" style="max-width:400px">
+        <h3>Mover o lead?</h3>
+        <p style="font-size:13px;color:var(--text2);margin:8px 0 12px">Você pode mover o lead para uma coluna do kanban junto com a mudança de status. Opcional.</p>
+        <select id="agenda-mover-col" class="fu-textarea" style="min-height:auto;padding:10px 12px">${opcoes}</select>
+        <div class="modal-btns" style="margin-top:14px">
+          <button class="btn-cancel" id="agenda-mover-nao">Não mover</button>
+          <button class="btn-save" id="agenda-mover-sim">Mover lead</button>
+        </div>
+      </div>`;
+    modal.classList.add('open');
+    const fechar = (val) => { modal.classList.remove('open'); resolve(val); };
+    document.getElementById('agenda-mover-nao').onclick = () => fechar(null);
+    document.getElementById('agenda-mover-sim').onclick = () => fechar(parseInt(document.getElementById('agenda-mover-col').value, 10) || null);
   });
 }
 
-function slugComando(nome) {
-  return normalizarTexto(nome).replace(/[^a-z0-9]+/g, '');
-}
-
-function comandosDoVendedor(vendedor) {
-  const lista = [];
-
-  // Campo oficial: comando (ex.: #rebeka)
-  if (vendedor.comando) lista.push(String(vendedor.comando));
-
-  // Segurança caso algum cadastro antigo tenha salvo mais de um comando no mesmo campo
-  if (vendedor.comando && String(vendedor.comando).includes(',')) {
-    String(vendedor.comando).split(',').forEach(c => lista.push(c));
-  }
-
-  // Segurança caso exista uma coluna JSON/array chamada comandos em algum banco já migrado
-  if (Array.isArray(vendedor.comandos)) {
-    vendedor.comandos.forEach(c => lista.push(c));
-  }
-
-  // Fallback automático pelo nome do vendedor.
-  // Ex.: Rebeka => #rebeka | Ronaldo Valério => #ronaldovalerio
-  const slug = slugComando(vendedor.nome || '');
-  if (slug) {
-    lista.push('#' + slug);
-    lista.push(slug);
-  }
-
-  return [...new Set(
-    lista
-      .map(c => String(c || '').trim().toLowerCase())
-      .filter(Boolean)
-  )];
-}
-
-function vendedorBateComando(vendedor, texto) {
-  return contemComando(texto, comandosDoVendedor(vendedor));
-}
-
-function textoBateComandoParar(texto, comandoParar) {
-  const c = String(comandoParar || '').trim();
-  if (!c) return false;
-  return contemComando(texto, [c]);
-}
-
-// Para TODA a automação de um lead: marca a flag, pausa follow-ups pendentes e
-// cancela o questionário em andamento. Usada pelo comando de parar atendimento,
-// disparado tanto pelo cliente quanto pelo vendedor/dono.
-async function pararAtendimentoLead(clienteId, leadId, origem, comando) {
-  await query(
-    `UPDATE movatak_leads SET automacao_pausada = true, atualizado_em = NOW() WHERE id = $1`,
-    [leadId]
-  );
-  await query(
-    `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-    [leadId]
-  );
-  await query(
-    `UPDATE movatak_questionario_estado SET status = 'cancelado', atualizado_em = NOW()
-       WHERE lead_id = $1 AND status = 'em_andamento'`,
-    [leadId]
-  ).catch(() => null);
-  await registrarEventoLead(leadId, clienteId, 'atendimento_parado', 'Automação encerrada por comando de atendente', { origem: origem || null, comando: comando || null }).catch(() => null);
-  console.log(`[zapi] Atendimento parado (${origem}) -> lead ${leadId}`);
-}
-
-function textoBateComandoAtivar(texto, comandoAtivar) {
-  const c = String(comandoAtivar || '').trim();
-  if (!c) return false;
-  return contemComando(texto, [c]);
-}
-
-// Procura uma coluna do funil cujo "comando" bate o texto e move o lead pra ela.
-// Retorna true se moveu. Usado pelos comandos de coluna (fromMe).
-async function moverLeadPorComandoColuna(cliente, lead, texto) {
+async function excluirAgendamento(id) {
+  if (!confirm('Excluir este agendamento?')) return;
   try {
-    const cols = await query(
-      `SELECT id, nome, comando FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true AND comando IS NOT NULL AND TRIM(comando) <> ''`,
-      [cliente.id]
-    );
-    const alvo = cols.rows.find(c => contemComando(texto, [c.comando]));
-    if (!alvo) return false;
-    await moverLeadParaColunaFunil(lead.id, alvo.id, false);
-    await registrarEventoLead(lead.id, cliente.id, 'movido_por_comando', `Lead movido para "${alvo.nome}" por comando`, { comando: alvo.comando, coluna_id: alvo.id }).catch(() => null);
-    console.log(`[zapi] Lead ${lead.id} movido para coluna "${alvo.nome}" por comando`);
-    return true;
+    await api('/movatak/admin/agendamentos/' + id, { method: 'DELETE' });
+    mostrarToast('Agendamento excluído.', 'sucesso');
+    await carregarAgendaFunil();
   } catch (e) {
-    console.error('[comando-coluna]', e.message);
-    return false;
+    mostrarToast('Erro ao excluir: ' + e.message, 'erro');
   }
 }
 
-// Reinicia o autoatendimento de um lead do zero: religa a automação, fecha
-// qualquer estado de questionário anterior e dispara o questionário novamente.
-async function reiniciarQuestionarioLead(cliente, lead, comando) {
-  await query(
-    `UPDATE movatak_leads SET automacao_pausada = false, etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
-    [lead.id]
-  );
-  await query(
-    `UPDATE movatak_questionario_estado SET status = 'cancelado', atualizado_em = NOW()
-       WHERE lead_id = $1 AND status IN ('em_andamento','abandonado')`,
-    [lead.id]
-  ).catch(() => null);
-  await registrarEventoLead(lead.id, cliente.id, 'questionario_reiniciado', 'Autoatendimento reiniciado por comando do vendedor', { comando: comando || null }).catch(() => null);
-  await iniciarQuestionario(cliente, lead);
-  console.log(`[zapi] Autoatendimento reiniciado -> lead ${lead.id}`);
+// Abre a conversa do lead a partir de um item da agenda.
+function abrirLeadDaAgenda(leadId) {
+  fecharAgendaFunil();
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId)) || {};
+  const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId, nomeAbrev);
 }
 
-function textoPareceComandoInterno(texto, comandos, vendedores, comandoParar, comandoAtivar) {
-  const t = String(texto || '').trim();
-  if (!t) return false;
-  // Segurança: a mensagem deve conter pelo menos um # para ser interpretada como comando.
-  // Permite que o código apareça em qualquer posição da mensagem (ex: "Fechado! #rebeka").
-  if (!t.includes('#')) return false;
-  if (contemComando(t, comandos.followup || [])) return true;
-  if (contemComando(t, comandos.convertido || [])) return true;
-  if (contemComando(t, comandos.descartar || [])) return true;
-  if (contemComando(t, comandos.desfazer || [])) return true;
-  if (contemComando(t, comandos.pausar || [])) return true;
-  if (textoBateComandoParar(t, comandoParar)) return true;
-  if (textoBateComandoAtivar(t, comandoAtivar)) return true;
-  return Array.isArray(vendedores) && vendedores.some(v => vendedorBateComando(v, t));
-}
-
-
-// Extrai telefone numérico de vários formatos possíveis do payload Z-API.
-// Importante: connectedPhone costuma ser o número da própria instância; por isso
-// NÃO deve ser usado como telefone do lead. Em fromMe, priorizamos destinatário/remoteJid.
-function extrairDigitosTelefone(valor) {
-  if (!valor) return null;
-  const raw = String(valor);
-  if (raw.includes('@g.us') || raw.includes('@newsletter')) return null;
-  const digitos = raw.replace(/\D/g, '');
-  if (digitos.length < 10 || digitos.length > 15) return null;
-  return digitos;
-}
-
-function telefonesEquivalentes(a, b) {
-  const da = extrairDigitosTelefone(a);
-  const db = extrairDigitosTelefone(b);
-  if (!da || !db) return false;
-  const va = variantesTelefone(da);
-  const vb = variantesTelefone(db);
-  return va.some(x => vb.includes(x));
-}
-
-function telefoneEhDaEmpresa(telefone, cliente) {
-  if (!telefone || !cliente) return false;
-  const candidatosEmpresa = [
-    cliente.whatsapp,
-    cliente.telefone,
-    cliente.zapi_phone,
-    cliente.numero_whatsapp,
-    cliente.connectedPhone
-  ].filter(Boolean);
-  return candidatosEmpresa.some(n => telefonesEquivalentes(telefone, n));
-}
-
-function primeiroTelefoneValido(candidatos, cliente) {
-  const vistos = new Set();
-  for (const valor of candidatos) {
-    const digitos = extrairDigitosTelefone(valor);
-    if (!digitos || vistos.has(digitos)) continue;
-    vistos.add(digitos);
-    if (telefoneEhDaEmpresa(digitos, cliente)) continue;
-    return digitos;
-  }
-  return null;
-}
-
-function extrairTelefonePayload(body, cliente = null) {
-  const candidatos = body && body.fromMe
-    ? [
-        body.to,
-        body.recipient,
-        body.recipientPhone,
-        body.chatId,
-        body.remoteJid,
-        body.key && body.key.remoteJid,
-        body.message && body.message.key && body.message.key.remoteJid,
-        body.phone,
-        body.senderPhone,
-        body.from,
-        body.participantPhone
-      ]
-    : [
-        body.phone,
-        body.senderPhone,
-        body.from,
-        body.chatId,
-        body.remoteJid,
-        body.key && body.key.remoteJid,
-        body.message && body.message.key && body.message.key.remoteJid,
-        body.participantPhone,
-        body.to,
-        body.recipient,
-        body.recipientPhone
-      ];
-
-  return primeiroTelefoneValido(candidatos, cliente);
-}
-
-function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
-  const nomes = body && body.fromMe
-    ? [body.contactName, body.chatName, body.pushName, body.notifyName]
-    : [body.senderName, body.contactName, body.chatName, body.pushName, body.notifyName];
-
-  for (const nome of nomes) {
-    const s = String(nome || '').trim();
-    if (!s) continue;
-    // Evita salvar o nome da própria empresa como nome do lead em payload fromMe.
-    if (cliente && cliente.nome && s.toLowerCase() === String(cliente.nome).trim().toLowerCase()) continue;
-    if (telefone && telefoneEhDaEmpresa(telefone, cliente)) continue;
-    return s;
-  }
-  return null;
-}
-
-// Extrai a URL da foto de perfil que o Z-API às vezes já manda no payload do webhook.
-// Quando presente, é grátis (não precisa chamar a API). Vale ~48h.
-function extrairFotoPayloadZapi(body) {
-  if (!body) return null;
-  return body.senderPhoto || body.photo || body.chatPhoto || body.profileThumbnail || body.profilePicThumb || null;
-}
-
-// Gera as variantes de um telefone BR considerando o 9º dígito do celular.
-// Ex.: "5581976041948" (com 9) e "558176041948" (sem 9) são tratados como o mesmo número.
-// Retorna lista de variantes (sempre inclui o original), sem duplicatas.
-function variantesTelefone(tel) {
-  const d = String(tel || '').replace(/\D/g, '');
-  if (!d) return [];
-  const set = new Set([d]);
-  // Formato BR: 55 (DDI) + DD (2) + número (8 ou 9 dígitos)
-  if (d.startsWith('55') && d.length >= 12) {
-    const ddi = d.slice(0, 2);
-    const ddd = d.slice(2, 4);
-    const numero = d.slice(4);
-    if (numero.length === 9 && numero[0] === '9') {
-      // tem o 9 → adiciona versão sem o 9
-      set.add(ddi + ddd + numero.slice(1));
-    } else if (numero.length === 8) {
-      // sem o 9 → adiciona versão com o 9
-      set.add(ddi + ddd + '9' + numero);
-    }
-  }
-  return Array.from(set);
-}
-
-// Busca um lead por telefone tolerando a diferença do 9º dígito.
-async function buscarLeadPorTelefone(clienteId, telefone, extraWhere = '', extraParams = []) {
-  const variantes = variantesTelefone(telefone);
-  if (!variantes.length) return { rows: [] };
-  const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
-  const sql = `SELECT * FROM movatak_leads
-                WHERE cliente_id = $1 AND telefone IN (${placeholders}) ${extraWhere}
-                ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`;
-  return query(sql, [clienteId, ...variantes, ...extraParams]).catch(() => ({ rows: [] }));
-}
-
-function extrairTextoPayloadZapi(body) {
-  return (body.text && body.text.message) ? String(body.text.message)
-    : (typeof body.text === 'string') ? String(body.text)
-    : (body.image && body.image.caption) ? String(body.image.caption || '')
-    : (body.video && body.video.caption) ? String(body.video.caption || '')
-    : (body.document && body.document.caption) ? String(body.document.caption || '')
-    : (body.caption ? String(body.caption) : '');
-}
-
-function extrairMidiaPayloadZapi(body) {
-  if (body.image && (body.image.imageUrl || body.image.url)) return { url: body.image.imageUrl || body.image.url, tipo: 'imagem' };
-  if (body.video && (body.video.videoUrl || body.video.url)) return { url: body.video.videoUrl || body.video.url, tipo: 'video' };
-  if (body.audio && (body.audio.audioUrl || body.audio.url)) return { url: body.audio.audioUrl || body.audio.url, tipo: 'audio' };
-  if (body.document && (body.document.documentUrl || body.document.url)) return { url: body.document.documentUrl || body.document.url, tipo: 'documento' };
-  const fallback = body.fileUrl || body.mediaUrl || null;
-  return fallback ? { url: fallback, tipo: null } : { url: null, tipo: null };
-}
-
-
-function primeiroValor(...vals) {
-  for (const v of vals) {
-    if (v !== undefined && v !== null && String(v).trim() !== '') return v;
-  }
-  return null;
-}
-
-function textoDePossivelMensagem(obj) {
-  if (!obj || typeof obj !== 'object') return '';
-  return primeiroValor(
-    obj.text && obj.text.message,
-    typeof obj.text === 'string' ? obj.text : null,
-    obj.message,
-    obj.caption,
-    obj.body,
-    obj.conversation,
-    obj.extendedTextMessage && obj.extendedTextMessage.text,
-    obj.image && obj.image.caption,
-    obj.video && obj.video.caption,
-    obj.document && (obj.document.caption || obj.document.title || obj.document.fileName),
-    obj.audio && 'Áudio',
-    obj.image && 'Imagem',
-    obj.video && 'Vídeo',
-    obj.document && 'Documento'
-  ) || '';
-}
-
-function tipoMidiaDePossivelMensagem(obj) {
-  if (!obj || typeof obj !== 'object') return null;
-  if (obj.image) return 'imagem';
-  if (obj.video) return 'video';
-  if (obj.audio) return 'audio';
-  if (obj.document) return 'documento';
-  if (obj.midia_tipo) return obj.midia_tipo;
-  if (obj.type && ['image','imagem'].includes(String(obj.type).toLowerCase())) return 'imagem';
-  if (obj.type && ['audio','ptt'].includes(String(obj.type).toLowerCase())) return 'audio';
-  if (obj.type && ['video'].includes(String(obj.type).toLowerCase())) return 'video';
-  if (obj.type && ['document','documento','file'].includes(String(obj.type).toLowerCase())) return 'documento';
-  return null;
-}
-
-function urlMidiaDePossivelMensagem(obj) {
-  if (!obj || typeof obj !== 'object') return null;
-  return primeiroValor(
-    obj.midia_url,
-    obj.image && (obj.image.imageUrl || obj.image.url),
-    obj.video && (obj.video.videoUrl || obj.video.url),
-    obj.audio && (obj.audio.audioUrl || obj.audio.url),
-    obj.document && (obj.document.documentUrl || obj.document.url),
-    obj.fileUrl,
-    obj.mediaUrl
-  );
-}
-
-function extrairReplyPayloadZapi(body) {
-  const candidatos = [
-    body.quotedMessage,
-    body.quotedMsg,
-    body.quoted,
-    body.replyTo,
-    body.reply,
-    body.referenceMessage,
-    body.referencedMessage,
-    body.contextInfo,
-    body.message && body.message.contextInfo,
-    body.text && body.text.contextInfo,
-    body.image && body.image.contextInfo,
-    body.video && body.video.contextInfo,
-    body.audio && body.audio.contextInfo,
-    body.document && body.document.contextInfo,
-    body.extendedTextMessage && body.extendedTextMessage.contextInfo
-  ].filter(Boolean);
-
-  let ref = candidatos.find(c => typeof c === 'object') || {};
-  const quotedMessage = ref.quotedMessage || ref.message || ref.quoted || ref;
-  const msgId = primeiroValor(
-    body.quotedMessageId,
-    body.quotedMsgId,
-    body.replyMessageId,
-    body.referenceMessageId,
-    ref.quotedMessageId,
-    ref.quotedMsgId,
-    ref.messageId,
-    ref.id,
-    ref.stanzaId,
-    ref.key && ref.key.id,
-    quotedMessage && quotedMessage.messageId,
-    quotedMessage && quotedMessage.id
-  );
-
-  if (!msgId && !textoDePossivelMensagem(quotedMessage) && !urlMidiaDePossivelMensagem(quotedMessage)) return null;
-  return {
-    reply_to_msg_id: msgId ? String(msgId) : null,
-    reply_to_conteudo: textoDePossivelMensagem(quotedMessage) || null,
-    reply_to_midia_url: urlMidiaDePossivelMensagem(quotedMessage) || null,
-    reply_to_midia_tipo: tipoMidiaDePossivelMensagem(quotedMessage) || null,
-    reply_payload: { raw_keys: Object.keys(ref || {}).slice(0, 25), quoted: quotedMessage || null }
-  };
-}
-
-async function resolverReplyInfoLead(leadId, replyToConversaId, replyToMsgId, payloadInfo = null) {
-  await garantirEstruturaConversas();
-  let r = { rows: [] };
-  if (replyToConversaId) {
-    r = await query(
-      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id
-         FROM movatak_conversas WHERE id = $1 AND lead_id = $2 LIMIT 1`,
-      [replyToConversaId, leadId]
-    ).catch(() => ({ rows: [] }));
-  }
-  if (!r.rows.length && replyToMsgId) {
-    r = await query(
-      `SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id
-         FROM movatak_conversas WHERE lead_id = $1 AND msg_id = $2 LIMIT 1`,
-      [leadId, replyToMsgId]
-    ).catch(() => ({ rows: [] }));
-  }
-  if (r.rows.length) {
-    const m = r.rows[0];
-    return {
-      msgId: m.msg_id || replyToMsgId || null,
-      info: {
-        reply_to_conversa_id: m.id,
-        reply_to_msg_id: m.msg_id || replyToMsgId || null,
-        reply_to_direcao: m.direcao || null,
-        reply_to_conteudo: m.conteudo || null,
-        reply_to_midia_url: m.midia_url || null,
-        reply_to_midia_tipo: m.midia_tipo || null,
-        reply_payload: payloadInfo && payloadInfo.reply_payload ? payloadInfo.reply_payload : null
-      }
-    };
-  }
-  if (payloadInfo) {
-    return {
-      msgId: payloadInfo.reply_to_msg_id || replyToMsgId || null,
-      info: {
-        reply_to_conversa_id: null,
-        reply_to_msg_id: payloadInfo.reply_to_msg_id || replyToMsgId || null,
-        reply_to_direcao: null,
-        reply_to_conteudo: payloadInfo.reply_to_conteudo || null,
-        reply_to_midia_url: payloadInfo.reply_to_midia_url || null,
-        reply_to_midia_tipo: payloadInfo.reply_to_midia_tipo || null,
-        reply_payload: payloadInfo.reply_payload || null
-      }
-    };
-  }
-  return { msgId: replyToMsgId || null, info: null };
-}
-
-async function localizarLeadPorPayload(clienteId, telefone, chatLid, permitirFallbackRecente = false) {
-  let rl = null;
-
-  if (chatLid) {
-    rl = await query(
-      'SELECT * FROM movatak_leads WHERE cliente_id = $1 AND chat_lid = $2 ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1',
-      [clienteId, chatLid]
-    );
-  }
-
-  if ((!rl || !rl.rows.length) && telefone) {
-    // Busca tolerante ao 9º dígito do celular (com/sem o 9).
-    const variantes = variantesTelefone(telefone);
-    const placeholders = variantes.map((_, i) => '$' + (i + 2)).join(',');
-    rl = await query(
-      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${placeholders}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-      [clienteId, ...variantes]
-    );
-  }
-
-  if ((!rl || !rl.rows.length) && permitirFallbackRecente) {
-    const fallback = await query(
-      `SELECT * FROM movatak_leads
-        WHERE cliente_id = $1
-          AND etapa IN ('lead','followup','auto_atendimento','negociacao')
-          AND criado_em >= NOW() - INTERVAL '48 hours'
-        ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC
-        LIMIT 2`,
-      [clienteId]
-    );
-    if (fallback.rows.length === 1) rl = { rows: [fallback.rows[0]] };
-  }
-
-  if (rl && rl.rows.length && chatLid && rl.rows[0].chat_lid !== chatLid) {
-    await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, rl.rows[0].id]).catch(() => null);
-    rl.rows[0].chat_lid = chatLid;
-  }
-
-  return rl && rl.rows.length ? rl.rows[0] : null;
-}
-
-app.post('/movatak/webhook/zapi', async (req, res) => {
-  res.json({ ok: true }); // responde imediato
-
-  const body = req.body || {};
-
-  // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
+async function salvarAgendamentoFunil() {
+  const st = document.getElementById('agenda-status');
+  const lead_id = document.getElementById('agenda-lead-id')?.value || '';
+  const titulo = (document.getElementById('agenda-titulo')?.value || '').trim();
+  const data = document.getElementById('agenda-data')?.value || '';
+  const hora = document.getElementById('agenda-hora')?.value || '';
+  const tipo = document.getElementById('agenda-tipo')?.value || 'atendimento';
+  const coluna_id = document.getElementById('agenda-coluna')?.value || '';
+  const observacao = (document.getElementById('agenda-obs')?.value || '').trim();
+  const mover_kanban = !!document.getElementById('agenda-mover')?.checked;
+  const lembrete_ativo = !!document.getElementById('agenda-lembrete')?.checked;
+  const lembrete_min = lembrete_ativo ? (parseInt(document.getElementById('agenda-lembrete-min')?.value, 10) || 0) : 0;
+  if (!titulo || !data || !hora) { if (st) { st.style.color='var(--red)'; st.textContent='Preencha título, data e horário.'; } return; }
+  if (st) { st.style.color='var(--text2)'; st.textContent='Salvando agendamento...'; }
   try {
-    await axios.post(`${RASTREIOBOT_URL}/webhook/zapi`, body, { timeout: 8000 });
-  } catch (e) {
-    console.error('[zapi] repasse rastreiobot falhou:', e.message);
-  }
-
-  // ---- Processamento Movatak ----
-  try {
-    const instanceId = body.instanceId || body.instance || '';
-    const chatLid    = body.chatLid || null;
-    const phoneRaw   = String(body.phone || '');
-    // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
-    let telefone     = extrairTelefonePayload(body);
-    const texto      = (body.text && body.text.message) ? body.text.message
-                       : (typeof body.text === 'string' ? body.text : '');
-    const replyPayload = extrairReplyPayloadZapi(body);
-
-
-    logDebug('[zapi][entrada]', JSON.stringify({
-      fromMe: !!body.fromMe,
-      isGroup: !!body.isGroup,
-      isNewsletter: !!body.isNewsletter,
-      instanceId,
-      chatLid,
-      phone: body.phone || null,
-      telefoneExtraido: telefone,
-      senderName: body.senderName || null,
-      texto: texto || null,
-      keys: Object.keys(body).slice(0, 30)
-    }));
-
-    if (body.isNewsletter) {
-      logDebug('[zapi][ignorado] newsletter');
-      return;
-    }
-
-    // ===== GRUPOS (entram na inbox como um contato, espelhando o WhatsApp) =====
-    // Em vez de descartar, registramos a conversa do grupo usando o id do grupo
-    // (@g.us) como "telefone"/chave. Fluxo isolado e curto: NÃO dispara gatilho,
-    // follow-up, questionário nem comando — só garante que a conversa apareça na
-    // inbox. Não cria coluna nova nem altera a query do funil (que quebrou antes).
-    if (body.isGroup) {
-      try {
-        if (!instanceId) return;
-        const rcg = await query('SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
-        if (!rcg.rows.length) return;
-        const clienteG = rcg.rows[0];
-        const grupoChave = String(body.phone || body.chatId || body.remoteJid || '').trim();
-        if (!grupoChave) return;
-        const nomeGrupo = body.chatName || body.notifyName || ('Grupo ' + grupoChave.slice(0, 10));
-        const ehSaidaG = !!body.fromMe;
-        // Localiza pela "chave" do grupo, guardada no campo telefone do lead.
-        let lg = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [clienteG.id, grupoChave]);
-        let lgId;
-        if (lg.rows.length) {
-          lgId = lg.rows[0].id;
-          await query('UPDATE movatak_leads SET atualizado_em=NOW(), nao_lida=$2 WHERE id=$1', [lgId, ehSaidaG ? false : true]).catch(() => null);
-        } else {
-          const nv = await query(
-            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-             VALUES ($1, $2, $3, 'lead', $4, $5, NOW()) RETURNING id`,
-            [clienteG.id, grupoChave, nomeGrupo, chatLid, ehSaidaG ? false : true]
-          );
-          lgId = nv.rows[0].id;
-        }
-        const midiaG = extrairMidiaPayloadZapi(body);
-        const remetenteG = ehSaidaG ? '' : (body.senderName ? body.senderName + ': ' : '');
-        await registrarConversa(lgId, clienteG.id, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null).catch(() => null);
-      } catch (e) {
-        console.error('[zapi][grupo] erro:', e.message);
-      }
-      return;
-    }
-
-    // Mensagem apagada (revogada) — ignorar para não disparar "Não entendi" no questionário
-    if (body.type === 'revoked' || body.isDeleted || body.revoked) {
-      logDebug('[zapi][ignorado] mensagem apagada/revogada');
-      return;
-    }
-
-    // Notificações de status (leitura, entrega, etc.) — não são mensagens reais
-    if (body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase())) {
-      logDebug('[zapi][ignorado] evento de status: ' + body.type);
-      return;
-    }
-
-    if (!instanceId) {
-      logDebug('[zapi][ignorado] payload sem instanceId/instance');
-      return;
-    }
-
-    // Buscar cliente pela instância
-    const rc = await query(
-      'SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true',
-      [instanceId]
-    );
-    if (!rc.rows.length) {
-      console.log('[zapi][ignorado] nenhum cliente ativo encontrado para instanceId ' + instanceId);
-      return;
-    }
-    const cliente = rc.rows[0];
-
-    // Depois de identificar o cliente/instância, recalcula o telefone ignorando
-    // qualquer número que seja da própria empresa. Isso evita criar lead
-    // "falando consigo mesmo" quando o webhook fromMe traz connectedPhone/phone
-    // como número da conta conectada.
-    const telefoneAntesFiltroEmpresa = telefone;
-    telefone = extrairTelefonePayload(body, cliente);
-    if (telefoneAntesFiltroEmpresa && !telefone) {
-      logDebug('[zapi][telefone] telefone descartado por ser da própria empresa ou inválido', JSON.stringify({ telefoneAntesFiltroEmpresa, fromMe: !!body.fromMe }));
-    }
-
-    const comandos = cliente.comandos || {};
-    await registrarWebhookCliente(cliente.id, {
-      fromMe: !!body.fromMe,
-      isGroup: !!body.isGroup,
-      telefone,
-      chatLid,
-      tipo: body.type || null,
-      texto_preview: texto ? String(texto).slice(0, 120) : null
-    });
-    logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
-
-    if (!telefone) {
-      logDebug('[zapi][ignorado] telefone real do contato não identificado após filtro anti-próprio-número', JSON.stringify({
-        fromMe: !!body.fromMe,
-        phone: body.phone || null,
-        senderPhone: body.senderPhone || null,
-        connectedPhone: body.connectedPhone || null,
-        to: body.to || null,
-        from: body.from || null,
-        chatId: body.chatId || null,
-        remoteJid: body.remoteJid || null
-      }));
-      return;
-    }
-
-    // Se o payload trouxe a foto de perfil do contato (entrada), salva no lead.
-    // É grátis (não chama a API) e mantém o avatar atualizado conforme as mensagens chegam.
-    if (!body.fromMe) {
-      const fotoPayload = extrairFotoPayloadZapi(body);
-      if (fotoPayload) {
-        await query(
-          `UPDATE movatak_leads SET foto_url=$1, foto_atualizada_em=NOW()
-            WHERE cliente_id=$2 AND telefone=$3`,
-          [fotoPayload, cliente.id, telefone]
-        ).catch(() => null);
-      }
-    }
-
-    // ===== MENSAGEM ENVIADA PELO VENDEDOR / PRÓPRIO WHATSAPP (fromMe) =====
-    // Antes o CRM descartava toda mensagem fromMe que não fosse comando interno.
-    // Isso quebrava o histórico do Kanban, porque respostas manuais do vendedor nunca eram gravadas.
-    // Agora a mensagem é registrada primeiro; depois a lógica de comandos continua igual.
-    if (body.fromMe) {
-      logDebug('[zapi][fromMe] recebido', JSON.stringify({ texto, chatLid, telefone }));
-
-      const rvPre = await query(
-        'SELECT * FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true',
-        [cliente.id]
-      );
-
-      const colsComandoPre = await query(
-        `SELECT comando FROM movatak_funil_colunas
-          WHERE cliente_id=$1 AND ativo=true AND comando IS NOT NULL AND TRIM(comando) <> ''`,
-        [cliente.id]
-      ).catch(() => ({ rows: [] }));
-      const comandosColuna = colsComandoPre.rows.map(c => c.comando);
-
-      const ehComandoInterno = textoPareceComandoInterno(texto, comandos, rvPre.rows, cliente.questionario_comando_parar, cliente.questionario_comando_ativar)
-        || contemComando(texto, comandosColuna);
-      const leadFromMe = await localizarLeadPorPayload(cliente.id, telefone, chatLid, ehComandoInterno);
-
-      const midiaFromMe = extrairMidiaPayloadZapi(body);
-
-      if (!leadFromMe) {
-        console.log('[zapi][fromMe] lead nao encontrado para registrar mensagem/comando', JSON.stringify({ chatLid, telefone, ehComandoInterno }));
-
-        // Mensagem enviada diretamente pelo WhatsApp Web para um contato que ainda não
-        // existe no CRM. Antes era ignorada; agora cria um contato simples, sem acionar
-        // automação nem marcar como não lido.
-        if (!ehComandoInterno && telefone && ((texto && String(texto).trim()) || midiaFromMe.url)) {
-          const novoLeadFromMe = await query(
-            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-             VALUES ($1, $2, $3, 'lead', $4, false, NOW())
-             RETURNING id`,
-            [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
-          );
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web').catch(() => null);
-          await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
-        }
-        return;
-      }
-
-      if ((texto && String(texto).trim()) || midiaFromMe.url) {
-        // Evita duplicar: se a mensagem foi enviada pelo PRÓPRIO painel, ela já foi
-        // gravada no banco (com o mesmo messageId do Z-API) no momento do envio. O
-        // webhook fromMe chega logo depois confirmando o mesmo envio — se já existe
-        // uma conversa com esse messageId, não registra de novo.
-        const msgIdFromMe = body.messageId || body.id || null;
-        let jaRegistrada = false;
-        if (msgIdFromMe) {
-          const dup = await query(
-            'SELECT 1 FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
-            [leadFromMe.id, msgIdFromMe]
-          ).catch(() => ({ rows: [] }));
-          jaRegistrada = dup.rows.length > 0;
-        } else {
-          // Sem messageId no payload: deduplica por conteúdo + janela de tempo curta,
-          // pra não regravar uma mensagem que o painel acabou de salvar segundos antes.
-          const dup = await query(
-            `SELECT 1 FROM movatak_conversas
-              WHERE lead_id=$1 AND direcao='saida'
-                AND COALESCE(conteudo,'')=COALESCE($2,'')
-                AND criado_em > NOW() - INTERVAL '30 seconds' LIMIT 1`,
-            [leadFromMe.id, texto || '']
-          ).catch(() => ({ rows: [] }));
-          jaRegistrada = dup.rows.length > 0;
-        }
-        if (!jaRegistrada) {
-          const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web').catch(() => null);
-        } else {
-          logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
-        }
-      }
-
-      if (!ehComandoInterno) {
-        logDebug('[zapi][fromMe] mensagem normal registrada no histórico do Kanban');
-        return;
-      }
-
-      const lead = leadFromMe;
-
-      // -- Comando: vendedor especifico (conversao atribuida) --
-      const rv = { rows: rvPre.rows };
-      const vendedorDetectado = rv.rows.find(v => vendedorBateComando(v, texto));
-      if (!vendedorDetectado) {
-        console.log('[zapi][fromMe] nenhum vendedor bateu com o comando. Cadastrados:', JSON.stringify(
-          rv.rows.map(v => ({ nome: v.nome, comando: v.comando || null, comandos_validos: comandosDoVendedor(v) }))
-        ));
-      }
-      if (vendedorDetectado) {
-        await query(
-          `UPDATE movatak_leads SET etapa = 'cliente', vendedor_id = $1, convertido_em = NOW(), atualizado_em = NOW() WHERE id = $2`,
-          [vendedorDetectado.id, lead.id]
-        );
-        await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-          [lead.id]
-        );
-        await registrarEventoLead(lead.id, cliente.id, 'convertido_vendedor', `Lead convertido por ${vendedorDetectado.nome}`, { vendedor_id: vendedorDetectado.id, comando: texto });
-        console.log(`[zapi] Convertido por ${vendedorDetectado.nome} -> lead ${lead.id}`);
-        return;
-      }
-
-      // -- Comando: convertido --
-      if (contemComando(texto, comandos.convertido)) {
-        await query(
-          `UPDATE movatak_leads SET etapa = 'cliente', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`,
-          [lead.id]
-        );
-        await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-          [lead.id]
-        );
-        await registrarEventoLead(lead.id, cliente.id, 'convertido', 'Lead marcado como cliente por comando geral', { comando: texto });
-        console.log(`[zapi] Convertido -> lead ${lead.id}`);
-        return;
-      }
-
-      // -- Comando: descartar --
-      if (contemComando(texto, comandos.descartar)) {
-        await query(
-          `UPDATE movatak_leads SET etapa = 'descartado', atualizado_em = NOW() WHERE id = $1`,
-          [lead.id]
-        );
-        await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-          [lead.id]
-        );
-        await registrarEventoLead(lead.id, cliente.id, 'descartado', 'Lead descartado por comando', { comando: texto });
-        console.log(`[zapi] Descartado -> lead ${lead.id}`);
-        return;
-      }
-
-      // -- Comando: desfazer venda (so reverte se o lead estiver convertido) --
-      if (contemComando(texto, comandos.desfazer)) {
-        if (lead.etapa === 'cliente') {
-          await query(
-            `UPDATE movatak_leads SET etapa = 'lead', vendedor_id = NULL, convertido_em = NULL, atualizado_em = NOW() WHERE id = $1`,
-            [lead.id]
-          );
-          await registrarEventoLead(lead.id, cliente.id, 'venda_desfeita', 'Conversão revertida por comando', { comando: texto });
-          console.log(`[zapi] Venda desfeita -> lead ${lead.id}`);
-        } else {
-          console.log(`[zapi] Desfazer ignorado — lead ${lead.id} nao estava convertido`);
-        }
-        return;
-      }
-
-      // -- Comando: followup --
-      if (contemComando(texto, comandos.followup)) {
-        await query(
-          `UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
-          [lead.id]
-        );
-        // Follow-up manual entra no FU2 (reativacao)
-        await agendarFollowupV2(lead.id, cliente.id, 2, true);
-        await registrarEventoLead(lead.id, cliente.id, 'followup_manual', 'Follow-up FU2 ativado manualmente por comando', { comando: texto });
-        console.log(`[zapi] Follow up FU2 ativado -> lead ${lead.id}`);
-        return;
-      }
-
-      // -- Comando: pausar automação --
-      if (contemComando(texto, comandos.pausar)) {
-        await query(
-          `UPDATE movatak_leads SET automacao_pausada = true, atualizado_em = NOW() WHERE id = $1`,
-          [lead.id]
-        );
-        await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-          [lead.id]
-        );
-        await query(
-          `UPDATE movatak_questionario_estado SET status = 'cancelado', atualizado_em = NOW()
-           WHERE lead_id = $1 AND status = 'em_andamento'`,
-          [lead.id]
-        ).catch(() => null);
-        await registrarEventoLead(lead.id, cliente.id, 'automacao_pausada', 'Automação pausada manualmente por comando', { comando: texto });
-        console.log(`[zapi] Automação pausada -> lead ${lead.id}`);
-        return;
-      }
-
-      // -- Comando: parar atendimento (autoatendimento) --
-      if (textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
-        await pararAtendimentoLead(cliente.id, lead.id, 'vendedor', texto);
-        return;
-      }
-
-      // -- Comando: ativar/reiniciar autoatendimento (questionário do zero) --
-      if (textoBateComandoAtivar(texto, cliente.questionario_comando_ativar)) {
-        if (!cliente.questionario_ativo) {
-          console.log(`[zapi] Comando ativar ignorado — questionário desativado para cliente ${cliente.id}`);
-          return;
-        }
-        await reiniciarQuestionarioLead(cliente, lead, texto);
-        return;
-      }
-
-      // -- Comando: mover lead para uma coluna do kanban --
-      if (await moverLeadPorComandoColuna(cliente, lead, texto)) {
-        return;
-      }
-
-      return;
-    }
-
-    // ===== MENSAGEM RECEBIDA DO LEAD =====
-    const temTexto = !!String(texto || '').trim();
-    const midiaRecebida = extrairMidiaPayloadZapi(body);
-
-    if (!temTexto && !midiaRecebida.url) {
-      logDebug('[zapi][lead] ignorado: evento sem texto util e sem mídia');
-      return;
-    }
-
-    if (!telefone) {
-      console.log('[zapi][lead] ignorado: nao consegui extrair telefone real do payload');
-      return;
-    }
-
-    // Buscar lead pelo telefone (tolerante ao 9º dígito)
-    const _varMsg = variantesTelefone(telefone);
-    const rl = await query(
-      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-      [cliente.id, ..._varMsg]
-    );
-    const lead = rl.rows[0] || null;
-
-    // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
-    // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
-    if (lead && (texto || midiaRecebida.url)) {
-      const msgIdEntrada = body.messageId || body.id || null;
-      const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
-    }
-
-    // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.
-    // Não há comando pra interpretar, então a automação abaixo não se aplica.
-    if (!temTexto) {
-      return;
-    }
-
-    // ===== MENSAGEM DE AUSÊNCIA (lead já existente) =====
-    // Toggle da coluna ligado → dispara sempre; senão, por horário. Dedup por período.
-    if (lead) {
-      await dispararAusenciaSeAplicavel(cliente, lead, telefone);
-    }
-
-    // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
-    // Retomar: vendedor usa o comando de followup ou convertido para reativar.
-    if (lead && lead.automacao_pausada) {
-      logDebug('[zapi][lead] automacao pausada — mensagem gravada, automacao ignorada');
-      return;
-    }
-
-    // ===== COMANDO: PARAR ATENDIMENTO (cliente pede atendente humano) =====
-    // Funciona em qualquer ponto, inclusive durante o questionário.
-    if (lead && textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
-      await pararAtendimentoLead(cliente.id, lead.id, 'cliente', texto);
-      return;
-    }
-
-    // ===== MENU DE ATENDIMENTO EM ANDAMENTO (lead escolhendo setor) =====
-    // Só age se o cliente tem o menu ativo E existe um estado aguardando para o lead.
-    if (lead && cliente.menu_atend_ativo) {
-      const estMenu = await query(
-        `SELECT * FROM movatak_menu_estado
-          WHERE cliente_id = $1 AND lead_id = $2 AND status = 'aguardando'
-          ORDER BY id DESC LIMIT 1`,
-        [cliente.id, lead.id]
-      ).catch(() => ({ rows: [] }));
-      if (estMenu.rows.length) {
-        await processarRespostaMenu(cliente, lead, estMenu.rows[0], texto);
-        return;
-      }
-    }
-
-    // ===== QUESTIONÁRIO EM ANDAMENTO (venda consultiva) =====
-    // Se existe um estado em andamento para o lead, a mensagem é tratada pelo
-    // motor do questionário. Não depende do flag global do cliente, pois o
-    // questionário pode ter sido iniciado por um template vinculado à campanha.
-    if (lead) {
-      const estQ = await query(
-        `SELECT * FROM movatak_questionario_estado
-          WHERE cliente_id = $1 AND lead_id = $2 AND status = 'em_andamento'
-          ORDER BY id DESC LIMIT 1`,
-        [cliente.id, lead.id]
-      ).catch(() => ({ rows: [] }));
-      if (estQ.rows.length) {
-        await processarRespostaQuestionario(cliente, lead, estQ.rows[0], texto);
-        return;
-      }
-    }
-
-    // Calcula o gatilho antes de tratar lead existente.
-    // Assim, se a mesma pessoa clicar no anúncio novamente, conseguimos reativar o FU1.
-    let campanhaDetectada = await localizarCampanhaPorGatilho(cliente.id, texto);
-    // Fallback por IA: se o gatilho literal não casou, e existe alguma coluna com
-    // IA ativa neste cliente, deixa a IA tentar encaixar a mensagem numa campanha.
-    if (!campanhaDetectada) {
-      const temIA = await query(
-        `SELECT 1 FROM movatak_funil_colunas WHERE cliente_id=$1 AND ia_ativa=true AND ativo=true LIMIT 1`,
-        [cliente.id]
-      ).catch(() => ({ rows: [] }));
-      if (temIA.rows.length) {
-        campanhaDetectada = await localizarCampanhaPorIA(cliente.id, texto);
-      }
-    }
-    const msg = normalizarGatilho(texto);
-    const trigger = normalizarGatilho(campanhaDetectada ? campanhaDetectada.gatilho : cliente.trigger_msg);
-    const triggerOk = !!campanhaDetectada || textoBateGatilho(texto, cliente.trigger_msg);
-
-    // -- Lead existe: garantir chat_lid salvo + pausar followup se respondeu --
-    if (lead) {
-      // Salva o chat_lid se ainda nao tiver (essencial para os comandos)
-      if (chatLid && lead.chat_lid !== chatLid) {
-        await query('UPDATE movatak_leads SET chat_lid = $1, atualizado_em = NOW() WHERE id = $2', [chatLid, lead.id]);
-      }
-
-      // Reentrada por gatilho só vale para leads "frios": novo contato, em follow-up
-      // ou descartado. Nunca reativa quem está no meio do questionário (auto_atendimento),
-      // já qualificado (negociacao) ou fechado (cliente) — isso causava o reinício do fluxo.
-      const etapasReentrada = ['lead', 'followup', 'descartado'];
-      if (triggerOk && etapasReentrada.includes(lead.etapa)) {
-        // Não reativar o FU1 se o lead já está em conversa ativa (respondeu nas últimas horas).
-        // Evita reenviar boas-vindas/follow-up quando a mensagem com gatilho é continuação do papo.
-        if (await leadRespondeuRecentemente(lead.id, MOVATAK_REENTRADA_FU1_HORAS)) {
-          await registrarEventoLead(lead.id, cliente.id, 'reentrada_ignorada_conversa_ativa', 'Reentrada FU1 ignorada: lead em conversa ativa', { telefone }).catch(() => null);
-          console.log(`[anti-spam] reentrada FU1 ignorada (conversa ativa) -> lead ${lead.id}`);
-          if (lead.etapa === 'followup') {
-            await query(`UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`, [lead.id]);
-            await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]);
-          }
-          return;
-        }
-        if (!(await reentradaFU1Permitida(lead.id))) {
-          await registrarEventoLead(lead.id, cliente.id, 'anti_spam_reentrada', 'Reentrada no FU1 bloqueada por intervalo mínimo', { telefone, horas: MOVATAK_REENTRADA_FU1_HORAS });
-          console.log(`[anti-spam] reentrada FU1 bloqueada -> lead ${lead.id}`);
-          return;
-        }
-        await query(
-          `UPDATE movatak_leads
-             SET etapa = 'followup', nome = COALESCE($1, nome), automacao_pausada = false, atualizado_em = NOW()
-           WHERE id = $2`,
-          [body.senderName || null, lead.id]
-        );
-        if (campanhaDetectada) {
-          await query('UPDATE movatak_leads SET campanha_id = COALESCE(campanha_id, $1), campanha_id_ultimo_toque = $1, template_id_origem = COALESCE(template_id_origem, $2), gatilho_detectado = $3 WHERE id = $4', [campanhaDetectada.id, campanhaDetectada.template_id || null, campanhaDetectada.gatilho || null, lead.id]).catch(() => null);
-        }
-        await agendarFollowupV2(lead.id, cliente.id, 1, true);
-        await enviarFollowupsPendentesDoLead(lead.id, 1);
-        await registrarEventoLead(lead.id, cliente.id, 'reativado_gatilho', 'Lead existente reativado no FU1 por nova frase-gatilho', { telefone, texto });
-        console.log(`[zapi] Lead existente reativado em FU1 -> lead ${lead.id} telefone ${telefone}`);
-        return;
-      }
-
-      if (lead.etapa === 'followup') {
-        await query(
-          `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
-          [lead.id]
-        );
-        await query(
-          `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
-          [lead.id]
-        );
-        await registrarEventoLead(lead.id, cliente.id, 'lead_respondeu', 'Lead respondeu e saiu do follow-up', { texto_preview: texto ? String(texto).slice(0, 160) : null });
-        console.log(`[zapi] Follow up pausado e lead voltou para atendimento -> lead ${lead.id}`);
-      }
-      return;
-    }
-
-    // -- Novo lead: mensagem bate com o trigger do trafego --
-    console.log('[zapi][novo-lead] comparando trigger', JSON.stringify({
-      msg_original: texto,
-      trigger_original: cliente.trigger_msg,
-      msg,
-      trigger,
-      triggerOk
-    }));
-    if (triggerOk) {
-      const novoLead = await query(
-        `INSERT INTO movatak_leads
-           (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado)
-         VALUES ($1, $2, $3, 'followup', $4, $5, $5, $6, $7)
-         RETURNING id`,
-        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
-      );
-      await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
-      // Registra também a primeira mensagem do lead que criou o atendimento.
-      // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
-      const midiaNovoLead = extrairMidiaPayloadZapi(body);
-      const msgIdNovoLead = body.messageId || body.id || null;
-      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload).catch(() => null);
-
-      // Decide se inicia o questionário:
-      // - Campanha com template de questionário vinculado → usa o questionário do template.
-      // - Senão, usa o questionário do cliente (se ativo).
-      // A flag questionario_ativo da campanha permite desligar (vai direto ao follow-up).
-      const campanhaPermiteQuest = !campanhaDetectada || campanhaDetectada.questionario_ativo !== false;
-      const temTemplateQuest = campanhaDetectada && campanhaDetectada.questionario_template_id;
-      const deveIniciarQuest = campanhaPermiteQuest && (temTemplateQuest || cliente.questionario_ativo);
-      const leadObj = { id: novoLead.rows[0].id, telefone, nome: extrairNomeContatoPayloadZapi(body, cliente, telefone), chat_lid: chatLid, campanha_id: campanhaDetectada ? campanhaDetectada.id : null };
-
-      // PASSO ZERO: Boas-Vindas ao Lead (saudação independente, invisível ao sistema).
-      // Enviada antes de qualquer fluxo, se preenchida. Não afeta o follow-up.
-      await enviarBoasVindasLead(cliente, telefone);
-
-      // Ausência para lead NOVO (vindo do tráfego): se a coluna de entrada tem o
-      // toggle ligado, dispara o aviso de ausência. O delay para chegar após as
-      // boas-vindas já está dentro da função dispararAusenciaSeAplicavel.
-      await dispararAusenciaSeAplicavel(cliente, { id: novoLead.rows[0].id, funil_coluna_id: null }, telefone);
-
-      // Menu de Atendimento "na entrada": manda as boas-vindas (FU1) e o menu,
-      // e PARA aqui — o questionário/follow-up segue só após o lead escolher o setor.
-      if (cliente.menu_atend_ativo && cliente.menu_atend_posicao === 'apos_boas_vindas') {
-        await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
-        await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
-        await enviarMenuAtendimento(cliente, leadObj);
-        console.log(`[zapi] Novo lead + menu de atendimento (entrada) -> ${telefone} (${cliente.nome})`);
-      } else if (deveIniciarQuest) {
-        await iniciarQuestionario(cliente, leadObj);
-        console.log(`[zapi] Novo lead + questionario iniciado -> ${telefone} (${cliente.nome})`);
-      } else {
-        await agendarFollowupV2(novoLead.rows[0].id, cliente.id, 1, true);
-        await enviarFollowupsPendentesDoLead(novoLead.rows[0].id, 1);
-        console.log(`[zapi] Novo lead criado em FU1 -> ${telefone} (${cliente.nome})`);
-      }
-    } else {
-      // Novo contato comum do WhatsApp: não bateu com gatilho de campanha, mas ainda
-      // precisa aparecer na caixa de entrada para o CRM espelhar o WhatsApp.
-      // Não dispara boas-vindas, questionário nem follow-up.
-      const novoContato = await query(
-        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-         VALUES ($1, $2, $3, 'lead', $4, true, NOW())
-         RETURNING id`,
-        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
-      );
-      const midiaNovoContato = extrairMidiaPayloadZapi(body);
-      const msgIdNovoContato = body.messageId || body.id || null;
-      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload).catch(() => null);
-      await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
-      console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
-    }
-  } catch (e) {
-    console.error('[zapi] erro processamento:', e.message);
-  }
-});
-
-// ============================================================
-// API — Comandos de automação por cliente
-// ============================================================
-
-function normalizarListaComandos(input) {
-  if (input == null) return [];
-  const bruto = Array.isArray(input) ? input.join(',') : String(input);
-  return bruto
-    .split(/[\n,;]+/)
-    .map(s => String(s).trim().toLowerCase())
-    .filter(Boolean)
-    .filter((v, i, arr) => arr.indexOf(v) === i);
-}
-
-function extrairComandosDoBody(body) {
-  const src = body.comandos && typeof body.comandos === 'object' ? body.comandos : body;
-  return {
-    followup: normalizarListaComandos(src.followup || src.comando_followup || src.comandos_followup),
-    convertido: normalizarListaComandos(src.convertido || src.comando_convertido || src.comando_convertido_venda || src.vendido || src.comando_vendido),
-    descartar: normalizarListaComandos(src.descartar || src.comando_descartar || src.descartado || src.comando_descartado),
-    desfazer: normalizarListaComandos(src.desfazer || src.comando_desfazer || src.estornar || src.comando_estornar),
-    pausar: normalizarListaComandos(src.pausar || src.comando_pausar)
-  };
-}
-
-// Buscar comandos de um cliente
-app.get('/movatak/admin/clientes/:id/comandos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      'SELECT comandos FROM movatak_clientes WHERE id = $1', [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-    res.json(r.rows[0].comandos || {});
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Atualizar comandos de um cliente
-app.patch('/movatak/admin/clientes/:id/comandos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    // O painel envia os comandos como texto: "#vendido, #fechou".
-    // A versão anterior só aceitava arrays, por isso a tela parecia salvar, mas voltava ao padrão.
-    const comandos = extrairComandosDoBody(req.body);
-
-    // Validação: nenhum comando pode se repetir entre os campos
-    const todos = [
-      ...comandos.followup, ...comandos.convertido,
-      ...comandos.descartar, ...comandos.desfazer, ...(comandos.pausar || [])
-    ];
-    const duplicado = todos.find((c, i) => todos.indexOf(c) !== i);
-    if (duplicado) {
-      return res.status(400).json({ error: 'O comando "' + duplicado + '" esta repetido. Cada comando deve ser unico.' });
-    }
-
-    // Validação: não pode colidir com comando de vendedor já cadastrado
-    const rv = await query(
-      'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND COALESCE(ativo, true) = true AND comando IS NOT NULL',
-      [req.params.id]
-    );
-    const cmdsVendedores = rv.rows
-      .flatMap(r => normalizarListaComandos(r.comando))
-      .map(c => String(c).trim().toLowerCase());
-    const colisao = todos.find(c => cmdsVendedores.includes(c));
-    if (colisao) {
-      return res.status(400).json({ error: 'O comando "' + colisao + '" ja pertence a um vendedor.' });
-    }
-
-    await query(
-      'UPDATE movatak_clientes SET comandos = $1::jsonb WHERE id = $2',
-      [JSON.stringify(comandos), req.params.id]
-    );
-    console.log('[comandos][salvo]', JSON.stringify({ clienteId: req.params.id, comandos }));
-    res.json({ ok: true, comandos });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// Menu de Atendimento — lead escolhe o setor digitando uma opção
-// ============================================================
-
-// Ler a configuração do menu de um cliente
-app.get('/movatak/admin/clientes/:id/menu-atendimento', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT menu_atend_ativo, menu_atend_texto, menu_atend_posicao, menu_atend_mapa, menu_atend_marcar_nao_lido
-         FROM movatak_clientes WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const row = r.rows[0];
-    res.json({
-      ativo: !!row.menu_atend_ativo,
-      texto: row.menu_atend_texto || '',
-      posicao: row.menu_atend_posicao || 'apos_boas_vindas',
-      mapa: Array.isArray(row.menu_atend_mapa) ? row.menu_atend_mapa : [],
-      marcar_nao_lido: !!row.menu_atend_marcar_nao_lido
-    });
-  } catch (e) {
-    console.error('[menu-atendimento:get]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Salvar a configuração do menu
-app.patch('/movatak/admin/clientes/:id/menu-atendimento', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const { ativo, texto, posicao, mapa, marcar_nao_lido } = req.body || {};
-    const posicaoValida = ['apos_boas_vindas', 'apos_questionario'].includes(posicao) ? posicao : 'apos_boas_vindas';
-    // mapa = lista de { resposta, setor_id, coluna_id }
-    const mapaLimpo = Array.isArray(mapa)
-      ? mapa
-          .filter(m => m && m.resposta != null && String(m.resposta).trim() !== '' && m.setor_id)
-          .map(m => ({
-            resposta: String(m.resposta).trim().toLowerCase(),
-            setor_id: parseInt(m.setor_id),
-            coluna_id: m.coluna_id ? parseInt(m.coluna_id) : null,
-            template_id: m.template_id ? parseInt(m.template_id) : null
-          }))
-      : [];
-
-    await query(
-      `UPDATE movatak_clientes
-          SET menu_atend_ativo = $1,
-              menu_atend_texto = $2,
-              menu_atend_posicao = $3,
-              menu_atend_mapa = $4::jsonb,
-              menu_atend_marcar_nao_lido = $5
-        WHERE id = $6`,
-      [!!ativo, texto || null, posicaoValida, JSON.stringify(mapaLimpo), !!marcar_nao_lido, req.params.id]
-    );
-    res.json({ ok: true, ativo: !!ativo, texto: texto || '', posicao: posicaoValida, mapa: mapaLimpo, marcar_nao_lido: !!marcar_nao_lido });
-  } catch (e) {
-    console.error('[menu-atendimento:patch]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Atualizar comando de um vendedor
-app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res) => {
-  try {
-    await garantirColunasVendedoresPortal();
-    const comando = req.body.comando ? String(req.body.comando).trim().toLowerCase() : null;
-
-    if (comando) {
-      // Descobrir o cliente deste vendedor
-      const rv = await query('SELECT cliente_id FROM movatak_vendedores WHERE id = $1', [req.params.id]);
-      if (!rv.rows.length) return res.status(404).json({ error: 'Vendedor nao encontrado.' });
-      const clienteId = rv.rows[0].cliente_id;
-
-      // Não pode colidir com comandos do cliente
-      const rc = await query('SELECT comandos FROM movatak_clientes WHERE id = $1', [clienteId]);
-      const cmds = rc.rows[0] && rc.rows[0].comandos ? rc.rows[0].comandos : {};
-      const todosCliente = [
-        ...(cmds.followup || []), ...(cmds.convertido || []),
-        ...(cmds.descartar || []), ...(cmds.desfazer || []), ...(cmds.pausar || [])
-      ].map(c => String(c).trim().toLowerCase());
-      if (todosCliente.includes(comando)) {
-        return res.status(400).json({ error: 'Esse comando ja esta em uso na automacao do cliente.' });
-      }
-
-      // Não pode colidir com outro vendedor
-      const ro = await query(
-        'SELECT comando FROM movatak_vendedores WHERE cliente_id = $1 AND id != $2 AND COALESCE(ativo, true) = true AND comando IS NOT NULL',
-        [clienteId, req.params.id]
-      );
-      if (ro.rows.some(r => String(r.comando).trim().toLowerCase() === comando)) {
-        return res.status(400).json({ error: 'Esse comando ja pertence a outro vendedor.' });
-      }
-    }
-
-    await query(
-      'UPDATE movatak_vendedores SET comando = $1 WHERE id = $2',
-      [comando, req.params.id]
-    );
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-
-// Atualizar acesso do vendedor ao portal individual
-app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) => {
-  try {
-    await garantirColunasVendedoresPortal();
-    const { email_acesso, senha_acesso, nome, comando } = req.body || {};
-    const campos = [];
-    const valores = [];
-    let idx = 1;
-    if (nome !== undefined) { campos.push('nome = $' + idx++); valores.push(String(nome).trim()); }
-    if (email_acesso !== undefined) { campos.push('email_acesso = $' + idx++); valores.push(email_acesso ? String(email_acesso).trim().toLowerCase() : null); }
-    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenha(senha_acesso)); }
-    if (comando !== undefined) { campos.push('comando = $' + idx++); valores.push(comando ? String(comando).trim().toLowerCase() : null); }
-    if (!campos.length) return res.json({ ok: true });
-    valores.push(req.params.id);
-    const r = await query(`UPDATE movatak_vendedores SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id, nome, comando, email_acesso, acesso_token`, valores);
-    if (!r.rows.length) return res.status(404).json({ error: 'Vendedor não encontrado.' });
-    res.json({ ok: true, vendedor: r.rows[0] });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// Define os setores que um vendedor acessa (substitui o conjunto atual).
-app.patch('/movatak/admin/vendedores/:id/setores', authMovatak, async (req, res) => {
-  try {
-    const vendedorId = parseInt(req.params.id, 10);
-    const setorIds = Array.isArray(req.body && req.body.setor_ids) ? req.body.setor_ids.map(n => parseInt(n, 10)).filter(Boolean) : [];
-    // Confirma que o vendedor existe e pega o cliente, pra só aceitar setores do mesmo cliente.
-    const v = await query('SELECT cliente_id FROM movatak_vendedores WHERE id = $1', [vendedorId]);
-    if (!v.rows.length) return res.status(404).json({ error: 'Vendedor não encontrado.' });
-    const clienteId = v.rows[0].cliente_id;
-    // Remove todos os vínculos atuais e recria com os enviados (que sejam do cliente).
-    await query('DELETE FROM movatak_setor_vendedores WHERE vendedor_id = $1', [vendedorId]);
-    for (const sid of setorIds) {
-      const ok = await query('SELECT 1 FROM movatak_setores WHERE id = $1 AND cliente_id = $2 AND COALESCE(ativo,true)=true', [sid, clienteId]);
-      if (ok.rows.length) {
-        await query('INSERT INTO movatak_setor_vendedores (setor_id, vendedor_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [sid, vendedorId]).catch(() => null);
-      }
-    }
-    res.json({ ok: true, setor_ids: setorIds });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/login', async (req, res) => {
-  try {
-    await garantirColunasVendedoresPortal();
-    const { email, senha } = req.body || {};
-    if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
-    const r = await query(
-      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, v.acesso_token, c.nome AS cliente_nome
-         FROM movatak_vendedores v
-         JOIN movatak_clientes c ON c.id = v.cliente_id
-        WHERE LOWER(v.email_acesso) = LOWER($1) AND v.senha_hash = $2 AND v.ativo = true AND c.ativo = true
-        LIMIT 1`,
-      [String(email).trim().toLowerCase(), hashSenha(senha)]
-    );
-    if (!r.rows.length) return res.status(401).json({ error: 'Acesso inválido.' });
-    const vend = r.rows[0];
-    // Setores que este vendedor acessa — definem o que ele vê no kanban.
-    const setoresR = await query(
-      `SELECT s.id, s.nome, s.cor FROM movatak_setor_vendedores sv
-         JOIN movatak_setores s ON s.id = sv.setor_id AND COALESCE(s.ativo, true) = true
-        WHERE sv.vendedor_id = $1 ORDER BY s.ordem_bot NULLS LAST, s.nome`,
-      [vend.id]
-    ).catch(() => ({ rows: [] }));
-    res.json({
-      token: vend.acesso_token,
-      vendedor: { id: vend.id, cliente_id: vend.cliente_id, nome: vend.nome, cliente_nome: vend.cliente_nome, setores: setoresR.rows }
-    });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/vendedor/resumo', authVendedor, async (req, res) => {
-  try {
-    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias)) ? parseInt(req.query.dias) : 30;
-    const leadPeriodoSQL = dias === 0 ? "DATE(l.criado_em) = CURRENT_DATE" : `l.criado_em >= NOW() - INTERVAL '${dias} days'`;
-    const vendaPeriodoSQL = dias === 0 ? "DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE" : `COALESCE(l.convertido_em, l.atualizado_em) >= NOW() - INTERVAL '${dias} days'`;
-    const m = await query(
-      `SELECT COUNT(l.id) FILTER (WHERE ${leadPeriodoSQL})::int AS leads_atribuidos,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND ${vendaPeriodoSQL})::int AS vendas,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'followup')::int AS em_followup,
-              COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE)::int AS leads_hoje,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE)::int AS vendas_hoje
-         FROM movatak_leads l
-        WHERE l.vendedor_id = $1`,
-      [req.vendedor.id]
-    );
-    const ranking = await query(
-      `SELECT v.nome,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas
-         FROM movatak_vendedores v
-         LEFT JOIN movatak_leads l ON l.vendedor_id = v.id AND l.criado_em >= NOW() - INTERVAL '30 days'
-        WHERE v.cliente_id = $1 AND COALESCE(v.ativo, true) = true
-        GROUP BY v.id, v.nome
-        ORDER BY vendas DESC`,
-      [req.vendedor.cliente_id]
-    );
-    const eventos = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em
-         FROM movatak_leads l
-        WHERE l.vendedor_id = $1
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
-        LIMIT 30`,
-      [req.vendedor.id]
-    );
-    const row = m.rows[0] || {};
-    const total = parseInt(row.leads_atribuidos || 0);
-    const vendas = parseInt(row.vendas || 0);
-    res.json({ vendedor: req.vendedor, periodo_dias: dias, ...row, taxa_conversao: total ? ((vendas/total)*100).toFixed(1) : '0.0', ranking: ranking.rows, leads: eventos.rows });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// FUNIL DO VENDEDOR — escopo restrito aos setores do vendedor logado.
-// O controle de acesso é feito AQUI no backend: o vendedor só recebe colunas e
-// leads dos setores aos quais ele pertence. Mesmo que o front peça outro setor,
-// o servidor recusa.
-// ============================================================
-app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
-  try {
-    const clienteId = req.vendedor.cliente_id;
-    const setorIds = req.vendedor.setorIds || [];
-    if (!setorIds.length) {
-      return res.json({
-        colunas: [],
-        colunasVendedores: [],
-        leads: [],
-        setores: [],
-        totalGeral: 0,
-        totalNaoLidas: 0,
-        semSetor: true
-      });
-    }
-
-    // Correção definitiva de carregamento do CRM do vendedor:
-    // esta rota NÃO executa DDL/template em GET e NÃO busca a última mensagem
-    // com LATERAL por lead. Assim a tela não fica presa em "Carregando funil..."
-    // quando a tabela de conversas está grande ou o banco está com lock de migração.
-
-    let setoresAlvo = setorIds;
-    let setorFiltro = null;
-    if (req.query.setor) {
-      const pedido = parseInt(req.query.setor, 10);
-      if (!setorIds.includes(pedido)) return res.status(403).json({ error: 'Sem acesso a este setor.' });
-      setoresAlvo = [pedido];
-      setorFiltro = pedido;
-    }
-
-    const ph = setoresAlvo.map((_, i) => '$' + (i + 2)).join(',');
-    const params = [clienteId, ...setoresAlvo];
-
-    const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp,
-              zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, ia_ativa,
-              nicho_template, agenda_tipo, agenda_status
-         FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true AND setor_id IN (${ph})
-        ORDER BY ordem ASC, id ASC`,
-      params
-    );
-
-    const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
-    const colById = new Map(colunas.map(c => [Number(c.id), c]));
-    const colBySlug = new Map(colunas.map(c => [c.slug, c]));
-
-    const leadsRes = await query(
-      `SELECT lb.*, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em, ult.midia_tipo AS ultima_msg_midia
-         FROM (
-           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-              COALESCE(l.nao_lida,false) AS nao_lida,
-              COALESCE(l.arquivado,false) AS arquivado,
-              s.nome AS setor_nome, s.cor AS setor_cor,
-              l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
-              v.nome AS vendedor_nome,
-              p.nome AS plano_nome, p.valor AS plano_valor,
-              NULL::text AS ultima_msg,
-              0::int AS followups_pendentes,
-              NULL::int AS fu_sequencia_ativa
-         FROM movatak_leads l
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-         LEFT JOIN movatak_planos p ON p.id = l.plano_id
-         LEFT JOIN movatak_setores s ON s.id = l.setor_id
-        WHERE l.cliente_id=$1 AND l.setor_id IN (${ph})
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
-        LIMIT 500
-         ) lb
-         LEFT JOIN LATERAL (
-           SELECT direcao, criado_em, midia_tipo FROM movatak_conversas c
-            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
-         ) ult ON true`,
-      params
-    );
-
-    const leadsAtivos = leadsRes.rows.filter(l => !l.arquivado);
-    for (const lead of leadsAtivos) {
-      let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
-      if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
-      if (!coluna) coluna = colunas.find(c => Number(c.setor_id) === Number(lead.setor_id));
-      if (!coluna) coluna = colunas[0];
-      if (coluna) coluna.leads.push(lead);
-    }
-
-    const phTodos = setorIds.map((_, i) => '$' + (i + 2)).join(',');
-    const paramsTodos = [clienteId, ...setorIds];
-
-    const clienteInfoRes = await query(
-      'SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1',
-      [clienteId]
-    ).catch(() => ({ rows: [] }));
-    const clienteInfo = clienteInfoRes.rows[0] || {};
-
-    const setoresRes = await query(
-      `SELECT id, nome, cor FROM movatak_setores
-        WHERE cliente_id=$1 AND COALESCE(ativo,true)=true AND id IN (${phTodos})
-        ORDER BY ordem_bot ASC, nome ASC`,
-      paramsTodos
-    );
-
-    const contagemSetoresRes = await query(
-      `SELECT setor_id,
-              COUNT(*)::int AS cnt,
-              COUNT(*) FILTER (WHERE COALESCE(nao_lida,false) = true)::int AS nao_lidas
-         FROM movatak_leads
-        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false AND setor_id IN (${phTodos})
-        GROUP BY setor_id`,
-      paramsTodos
-    );
-
-    const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [Number(r.setor_id), Number(r.cnt || 0)]));
-    const naoLidasPorSetor = new Map(contagemSetoresRes.rows.map(r => [Number(r.setor_id), Number(r.nao_lidas || 0)]));
-    const setores = setoresRes.rows.map(s => ({
-      ...s,
-      leads_count: contagemPorSetor.get(Number(s.id)) || 0,
-      nao_lidas: naoLidasPorSetor.get(Number(s.id)) || 0
-    }));
-
-    const totalGeral = contagemSetoresRes.rows.reduce((acc, r) => acc + Number(r.cnt || 0), 0);
-    const totalNaoLidas = contagemSetoresRes.rows.reduce((acc, r) => acc + Number(r.nao_lidas || 0), 0);
-
-    res.json({
-      colunas,
-      colunasVendedores: [],
-      setores,
-      setorAtivo: setorFiltro,
-      totalGeral,
-      totalNaoLidas,
-      nicho: clienteInfo.nicho || null,
-      agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leadsRes.rows
-    });
-  } catch (e) {
-    console.error('[vendedor/funil]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/movatak/vendedor/funil/metricas', authVendedor, async (req, res) => {
-  try {
-    const clienteId = req.vendedor.cliente_id;
-    const setorIds = req.vendedor.setorIds || [];
-    if (!setorIds.length) return res.json({ totalLeads: 0, novasMensagens: 0, emNegociacao: 0, conversaoMes: 0 });
-    let setoresAlvo = setorIds;
-    if (req.query.setor) {
-      const pedido = parseInt(req.query.setor, 10);
-      if (!setorIds.includes(pedido)) return res.status(403).json({ error: 'Sem acesso a este setor.' });
-      setoresAlvo = [pedido];
-    }
-    const ph = setoresAlvo.map((_, i) => '$' + (i + 2)).join(',');
-    const params = [clienteId, ...setoresAlvo];
-    const totaisR = await query(
-      `SELECT COUNT(*)::int AS total_leads,
-              COUNT(*) FILTER (WHERE l.nao_lida = true)::int AS novas_mensagens,
-              COUNT(*) FILTER (WHERE l.criado_em >= date_trunc('month', now()))::int AS criados_mes,
-              COUNT(*) FILTER (WHERE l.convertido_em >= date_trunc('month', now()))::int AS convertidos_mes
-         FROM movatak_leads l
-        WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false AND l.setor_id IN (${ph})`,
-      params
-    );
-    const negociacaoR = await query(
-      `SELECT COUNT(*)::int AS n
-         FROM movatak_leads l
-         LEFT JOIN movatak_funil_colunas c ON c.id = l.funil_coluna_id
-        WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false AND l.setor_id IN (${ph})
-          AND COALESCE(c.etapa_sistema, l.etapa) = 'negociacao'`,
-      params
-    );
-    const t = totaisR.rows[0] || {};
-    const conversaoMes = t.criados_mes > 0 ? Math.round((t.convertidos_mes / t.criados_mes) * 100) : 0;
-    res.json({ totalLeads: t.total_leads || 0, novasMensagens: t.novas_mensagens || 0, emNegociacao: (negociacaoR.rows[0] || {}).n || 0, conversaoMes });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Conversa de um lead — só se o lead estiver num setor do vendedor.
-app.get('/movatak/vendedor/leads/:id/conversas', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const r = await query(
-      `SELECT * FROM (
-         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
-                reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
-                reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
-           FROM movatak_conversas WHERE lead_id = $1
-           ORDER BY criado_em DESC LIMIT 500
-       ) sub ORDER BY criado_em ASC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Enviar mensagem pelo vendedor — só se o lead for de um setor dele.
-app.post('/movatak/vendedor/leads/:id/mensagem', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const { texto, mensagem, midia_url, midia_tipo, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
-    const conteudo = String(texto ?? mensagem ?? '').trim();
-    if (!conteudo && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
-    const cli = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
-    const c = cli.rows[0] || {};
-    if (!c.zapi_instance || !c.zapi_token || !c.zapi_client_token) return res.status(400).json({ error: 'Z-API não configurada para este cliente.' });
-    const replyResolvido = await resolverReplyInfoLead(lead.id, reply_to_conversa_id, reply_to_msg_id, null);
-    const replyMsgIdZap = replyResolvido.msgId || null;
-    let tipoFinal = null, msgId = null;
-    if (midia_url) {
-      tipoFinal = tipoMidia(midia_url, midia_tipo);
-      if (tipoFinal === 'video') msgId = await zapiEnviarVideo(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, conteudo || '', replyMsgIdZap);
-      else if (tipoFinal === 'audio') msgId = await zapiEnviarAudio(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, replyMsgIdZap);
-      else msgId = await zapiEnviarImagem(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, conteudo || '', replyMsgIdZap);
-    } else {
-      msgId = await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, conteudo, replyMsgIdZap);
-    }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'mensagem_vendedor', 'Mensagem enviada pelo vendedor ' + req.vendedor.nome, { texto: (conteudo || '').slice(0,100), midia: !!midia_url });
-    emitirMensagemLead(lead.cliente_id, lead.id, { id: conversaId, lead_id: lead.id, cliente_id: lead.cliente_id, direcao: 'saida', conteudo: conteudo || '', midia_url: midia_url || null, midia_tipo: tipoFinal, msg_id: msgId, criado_em: new Date().toISOString() });
-    res.json({ ok: true, conversaId, criado_em: new Date().toISOString() });
-  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/leads/:id/mensagem-kanban', authVendedor, async (req, res, next) => {
-  req.body = { ...(req.body || {}), texto: (req.body && (req.body.texto ?? req.body.mensagem)) || '' };
-  next();
-}, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const { texto, midia_url } = req.body || {};
-    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
-    const cli = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
-    const c = cli.rows[0] || {};
-    let tipoFinal = null, msgId = null;
-    if (midia_url) {
-      tipoFinal = tipoMidia(midia_url);
-      if (tipoFinal === 'video') msgId = await zapiEnviarVideo(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, texto || '');
-      else if (tipoFinal === 'audio') msgId = await zapiEnviarAudio(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url);
-      else msgId = await zapiEnviarImagem(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, texto || '');
-    } else {
-      msgId = await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, texto);
-    }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId).catch(() => null);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'mensagem_manual_kanban', 'Mensagem enviada pelo vendedor no kanban', { vendedor_id: req.vendedor.id, texto: (texto||'').slice(0,100), midia: !!midia_url });
-    res.json({ ok: true, conversaId });
-  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/leads/:id/mensagem-rapida', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const { texto, midia_url, midia_tipo, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
-    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
-    const cli = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
-    const c = cli.rows[0] || {};
-    const replyResolvido = await resolverReplyInfoLead(lead.id, reply_to_conversa_id, reply_to_msg_id, null);
-    const replyMsgIdZap = replyResolvido.msgId || null;
-    let tipoFinal = null, msgId = null;
-    if (midia_url) {
-      tipoFinal = tipoMidia(midia_url, midia_tipo);
-      if (tipoFinal === 'video') msgId = await zapiEnviarVideo(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, texto || '', replyMsgIdZap);
-      else if (tipoFinal === 'audio') msgId = await zapiEnviarAudio(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, replyMsgIdZap);
-      else msgId = await zapiEnviarImagem(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, texto || '', replyMsgIdZap);
-    } else {
-      msgId = await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, texto, replyMsgIdZap);
-    }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
-    if (texto) query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE cliente_id=$1 AND texto=$2', [lead.cliente_id, texto]).catch(() => null);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'mensagem_rapida_vendedor', 'Mensagem rápida enviada pelo vendedor', { vendedor_id: req.vendedor.id, midia: !!midia_url });
-    res.json({ ok: true, conversaId, criado_em: new Date().toISOString() });
-  } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-// Mover lead entre colunas (dentro do escopo do vendedor) e marcar lido/não lido.
-app.patch('/movatak/vendedor/leads/:id/coluna', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const colunaId = parseInt(req.body && req.body.coluna_id, 10);
-    if (!colunaId) return res.status(400).json({ error: 'coluna_id obrigatório.' });
-    // A coluna destino precisa ser de um setor do vendedor.
-    const col = await query('SELECT setor_id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true', [colunaId, lead.cliente_id]);
-    if (!col.rows.length || !vendedorPodeSetor(req, col.rows[0].setor_id)) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    await moverLeadParaColunaFunil(lead.id, colunaId).catch(() => null);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-async function vendedorPodeConversa(req, conversaId) {
-  const r = await query(
-    `SELECT cv.*, l.setor_id, l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_conversas cv
-       JOIN movatak_leads l ON l.id = cv.lead_id
-       JOIN movatak_clientes c ON c.id = cv.cliente_id
-      WHERE cv.id = $1 AND cv.cliente_id = $2`,
-    [conversaId, req.vendedor.cliente_id]
-  ).catch(() => ({ rows: [] }));
-  const msg = r.rows[0] || null;
-  if (!msg || !vendedorPodeSetor(req, msg.setor_id)) return null;
-  return msg;
-}
-
-async function vendedorPodeColuna(req, colunaId) {
-  const r = await query(
-    'SELECT id, cliente_id, setor_id, nome FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true',
-    [colunaId, req.vendedor.cliente_id]
-  ).catch(() => ({ rows: [] }));
-  const col = r.rows[0] || null;
-  if (!col || !vendedorPodeSetor(req, col.setor_id)) return null;
-  return col;
-}
-
-app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const naoLida = !!(req.body && req.body.nao_lida);
-    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, lead.id]);
-    res.json({ ok: true, nao_lida: naoLida });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/leads/:id/arquivar', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const arquivado = req.body && typeof req.body.arquivado === 'boolean' ? req.body.arquivado : true;
-    await query(`UPDATE movatak_leads SET arquivado=$1, atualizado_em=NOW() WHERE id=$2`, [arquivado, lead.id]);
-    res.json({ ok: true, arquivado });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/leads/:id/setor', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const setorDestinoId = parseInt(req.body && req.body.setor_id, 10);
-    if (!setorDestinoId || !vendedorPodeSetor(req, setorDestinoId)) return res.status(403).json({ error: 'Setor fora do seu acesso.' });
-    const colunaR = await query(
-      `SELECT id, nome FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND setor_id=$2 AND ativo=true
-        ORDER BY ordem ASC, id ASC LIMIT 1`,
-      [lead.cliente_id, setorDestinoId]
-    );
-    const colunaDestino = colunaR.rows[0] || null;
-    await query(`UPDATE movatak_leads SET setor_id=$1, funil_coluna_id=COALESCE($2, funil_coluna_id), atualizado_em=NOW() WHERE id=$3`, [setorDestinoId, colunaDestino ? colunaDestino.id : null, lead.id]);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'transferencia_setor_vendedor', 'Atendimento transferido pelo vendedor', { setor_destino_id: setorDestinoId, coluna_destino_id: colunaDestino ? colunaDestino.id : null, vendedor_id: req.vendedor.id }).catch(() => null);
-    res.json({ ok: true, setor_id: setorDestinoId, coluna_destino: colunaDestino ? colunaDestino.nome : null });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/vendedor/leads/:id/historico', authVendedor, async (req, res) => {
-  try {
-    const acesso = await vendedorPodeLead(req, req.params.id);
-    if (!acesso) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const lead = await query(
-      `SELECT l.*, c.nome AS cliente_nome, v.nome AS vendedor_nome
-         FROM movatak_leads l
-         JOIN movatak_clientes c ON c.id = l.cliente_id
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-        WHERE l.id = $1`,
-      [acesso.id]
-    );
-    const eventos = await query(`SELECT id, tipo, descricao, dados, criado_em FROM movatak_lead_eventos WHERE lead_id=$1 ORDER BY criado_em DESC LIMIT 100`, [acesso.id]).catch(() => ({ rows: [] }));
-    const fila = await query(
-      `SELECT id, etapa_seq, COALESCE(sequencia_fu, 1) AS sequencia_fu, proximo_envio,
-              status, data_entrada, enviado_em, tentativas_envio, erro_envio
-         FROM movatak_followup
-        WHERE lead_id = $1
-        ORDER BY proximo_envio DESC
-        LIMIT 100`,
-      [acesso.id]
-    ).catch(() => ({ rows: [] }));
-    res.json({ lead: lead.rows[0], eventos: eventos.rows, fila: fila.rows });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/vendedor/conversas/:id', authVendedor, async (req, res) => {
-  try {
-    const msg = await vendedorPodeConversa(req, req.params.id);
-    if (!msg) return res.status(403).json({ error: 'Sem acesso a esta mensagem.' });
-    let apagadaNoZap = false;
-    let avisoZap = null;
-    if (msg.direcao === 'saida' && msg.msg_id) {
-      try { await zapiApagarMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id); apagadaNoZap = true; }
-      catch (e) { avisoZap = e.response?.data?.error || e.response?.data?.message || e.message; }
-    } else if (msg.direcao === 'entrada') {
-      avisoZap = 'Mensagem recebida do lead — não é possível apagar do lado dele, só do seu painel.';
-    }
-    await query('DELETE FROM movatak_conversas WHERE id=$1', [msg.id]);
-    emitirMensagemApagada(msg.cliente_id, msg.lead_id, Number(msg.id));
-    res.json({ ok: true, apagadaNoZap, avisoZap });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/conversas/:id/reagir', authVendedor, async (req, res) => {
-  try {
-    const { reaction } = req.body || {};
-    if (!reaction) return res.status(400).json({ error: 'Informe o emoji da reação.' });
-    const msg = await vendedorPodeConversa(req, req.params.id);
-    if (!msg) return res.status(403).json({ error: 'Sem acesso a esta mensagem.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiReagirMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id, reaction);
-    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_reacao', 'Reação enviada pelo vendedor no CRM', { conversa_id: msg.id, reaction, vendedor_id: req.vendedor.id });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/conversas/:id/encaminhar', authVendedor, async (req, res) => {
-  try {
-    const { destino } = req.body || {};
-    if (!destino) return res.status(400).json({ error: 'Informe o destino.' });
-    const msg = await vendedorPodeConversa(req, req.params.id);
-    if (!msg) return res.status(403).json({ error: 'Sem acesso a esta mensagem.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiEncaminharMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, String(destino).replace(/\D/g, ''), msg.msg_id, msg.telefone);
-    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_encaminhamento', 'Mensagem encaminhada pelo vendedor no CRM', { conversa_id: msg.id, destino, vendedor_id: req.vendedor.id });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/conversas/:id/marcar-lida-zap', authVendedor, async (req, res) => {
-  try {
-    const msg = await vendedorPodeConversa(req, req.params.id);
-    if (!msg) return res.status(403).json({ error: 'Sem acesso a esta mensagem.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiLerMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id);
-    await query(`UPDATE movatak_conversas SET msg_status='read', msg_status_em=NOW() WHERE id=$1`, [msg.id]).catch(() => null);
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/conversas/:id/editar', authVendedor, async (req, res) => {
-  try {
-    const { texto } = req.body || {};
-    if (!String(texto || '').trim()) return res.status(400).json({ error: 'Informe o novo texto.' });
-    const msg = await vendedorPodeConversa(req, req.params.id);
-    if (!msg) return res.status(403).json({ error: 'Sem acesso a esta mensagem.' });
-    if (msg.direcao !== 'saida') return res.status(400).json({ error: 'Só é possível editar mensagens enviadas.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiEditarTexto(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id, texto);
-    await query(`UPDATE movatak_conversas SET conteudo=$1 WHERE id=$2`, [texto, msg.id]);
-    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_edicao', 'Mensagem editada pelo vendedor no CRM', { conversa_id: msg.id, vendedor_id: req.vendedor.id });
-    emitirMensagemLead(msg.cliente_id, msg.lead_id, { ...msg, conteudo: texto, editada: true });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/leads/:id/zapi/chat-action', authVendedor, async (req, res) => {
-  try {
-    const { action } = req.body || {};
-    const allowed = ['read','unread','pin','unpin','mute','unmute','archive','unarchive'];
-    if (!allowed.includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const z = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
-    const c = z.rows[0] || {};
-    let data;
-    if (action === 'archive' || action === 'unarchive') {
-      const url = `${ZAPI_BASE}/${c.zapi_instance}/token/${c.zapi_token}/archive-chat`;
-      const resp = await axios.post(url, { phone: lead.telefone, archive: action === 'archive' }, { headers: zapiHeaders(c.zapi_client_token) });
-      data = resp.data || {};
-      await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
-    } else {
-      data = await zapiModificarChat(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, action);
-      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
-      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
-    }
-    await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação de chat executada pelo vendedor', { action, vendedor_id: req.vendedor.id });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/vendedor/leads/:id/zapi/send-advanced', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const { recurso, payload, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
-    if (!recurso || !ZAPI_ADVANCED_ENDPOINTS[recurso]) return res.status(400).json({ error: 'Recurso inválido.' });
-    const z = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
-    const c = z.rows[0] || {};
-    const p = limparPayloadAvancado(payload || {});
-    const replyResolvido = await resolverReplyInfoLead(lead.id, reply_to_conversa_id, reply_to_msg_id, null);
-    const replyMsgIdZap = replyResolvido.msgId || null;
-    let msgId = null, conteudo = '', midiaUrl = null, midiaTipo = recurso;
-    if (recurso === 'document') {
-      msgId = await zapiEnviarDocumento(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, p.document || p.documentUrl || p.url, p.fileName || p.filename || 'arquivo.pdf', p.caption || p.message || '', p.extension || p.ext || 'pdf', replyMsgIdZap);
-      conteudo = p.caption || p.message || 'Documento enviado';
-      midiaUrl = p.document || p.documentUrl || p.url || null;
-      midiaTipo = 'documento';
-    } else if (recurso === 'link') {
-      msgId = await zapiEnviarLink(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, p.linkUrl || p.url, p.message || '', p.title || '', p.image || '', replyMsgIdZap);
-      conteudo = p.message || p.title || p.linkUrl || p.url || 'Link enviado';
-    } else if (recurso === 'location') {
-      msgId = await zapiEnviarLocalizacao(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, p.title || 'Localização', p.address || '', p.latitude, p.longitude, replyMsgIdZap);
-      conteudo = p.title || p.address || 'Localização enviada';
-    } else if (recurso === 'contact') {
-      msgId = await zapiEnviarContato(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, p.contactName || p.name || 'Contato', p.contactPhone || p.phone, !!p.contactBusiness, replyMsgIdZap);
-      conteudo = p.contactName || p.name || 'Contato enviado';
-    } else {
-      const payloadFinal = montarPayloadRespostaZapi({ phone: lead.telefone, ...p }, replyMsgIdZap);
-      const data = await zapiPost(c.zapi_instance, c.zapi_token, c.zapi_client_token, ZAPI_ADVANCED_ENDPOINTS[recurso], payloadFinal);
-      msgId = data.messageId || data.id || data.zaapId || null;
-      conteudo = p.message || p.text || p.caption || p.title || ('Recurso enviado: ' + recurso);
-      midiaUrl = p.image || p.video || p.gif || p.sticker || null;
-    }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midiaUrl || null, midiaTipo, msgId, replyResolvido.info).catch(() => null);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_recurso_avancado', 'Recurso avançado enviado pelo vendedor', { recurso, conversaId, vendedor_id: req.vendedor.id });
-    res.json({ ok: true, conversaId, messageId: msgId, criado_em: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || JSON.stringify(e.response?.data || {}) || e.message }); }
-});
-
-app.get('/movatak/vendedor/mensagens-rapidas', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens, template_id FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.vendedor.cliente_id]);
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/mensagens-rapidas', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaMensagensRapidas();
-    const { titulo, texto, midia_url, itens, template_id } = req.body || {};
-    const sequencia = Array.isArray(itens) ? itens.filter(it => it && (it.texto || it.midia_url)) : [];
-    if (!titulo) return res.status(400).json({ error: 'Título obrigatório.' });
-    if (!sequencia.length && !texto) return res.status(400).json({ error: 'Texto obrigatório.' });
-    const textoFinal = sequencia.length ? (texto || sequencia.map(it => it.texto || '').filter(Boolean).join(' ')).trim().slice(0,500) || titulo.trim() : texto.trim();
-    const r = await query('INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens, template_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING id, titulo, texto, midia_url, ordem, itens, template_id', [req.vendedor.cliente_id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia), template_id ? parseInt(template_id,10) : null]);
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/mensagens-rapidas/:id', authVendedor, async (req, res) => {
-  try {
-    const { titulo, texto, midia_url, itens } = req.body || {};
-    await query(`UPDATE movatak_mensagens_rapidas SET titulo=COALESCE($1,titulo), texto=COALESCE($2,texto), midia_url=CASE WHEN $3::text IS NULL THEN midia_url ELSE $3 END, itens=CASE WHEN $4::jsonb IS NULL THEN itens ELSE $4::jsonb END WHERE id=$5 AND cliente_id=$6`, [titulo || null, texto || null, midia_url !== undefined ? (midia_url || null) : null, Array.isArray(itens) ? JSON.stringify(itens) : null, req.params.id, req.vendedor.cliente_id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/vendedor/mensagens-rapidas/:id', authVendedor, async (req, res) => {
-  try { await query('DELETE FROM movatak_mensagens_rapidas WHERE id=$1 AND cliente_id=$2', [req.params.id, req.vendedor.cliente_id]); res.json({ ok: true }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/mensagens-rapidas/:id/usar', authVendedor, async (req, res) => {
-  try { await query('UPDATE movatak_mensagens_rapidas SET vezes_usado=COALESCE(vezes_usado,0)+1 WHERE id=$1 AND cliente_id=$2', [req.params.id, req.vendedor.cliente_id]); res.json({ ok: true }); }
-  catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/upload-imagem', authVendedor, async (req, res) => {
-  try {
-    const dataUrl = (req.body && req.body.dataUrl) || '';
-    const m = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[^;,]+)*;base64,(.+)$/i.exec(dataUrl);
-    const TIPOS_PERMITIDOS = ['image/png','image/jpeg','image/jpg','image/webp','video/mp4','video/webm','video/quicktime','audio/webm','audio/ogg','audio/mpeg','audio/mp4','audio/wav','audio/x-m4a','audio/aac'];
-    const contentType = m ? m[1].toLowerCase() : '';
-    if (!m || !TIPOS_PERMITIDOS.includes(contentType)) return res.status(400).json({ error: 'Arquivo inválido. Envie imagem, vídeo ou áudio.' });
-    const ehVideo = contentType.startsWith('video/');
-    const ehAudio = contentType.startsWith('audio/');
-    const tipo = ehVideo ? 'video' : (ehAudio ? 'audio' : 'imagem');
-    const extMap = { 'image/png':'png','image/jpeg':'jpg','image/jpg':'jpg','image/webp':'webp','video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/webm':'webm','audio/ogg':'ogg','audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/x-m4a':'m4a','audio/aac':'aac' };
-    const ext = extMap[contentType] || (ehVideo ? 'mp4' : (ehAudio ? 'webm' : 'jpg'));
-    const buffer = Buffer.from(m[2], 'base64');
-    const limite = ehVideo ? 20 * 1024 * 1024 : 8 * 1024 * 1024;
-    if (buffer.length > limite) return res.status(413).json({ error: ehVideo ? 'Vídeo muito grande (máx 20MB).' : 'Arquivo muito grande (máx 8MB).' });
-    const url = await uploadSupabase(buffer, contentType, ext);
-    res.json({ ok: true, url, tipo });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/vendedor/agendamentos', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const setorIds = req.vendedor.setorIds || [];
-    if (!setorIds.length) return res.json([]);
-    const dias = Math.max(1, Math.min(parseInt(req.query.dias || '30', 10), 120));
-    const ph = setorIds.map((_, i) => '$' + (i + 3)).join(',');
-    const r = await query(
-      `SELECT a.*, l.nome AS lead_nome, l.telefone AS lead_telefone, c.nome AS coluna_nome
-         FROM movatak_agendamentos a
-         LEFT JOIN movatak_leads l ON l.id = a.lead_id
-         LEFT JOIN movatak_funil_colunas c ON c.id = a.funil_coluna_id
-        WHERE a.cliente_id=$1
-          AND (a.lead_id IS NULL OR l.setor_id IN (${ph}))
-          AND a.inicio >= NOW() - INTERVAL '1 day'
-          AND a.inicio <= NOW() + ($2 || ' days')::INTERVAL
-        ORDER BY a.inicio ASC LIMIT 200`,
-      [req.vendedor.cliente_id, dias, ...setorIds]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/agendamentos', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const clienteId = req.vendedor.cliente_id;
-    const { lead_id, titulo, tipo, inicio, fim, status, observacao, coluna_id, mover_kanban } = req.body || {};
-    if (!titulo || !inicio) return res.status(400).json({ error: 'Título e data/horário são obrigatórios.' });
-    if (lead_id) {
-      const lead = await vendedorPodeLead(req, lead_id);
-      if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    }
-    let colunaDestino = null;
-    if (coluna_id) {
-      const col = await vendedorPodeColuna(req, coluna_id);
-      if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-      colunaDestino = col.id;
-    } else {
-      const tipoNormTmp = String(tipo || 'atendimento').trim().toLowerCase();
-      colunaDestino = await buscarColunaAgenda(clienteId, tipoNormTmp, null).catch(() => null);
-      if (colunaDestino) {
-        const col = await vendedorPodeColuna(req, colunaDestino);
-        if (!col) colunaDestino = null;
-      }
-    }
-    const tipoNorm = String(tipo || 'atendimento').trim().toLowerCase();
-    const ins = await query(`INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [clienteId, lead_id || null, titulo, tipoNorm, status || 'agendado', inicio, fim || null, observacao || null, colunaDestino]);
-    if (lead_id && colunaDestino && mover_kanban !== false) {
-      await moverLeadParaColunaFunil(lead_id, colunaDestino, true).catch(() => null);
-      await registrarEventoLead(lead_id, clienteId, 'agendamento_criado', 'Agendamento criado pelo vendedor e lead movido no kanban', { agendamento_id: ins.rows[0].id, tipo: tipoNorm, inicio, coluna_id: colunaDestino, vendedor_id: req.vendedor.id }).catch(() => null);
-    }
-    res.json({ ok: true, agendamento: ins.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-async function vendedorPodeAgendamento(req, agendamentoId) {
-  const r = await query(`SELECT a.*, l.setor_id FROM movatak_agendamentos a LEFT JOIN movatak_leads l ON l.id=a.lead_id WHERE a.id=$1 AND a.cliente_id=$2`, [agendamentoId, req.vendedor.cliente_id]).catch(() => ({ rows: [] }));
-  const ag = r.rows[0] || null;
-  if (!ag) return null;
-  if (ag.lead_id && !vendedorPodeSetor(req, ag.setor_id)) return null;
-  return ag;
-}
-
-app.patch('/movatak/vendedor/agendamentos/:id/status', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const { status, mover_para_coluna_id } = req.body || {};
-    if (!status) return res.status(400).json({ error: 'Informe o status.' });
-    const agPerm = await vendedorPodeAgendamento(req, req.params.id);
-    if (!agPerm) return res.status(403).json({ error: 'Sem acesso a este agendamento.' });
-    const r = await query(`UPDATE movatak_agendamentos SET status=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *`, [status, req.params.id]);
-    const ag = r.rows[0];
-    let leadMovido = false;
-    if (mover_para_coluna_id && ag.lead_id) {
-      const col = await vendedorPodeColuna(req, mover_para_coluna_id);
-      if (col) {
-        await moverLeadParaColunaFunil(ag.lead_id, mover_para_coluna_id).catch(() => null);
-        await registrarEventoLead(ag.lead_id, ag.cliente_id, 'agenda_status', `Agendamento "${ag.titulo || ''}" → ${status}`, { agendamento_id: ag.id, status, vendedor_id: req.vendedor.id }).catch(() => null);
-        leadMovido = true;
-      }
-    }
-    res.json({ ok: true, agendamento: ag, lead_movido: leadMovido });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/agendamentos/:id', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const agPerm = await vendedorPodeAgendamento(req, req.params.id);
-    if (!agPerm) return res.status(403).json({ error: 'Sem acesso a este agendamento.' });
-    const { status, observacao, inicio, fim, funil_coluna_id } = req.body || {};
-    let colId = funil_coluna_id || null;
-    if (colId) {
-      const col = await vendedorPodeColuna(req, colId);
-      if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    }
-    const r = await query(`UPDATE movatak_agendamentos SET status=COALESCE($1,status), observacao=CASE WHEN $2::text IS NULL THEN observacao ELSE $2 END, inicio=COALESCE($3::timestamptz,inicio), fim=COALESCE($4::timestamptz,fim), funil_coluna_id=COALESCE($5,funil_coluna_id), atualizado_em=NOW() WHERE id=$6 RETURNING *`, [status || null, observacao !== undefined ? observacao : null, inicio || null, fim || null, colId, req.params.id]);
-    res.json({ ok: true, agendamento: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/vendedor/agendamentos/:id', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const ag = await vendedorPodeAgendamento(req, req.params.id);
-    if (!ag) return res.status(403).json({ error: 'Sem acesso a este agendamento.' });
-    await query(`DELETE FROM movatak_agendamentos WHERE id=$1`, [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/funil/colunas', authVendedor, async (req, res) => {
-  try {
-    // Não inicializa template em ação do vendedor; evita lock/DDL durante atendimento.
-    const nome = String((req.body && req.body.nome) || '').trim();
-    if (!nome) return res.status(400).json({ error: 'Informe o nome da etapa.' });
-    const setorId = req.body && req.body.setor_id ? parseInt(req.body.setor_id, 10) : (req.vendedor.setorIds || [])[0];
-    if (!setorId || !vendedorPodeSetor(req, setorId)) return res.status(403).json({ error: 'Setor fora do seu acesso.' });
-    const slugBase = slugifyFunil(nome);
-    const ordemR = await query('SELECT COALESCE(MAX(ordem),0)+1 AS ordem FROM movatak_funil_colunas WHERE cliente_id=$1', [req.vendedor.cliente_id]);
-    const etapa = etapaSistemaPorSlug(slugBase);
-    const ins = await query(`INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp, setor_id) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`, [req.vendedor.cliente_id, nome, slugBase, ordemR.rows[0].ordem, etapa, req.body?.sincronizar_whatsapp !== false, setorId]);
-    res.json({ ok: true, coluna: ins.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/funil/colunas/:id', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaFunil();
-    const col = await vendedorPodeColuna(req, req.params.id);
-    if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    const { nome, ordem, ativo, cor, comando } = req.body || {};
-    const r = await query(`UPDATE movatak_funil_colunas SET nome=COALESCE($1,nome), ordem=COALESCE($2,ordem), ativo=COALESCE($3,ativo), cor=CASE WHEN $5::text IS NULL THEN cor ELSE $5 END, comando=CASE WHEN $6::text IS NULL THEN comando ELSE NULLIF($6,'') END, atualizado_em=NOW() WHERE id=$4 RETURNING *`, [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, col.id, cor !== undefined ? (cor || null) : null, comando !== undefined ? String(comando).trim() : null]);
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/funil/colunas/:id/setor', authVendedor, async (req, res) => {
-  try {
-    const col = await vendedorPodeColuna(req, req.params.id);
-    if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    const setorId = req.body && req.body.setor_id ? parseInt(req.body.setor_id, 10) : null;
-    if (!setorId || !vendedorPodeSetor(req, setorId)) return res.status(403).json({ error: 'Setor fora do seu acesso.' });
-    const r = await query('UPDATE movatak_funil_colunas SET setor_id=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *', [setorId, col.id]);
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/funil/colunas/:id/ausencia', authVendedor, async (req, res) => {
-  try {
-    const col = await vendedorPodeColuna(req, req.params.id);
-    if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    const ativa = !!(req.body && req.body.ausencia_ativa);
-    const r = await query('UPDATE movatak_funil_colunas SET ausencia_ativa=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *', [ativa, col.id]);
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/vendedor/funil/colunas/:id', authVendedor, async (req, res) => {
-  try {
-    const col = await vendedorPodeColuna(req, req.params.id);
-    if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    const { confirmar, destino_coluna_id } = req.body || {};
-    if (!confirmar) return res.status(400).json({ error: 'Confirmação obrigatória para excluir a coluna.' });
-    const dest = await vendedorPodeColuna(req, destino_coluna_id);
-    if (!dest || Number(dest.id) === Number(col.id)) return res.status(400).json({ error: 'Coluna de destino inválida.' });
-    const leadsR = await query('SELECT id FROM movatak_leads WHERE funil_coluna_id=$1 AND cliente_id=$2', [col.id, req.vendedor.cliente_id]);
-    if (leadsR.rows.length) await query('UPDATE movatak_leads SET funil_coluna_id=$1, atualizado_em=NOW() WHERE funil_coluna_id=$2 AND cliente_id=$3', [dest.id, col.id, req.vendedor.cliente_id]);
-    await query('UPDATE movatak_funil_colunas SET ativo=false, atualizado_em=NOW() WHERE id=$1', [col.id]);
-    res.json({ ok: true, leads_realocados: leadsR.rows.length, destino_coluna_id: dest.id });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/funil/colunas/reordenar', authVendedor, async (req, res) => {
-  try {
-    const ordem = Array.isArray(req.body?.ordem) ? req.body.ordem : null;
-    if (!ordem || !ordem.length) return res.status(400).json({ error: 'Envie ordem: [ids...] na sequência desejada.' });
-    let pos = 1;
-    for (const colId of ordem) {
-      const col = await vendedorPodeColuna(req, colId);
-      if (!col) continue;
-      await query('UPDATE movatak_funil_colunas SET ordem=$1, atualizado_em=NOW() WHERE id=$2', [pos, col.id]).catch(() => null);
-      pos++;
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/funil/colunas/:id/sincronizar-whatsapp', authVendedor, async (req, res) => {
-  try {
-    const col = await vendedorPodeColuna(req, req.params.id);
-    if (!col) return res.status(403).json({ error: 'Coluna fora do seu acesso.' });
-    const tagId = await sincronizarColunaComWhatsapp(col.id);
-    res.json({ ok: true, zapi_tag_id: tagId });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/leads/:id/reativar-followup', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    await query(`UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await agendarFollowupV2(lead.id, lead.cliente_id, 1, true);
-    await enviarFollowupsPendentesDoLead(lead.id, 1);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up reativado manualmente pelo vendedor', { vendedor_id: req.vendedor.id });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-// Operações extras do CRM do vendedor — mesmas ações da tela do admin,
-// sempre limitadas aos setores liberados para o vendedor logado.
-app.get('/movatak/vendedor/questionario-templates', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(
-      `SELECT id, nome, criado_em, atualizado_em,
-              COALESCE(jsonb_array_length(passos), 0) AS qtd_passos
-         FROM movatak_questionario_templates
-        WHERE cliente_id = $1 AND ativo = true
-        ORDER BY criado_em DESC`,
-      [req.vendedor.cliente_id]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/vendedor/questionario-templates/:tid', authVendedor, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(
-      `SELECT * FROM movatak_questionario_templates WHERE id = $1 AND cliente_id = $2 AND ativo = true`,
-      [req.params.tid, req.vendedor.cliente_id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Template de questionário não encontrado.' });
-    const t = r.rows[0];
-    res.json({
-      id: t.id,
-      nome: t.nome,
-      intro: t.intro || '',
-      final: t.final || '',
-      intro_imagem: t.intro_imagem || '',
-      final_imagem: t.final_imagem || '',
-      passos: t.passos || [],
-      recomendacao: t.recomendacao || [],
-      comando_parar: t.comando_parar || '',
-      comando_ativar: t.comando_ativar || ''
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/leads/:id/cliente', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    await query(`UPDATE movatak_leads SET etapa='cliente', convertido_em=NOW(), atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'cliente_manual', 'Lead marcado como cliente pelo vendedor', { vendedor_id: req.vendedor.id });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/leads/:id/descartar', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    await query(`UPDATE movatak_leads SET etapa='descartado', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'descartado_manual', 'Lead descartado pelo vendedor', { vendedor_id: req.vendedor.id });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/leads/:id/followup/pausar', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    await query(`UPDATE movatak_leads SET etapa='lead', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_pausado_manual', 'Follow-up pausado pelo vendedor', { vendedor_id: req.vendedor.id });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/vendedor/leads/:id/followup/reativar', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const sequencia = parseInt(req.body && req.body.sequencia_fu ? req.body.sequencia_fu : 2, 10);
-    const enviarImediato = !!(req.body && req.body.enviar_imediato);
-    if (![1, 2].includes(sequencia)) return res.status(400).json({ error: 'sequencia_fu deve ser 1 ou 2.' });
-    await query(`UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await agendarFollowupV2(lead.id, lead.cliente_id, sequencia, true);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado_manual', `Follow-up FU${sequencia} reativado pelo vendedor`, { vendedor_id: req.vendedor.id, enviar_imediato: enviarImediato });
-    if (enviarImediato) await enviarFollowupsPendentesDoLead(lead.id, sequencia);
-    res.json({ ok: true, sequencia_fu: sequencia });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/vendedor/leads/:id/iniciar-autoatendimento', authVendedor, async (req, res) => {
-  try {
-    const leadPerm = await vendedorPodeLead(req, req.params.id);
-    if (!leadPerm) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const templateId = req.body && req.body.template_id ? parseInt(req.body.template_id, 10) : null;
-    if (!templateId) return res.status(400).json({ error: 'template_id é obrigatório.' });
-    const tpl = await query('SELECT id FROM movatak_questionario_templates WHERE id=$1 AND cliente_id=$2 AND ativo=true', [templateId, req.vendedor.cliente_id]);
-    if (!tpl.rows.length) return res.status(404).json({ error: 'Template não encontrado para este cliente.' });
-    await query('UPDATE movatak_leads SET automacao_pausada=false WHERE id=$1', [leadPerm.id]).catch(() => null);
-    const leadRow = await query('SELECT * FROM movatak_leads WHERE id=$1 AND cliente_id=$2', [leadPerm.id, req.vendedor.cliente_id]);
-    const cliRow = await query('SELECT * FROM movatak_clientes WHERE id=$1', [req.vendedor.cliente_id]);
-    const lead = leadRow.rows[0];
-    const cliente = cliRow.rows[0];
-    if (!lead || !cliente) return res.status(404).json({ error: 'Lead ou cliente não encontrado.' });
-    await query(
-      `UPDATE movatak_questionario_estado SET status='cancelado', atualizado_em=NOW()
-        WHERE cliente_id=$1 AND telefone=$2 AND status IN ('em_andamento','aguardando')`,
-      [cliente.id, lead.telefone]
-    ).catch(() => null);
-    await iniciarQuestionarioPorTemplate(cliente, lead, templateId);
-    await registrarEventoLead(lead.id, cliente.id, 'autoatendimento_manual', 'Autoatendimento iniciado pelo vendedor', { template_id: templateId, vendedor_id: req.vendedor.id });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/vendedor/leads/:id', authVendedor, async (req, res) => {
-  try {
-    const lead = await vendedorPodeLead(req, req.params.id);
-    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const leadId = lead.id;
-    await query('DELETE FROM movatak_conversas WHERE lead_id=$1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_followup WHERE lead_id=$1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_lead_eventos WHERE lead_id=$1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_mensagens WHERE lead_id=$1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_menu_estado WHERE lead_id=$1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_questionario_estado WHERE lead_id=$1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_leads WHERE id=$1 AND cliente_id=$2', [leadId, req.vendedor.cliente_id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-
-// ============================================================
-// API — Resumo de um cliente (cards do topo do dashboard)
-// ============================================================
-app.get('/movatak/admin/clientes/:id/resumo', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const id = req.params.id;
-    // Período em dias: 0 = hoje, 7, 30, 90. Default 30.
-    const dias = [0, 7, 30, 90].includes(parseInt(req.query.dias))
-      ? parseInt(req.query.dias) : 30;
-
-    // Períodos reutilizáveis: leads por data de entrada; vendas por data de conversão.
-    const leadPeriodoSQL = dias === 0
-      ? "DATE(criado_em) = CURRENT_DATE"
-      : `criado_em >= NOW() - INTERVAL '${dias} days'`;
-    const vendaPeriodoSQL = dias === 0
-      ? "DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE"
-      : `COALESCE(convertido_em, atualizado_em) >= NOW() - INTERVAL '${dias} days'`;
-
-    // Métricas do cliente no período
-    const m = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado' AND ${leadPeriodoSQL})  AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND ${vendaPeriodoSQL})     AS convertidos,
-         COUNT(*) FILTER (WHERE etapa = 'followup')                           AS em_followup,
-         COUNT(*) FILTER (WHERE DATE(criado_em) = CURRENT_DATE)               AS leads_hoje,
-         COUNT(*) FILTER (WHERE etapa = 'cliente' AND DATE(COALESCE(convertido_em, atualizado_em)) = CURRENT_DATE) AS vendas_hoje
-       FROM movatak_leads
-       WHERE cliente_id = $1`,
-      [id]
-    );
-
-    // Leads por hora do dia de hoje (0-23) — sempre do dia atual
-    const h = await query(
-      `SELECT EXTRACT(HOUR FROM criado_em)::int AS hora, COUNT(*) AS leads
-       FROM movatak_leads
-       WHERE cliente_id = $1 AND DATE(criado_em) = CURRENT_DATE
-       GROUP BY hora ORDER BY hora`,
-      [id]
-    );
-    const leadsPorHora = Array.from({ length: 24 }, (_, i) => {
-      const found = h.rows.find(r => r.hora === i);
-      return { hora: i, leads: found ? parseInt(found.leads) : 0 };
-    });
-
-    // Vendas por vendedor no período
-    const v = await query(
-      `SELECT vd.nome,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND ${vendaPeriodoSQL.replace(/COALESCE\(convertido_em, atualizado_em\)/g, 'COALESCE(l.convertido_em, l.atualizado_em)')}) AS fechamentos,
-              COUNT(l.id) FILTER (WHERE ${leadPeriodoSQL.replace(/criado_em/g, 'l.criado_em')}) AS leads_atribuidos
-       FROM movatak_vendedores vd
-       LEFT JOIN movatak_leads l ON l.vendedor_id = vd.id AND l.cliente_id = $1
-       WHERE vd.cliente_id = $1 AND COALESCE(vd.ativo, true) = true
-       GROUP BY vd.id, vd.nome
-       ORDER BY fechamentos DESC`,
-      [id]
-    );
-
-    res.json({
-      periodo_dias: dias,
-      ...m.rows[0],
-      leads_por_hora: leadsPorHora,
-      vendedores: v.rows
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ============================================================
-// API — Operação e fila de follow-up
-// ============================================================
-app.get('/movatak/admin/clientes/:id/operacao', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const clienteId = req.params.id;
-
-    const cliente = await query(
-      `SELECT id, nome, ativo, zapi_instance, trigger_msg, criado_em, ultimo_webhook_em, ultimo_erro_zapi_em, ultimo_erro_zapi
-         FROM movatak_clientes
-        WHERE id = $1`,
-      [clienteId]
-    );
-    if (!cliente.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-
-    const leads = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE etapa != 'descartado') AS total_leads,
-         COUNT(*) FILTER (WHERE etapa = 'lead') AS em_atendimento,
-         COUNT(*) FILTER (WHERE etapa = 'followup') AS em_followup,
-         COUNT(*) FILTER (WHERE etapa = 'cliente') AS clientes,
-         COUNT(*) FILTER (WHERE etapa = 'descartado') AS descartados,
-         MAX(criado_em) AS ultimo_lead_em,
-         MAX(atualizado_em) AS ultima_atualizacao_em
-       FROM movatak_leads
-       WHERE cliente_id = $1`,
-      [clienteId]
-    );
-
-    const fila = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE status = 'pendente') AS pendentes,
-         COUNT(*) FILTER (WHERE status = 'pendente' AND COALESCE(sequencia_fu,1) = 1) AS pendentes_fu1,
-         COUNT(*) FILTER (WHERE status = 'pendente' AND COALESCE(sequencia_fu,1) = 2) AS pendentes_fu2,
-         COUNT(*) FILTER (WHERE status = 'pendente' AND proximo_envio <= NOW()) AS pendentes_atrasadas,
-         COUNT(*) FILTER (WHERE status = 'enviado') AS enviadas,
-         COUNT(*) FILTER (WHERE status = 'pausado') AS pausadas,
-         MAX(COALESCE(enviado_em, proximo_envio)) FILTER (WHERE status = 'enviado') AS ultimo_envio_em,
-         MIN(proximo_envio) FILTER (WHERE status = 'pendente') AS proximo_envio_em
-       FROM movatak_followup
-       WHERE cliente_id = $1`,
-      [clienteId]
-    );
-
-    const ultimoLead = await query(
-      `SELECT id, nome, telefone, etapa, criado_em, atualizado_em
-       FROM movatak_leads
-       WHERE cliente_id = $1
-       ORDER BY criado_em DESC
-       LIMIT 1`,
-      [clienteId]
-    );
-
-    const proximo = await query(
-      `SELECT f.id, f.lead_id, f.sequencia_fu, f.etapa_seq, f.proximo_envio, f.status,
-              l.nome, l.telefone, l.etapa
-       FROM movatak_followup f
-       JOIN movatak_leads l ON l.id = f.lead_id
-       WHERE f.cliente_id = $1 AND f.status = 'pendente'
-       ORDER BY f.proximo_envio ASC
-       LIMIT 1`,
-      [clienteId]
-    );
-
-    res.json({
-      cliente: cliente.rows[0],
-      leads: leads.rows[0],
-      fila: fila.rows[0],
-      ultimo_lead: ultimoLead.rows[0] || null,
-      proxima_mensagem: proximo.rows[0] || null,
-      debug_ativo: MOVATAK_DEBUG,
-      relatorio_diario_ativo: String(process.env.MOVATAK_RELATORIO_DIARIO || '').toLowerCase() === 'true',
-      version: MOVATAK_VERSION
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/movatak/admin/clientes/:id/fila-followup', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const status = String(req.query.status || '').trim();
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '80'), 1), 200);
-    const params = [req.params.id, limit];
-    let filtroStatus = '';
-    if (status) {
-      params.push(status);
-      filtroStatus = ' AND f.status = $3';
-    }
-
-    const r = await query(
-      `SELECT f.id, f.lead_id, f.etapa_seq, COALESCE(f.sequencia_fu, 1) AS sequencia_fu,
-              f.proximo_envio, f.status, f.data_entrada,
-              l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em,
-              v.nome AS vendedor_nome
-       FROM movatak_followup f
-       JOIN movatak_leads l ON l.id = f.lead_id
-       LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-       WHERE f.cliente_id = $1 ${filtroStatus}
-       ORDER BY
-         CASE WHEN f.status = 'pendente' THEN 0 ELSE 1 END,
-         f.proximo_envio ASC
-       LIMIT $2`,
-      params
-    );
-    res.json(r.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/movatak/admin/leads/:id/followup/pausar', ...exigeLead, async (req, res) => {
-  try {
-    const leadId = req.params.id;
-    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [leadId]);
-    await query(`UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`, [leadId]);
-    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [leadId]);
-    if (lead.rows.length) await registrarEventoLead(leadId, lead.rows[0].cliente_id, 'followup_pausado_manual', 'Follow-up pausado manualmente pelo painel');
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/movatak/admin/leads/:id/followup/reativar', ...exigeLead, async (req, res) => {
-  try {
-    const leadId = req.params.id;
-    const sequencia = parseInt(req.body && req.body.sequencia_fu ? req.body.sequencia_fu : 2);
-    const enviarImediato = !!(req.body && req.body.enviar_imediato);
-    if (![1, 2].includes(sequencia)) return res.status(400).json({ error: 'sequencia_fu deve ser 1 ou 2.' });
-
-    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [leadId]);
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead nao encontrado.' });
-
-    await query(`UPDATE movatak_leads SET etapa = 'followup', atualizado_em = NOW() WHERE id = $1`, [leadId]);
-    await agendarFollowupV2(leadId, lead.rows[0].cliente_id, sequencia, true);
-    await registrarEventoLead(leadId, lead.rows[0].cliente_id, 'followup_reativado_manual', `Follow-up FU${sequencia} reativado pelo painel`, { enviar_imediato: enviarImediato });
-    if (enviarImediato) await enviarFollowupsPendentesDoLead(leadId, sequencia);
-    res.json({ ok: true, sequencia_fu: sequencia });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/movatak/admin/clientes/:id/testar-gatilho', authMovatak, async (req, res) => {
-  try {
-    const texto = req.body && req.body.texto ? String(req.body.texto) : '';
-    const r = await query('SELECT trigger_msg FROM movatak_clientes WHERE id = $1', [req.params.id]);
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-    const campanha = await localizarCampanhaPorGatilho(req.params.id, texto);
-    const bateuGeral = textoBateGatilho(texto, r.rows[0].trigger_msg);
-    res.json({
-      texto_original: texto,
-      trigger_original: campanha ? campanha.gatilho : r.rows[0].trigger_msg,
-      texto_normalizado: normalizarGatilho(texto),
-      trigger_normalizado: normalizarGatilho(campanha ? campanha.gatilho : r.rows[0].trigger_msg),
-      bateu: !!campanha || bateuGeral,
-      campanha: campanha ? { id: campanha.id, nome: campanha.nome, template_id: campanha.template_id || null, template_nome: campanha.template_nome || null } : null,
-      origem: campanha ? 'campanha' : (bateuGeral ? 'gatilho_geral' : null)
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// Histórico completo de um lead
-app.get('/movatak/admin/leads/:id/conversas', ...exigeLead, async (req, res) => {
-  try {
-    await garantirEstruturaConversas();
-    // Fonte única da verdade: o banco. Pegamos as 500 mensagens MAIS RECENTES
-    // (ORDER BY ... DESC) e depois reordenamos em ordem cronológica para exibir.
-    // ⚠️ Antes era ORDER BY criado_em ASC LIMIT 500 — isso pegava as 500 mais ANTIGAS,
-    // e em leads com +500 mensagens as recém-enviadas caíam fora do limite e sumiam da tela.
-    const r = await query(
-      `SELECT * FROM (
-         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
-                reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
-                reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
-           FROM movatak_conversas WHERE lead_id = $1
-           ORDER BY criado_em DESC LIMIT 500
-       ) sub ORDER BY criado_em ASC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ── IA — Sugestão de resposta (Claude Haiku) ─────────────────
-// Chama a API da Anthropic. Requer ANTHROPIC_API_KEY no ambiente.
-async function chamarHaiku(systemPrompt, userPrompt) {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('IA não configurada (falta ANTHROPIC_API_KEY).');
-  const resp = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01'
-    },
-    body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 400,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userPrompt }]
-    })
-  });
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => '');
-    throw new Error('Erro na IA (' + resp.status + '): ' + t.slice(0, 200));
-  }
-  const data = await resp.json();
-  const texto = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
-  return texto;
-}
-
-// Gera uma sugestão de resposta para o lead, imitando o estilo das respostas
-// anteriores do próprio atendente (puxadas do histórico de conversas).
-// Transcreve um áudio (URL pública) para texto usando a API Whisper da OpenAI.
-// Requer OPENAI_API_KEY no ambiente.
-app.post('/movatak/admin/transcrever-audio', authMovatakOuApp, async (req, res) => {
-  try {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return res.status(400).json({ error: 'Transcrição não configurada (falta OPENAI_API_KEY).' });
-    const url = (req.body && req.body.url) ? String(req.body.url) : '';
-    if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'URL de áudio inválida.' });
-
-    // Baixa o áudio da URL pública (Supabase/Z-API).
-    const audioResp = await fetch(url);
-    if (!audioResp.ok) return res.status(502).json({ error: 'Não foi possível baixar o áudio.' });
-    const audioBuffer = Buffer.from(await audioResp.arrayBuffer());
-    if (audioBuffer.length > 24 * 1024 * 1024) return res.status(413).json({ error: 'Áudio muito grande para transcrever.' });
-
-    // Monta multipart/form-data para o Whisper.
-    const nomeArq = (url.split('/').pop() || 'audio.ogg').split('?')[0] || 'audio.ogg';
-    const form = new FormData();
-    form.append('file', new Blob([audioBuffer]), nomeArq);
-    form.append('model', 'whisper-1');
-    form.append('language', 'pt');
-
-    const wResp = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos', {
       method: 'POST',
-      headers: { 'Authorization': 'Bearer ' + apiKey },
-      body: form
+      body: JSON.stringify({ lead_id: lead_id || null, titulo, tipo, inicio: new Date(data + 'T' + hora + ':00').toISOString(), observacao, coluna_id: coluna_id || null, mover_kanban, lembrete_min })
     });
-    if (!wResp.ok) {
-      // Loga o detalhe técnico para você, mas mostra mensagem amigável ao usuário.
-      const detalhe = await wResp.text().catch(() => '');
-      console.error('[transcricao] OpenAI ' + wResp.status + ': ' + detalhe.slice(0, 200));
-      let amigavel = 'Transcrição temporariamente indisponível. Tente novamente em instantes.';
-      if (wResp.status === 429) amigavel = 'Transcrição temporariamente indisponível.';
-      else if (wResp.status === 401) amigavel = 'Transcrição indisponível (configuração).';
-      else if (wResp.status === 413) amigavel = 'Áudio muito longo para transcrever.';
-      return res.status(502).json({ error: amigavel });
-    }
-    const data = await wResp.json();
-    const texto = (data.text || '').trim();
-    if (!texto) return res.status(502).json({ error: 'Não foi possível transcrever este áudio.' });
-    res.json({ texto });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
+    if (st) { st.style.color='var(--green)'; st.textContent='✓ Agendamento salvo.'; }
+    document.getElementById('agenda-obs').value = '';
+    await carregarAgendaFunil();
+    if (mover_kanban) await carregarFunilAtendimento();
+    verificarLembretesAgenda();
+  } catch (e) { if (st) { st.style.color='var(--red)'; st.textContent='Erro: ' + e.message; } }
+}
+
+// ── LEMBRETES DE AGENDAMENTO (visual no painel) ──────────────
+// Verifica os agendamentos e mostra o sino quando algum entra na janela
+// [horário - antecedência] até [horário + 5min]. Acende o lead no kanban.
+let _lembreteCache = [];        // agendamentos com lembrete ativo, do backend
+let _lembreteAtivoLeadId = null; // lead do lembrete em destaque (pro clique)
+
+async function carregarAgendamentosLembrete() {
+  if (!funilState.clienteId) return;
+  try {
+    const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=2');
+    _lembreteCache = Array.isArray(r) ? r.filter(a => Number(a.lembrete_min) > 0 && a.status !== 'cancelado' && a.lead_id) : [];
+  } catch (e) { _lembreteCache = []; }
+}
+
+function verificarLembretesAgenda() {
+  const agora = Date.now();
+  let ativo = null;
+  for (const a of _lembreteCache) {
+    const inicio = new Date(a.inicio).getTime();
+    if (isNaN(inicio)) continue;
+    const abre = inicio - (Number(a.lembrete_min) * 60 * 1000); // antecedência
+    const fecha = inicio + (5 * 60 * 1000);                     // +5min após o horário
+    if (agora >= abre && agora <= fecha) { ativo = a; break; }
   }
-});
 
-// Dispensa o lead das prioridades. Ele só reaparece se mandar nova mensagem
-// (mensagem com data posterior à dispensa).
-app.post('/movatak/admin/leads/:id/dispensar-prioridade', ...exigeLead, async (req, res) => {
-  try {
-    const r = await query(
-      'UPDATE movatak_leads SET prioridade_dispensada_em = NOW() WHERE id = $1 RETURNING id',
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+  // Atualiza TODOS os sinos (header admin e vendedor usam a mesma classe).
+  const sinos = document.querySelectorAll('.btn-lembrete-sino');
+  const textos = document.querySelectorAll('.lembrete-sino-texto');
 
-app.get('/movatak/admin/leads/:id/sugerir-resposta', ...exigeLead, async (req, res) => {
-  try {
-    await garantirEstruturaConversas();
-    const leadId = req.params.id;
+  // Limpa destaque anterior no kanban
+  document.querySelectorAll('.funil-card.lead-aceso').forEach(el => el.classList.remove('lead-aceso'));
 
-    // 1) Conversa atual (últimas 15 mensagens, em ordem cronológica).
-    const convR = await query(
-      `SELECT * FROM (
-         SELECT direcao, conteudo, criado_em FROM movatak_conversas
-          WHERE lead_id = $1 AND conteudo IS NOT NULL AND conteudo <> ''
-          ORDER BY criado_em DESC LIMIT 15
-       ) sub ORDER BY criado_em ASC`,
-      [leadId]
-    );
-    if (!convR.rows.length) return res.status(400).json({ error: 'Sem mensagens nesta conversa para basear a sugestão.' });
-
-    // 2) Dados do lead + cliente (contexto).
-    const leadR = await query(
-      `SELECT l.nome, l.telefone, l.etapa, l.cliente_id,
-              p.nome AS plano_nome, p.valor AS plano_valor,
-              s.nome AS setor_nome, c.nome AS empresa_nome,
-              c.ia_oferta, c.ia_tom, c.ia_resumo
-         FROM movatak_leads l
-         LEFT JOIN movatak_planos p ON p.id = l.plano_id
-         LEFT JOIN movatak_setores s ON s.id = l.setor_id
-         LEFT JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1`,
-      [leadId]
-    );
-    const lead = leadR.rows[0];
-    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
-
-    // 3) Exemplos de estilo: respostas de SAÍDA recentes a OUTROS leads do mesmo cliente
-    //    (mostra como a casa costuma responder, pra IA imitar o tom).
-    const estiloR = await query(
-      `SELECT conteudo FROM movatak_conversas
-        WHERE cliente_id = $1 AND direcao = 'saida'
-          AND lead_id <> $2 AND conteudo IS NOT NULL AND LENGTH(conteudo) BETWEEN 15 AND 400
-        ORDER BY criado_em DESC LIMIT 8`,
-      [lead.cliente_id, leadId]
-    ).catch(() => ({ rows: [] }));
-
-    const conversaTxt = convR.rows.map(m =>
-      (m.direcao === 'entrada' ? 'CLIENTE: ' : 'ATENDENTE: ') + (m.conteudo || '')
-    ).join('\n');
-    const exemplosTxt = estiloR.rows.map(r => '- ' + r.conteudo.replace(/\n+/g, ' ')).join('\n') || '(sem exemplos)';
-
-    // Conhecimento da empresa (preenchido no menu Editar → Treinamento da IA).
-    let baseConhecimento = '';
-    if (lead.ia_oferta || lead.ia_tom || lead.ia_resumo) {
-      baseConhecimento = `\n\nCONHECIMENTO SOBRE A EMPRESA (use como base, é a fonte da verdade):\n`;
-      if (lead.ia_oferta) baseConhecimento += `O que vende e diferencial: ${lead.ia_oferta}\n`;
-      if (lead.ia_tom) baseConhecimento += `Tom de voz e regras: ${lead.ia_tom}\n`;
-      if (lead.ia_resumo) baseConhecimento += `Resumo do negócio: ${lead.ia_resumo}\n`;
-    }
-
-    const systemPrompt = `Você é um atendente de vendas da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
-      `Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, em português brasileiro, no tom de WhatsApp: ` +
-      `natural, direto, cordial e objetivo. Use o CONHECIMENTO SOBRE A EMPRESA abaixo como base — siga o tom de voz, ` +
-      `as regras e as informações descritas ali. Imite também o estilo dos exemplos de respostas reais da equipe. ` +
-      `Não invente preços, prazos ou condições que não estejam no conhecimento da empresa ou na conversa. ` +
-      `Se faltar informação, faça uma pergunta curta para avançar. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
-      `Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.` +
-      baseConhecimento +
-      `\n\nEXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
-
-    const userPrompt =
-      `CONTEXTO DO LEAD:\n` +
-      `Nome: ${lead.nome || '—'}\n` +
-      `Etapa no funil: ${lead.etapa || '—'}${lead.setor_nome ? ' / ' + lead.setor_nome : ''}\n` +
-      (lead.plano_nome ? `Plano de interesse: ${lead.plano_nome}${lead.plano_valor ? ' (R$ ' + lead.plano_valor + ')' : ''}\n` : '') +
-      `\nCONVERSA ATÉ AGORA:\n${conversaTxt}\n\n` +
-      `Escreva a próxima mensagem do ATENDENTE:`;
-
-    const sugestao = await chamarHaiku(systemPrompt, userPrompt);
-    if (!sugestao) return res.status(502).json({ error: 'A IA não retornou sugestão. Tente novamente.' });
-    res.json({ sugestao });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-// (delete for everyone, só funciona pra mensagens que a gente mandou e dentro
-// da janela de tempo que o WhatsApp permite) e remove do nosso histórico de
-// qualquer forma, pra não ficar uma mensagem "travada" caso o lado do WhatsApp falhe.
-app.delete('/movatak/admin/conversas/:id', ...exigeConversa, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT cv.*, l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
-         FROM movatak_conversas cv
-         JOIN movatak_leads l ON l.id = cv.lead_id
-         JOIN movatak_clientes c ON c.id = cv.cliente_id
-        WHERE cv.id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Mensagem não encontrada.' });
-    const msg = r.rows[0];
-
-    let apagadaNoZap = false;
-    let avisoZap = null;
-    if (msg.direcao === 'saida' && msg.msg_id) {
-      try {
-        await zapiApagarMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id);
-        apagadaNoZap = true;
-      } catch (e) {
-        avisoZap = e.response?.data?.error || e.response?.data?.message || e.message;
-        console.warn('[conversas][apagar] falha ao apagar no WhatsApp. status:', e.response?.status, 'body:', JSON.stringify(e.response?.data || {}), 'msgId usado:', msg.msg_id);
-      }
-    } else if (msg.direcao === 'entrada') {
-      avisoZap = 'Mensagem recebida do lead — não é possível apagar do lado dele, só do seu painel.';
-    } else {
-      avisoZap = 'Esta mensagem foi enviada antes desse recurso existir, sem referência pra apagar no WhatsApp.';
-    }
-
-    await query('DELETE FROM movatak_conversas WHERE id = $1', [req.params.id]);
-    emitirMensagemApagada(msg.cliente_id, msg.lead_id, Number(req.params.id));
-    res.json({ ok: true, apagadaNoZap, avisoZap });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-// ============================================================
-// Z-API — recursos avançados de WhatsApp no CRM
-// ============================================================
-async function obterLeadComZapi(leadId) {
-  const r = await query(
-    `SELECT l.id, l.nome, l.telefone, l.cliente_id,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_leads l
-       JOIN movatak_clientes c ON c.id = l.cliente_id
-      WHERE l.id = $1`,
-    [leadId]
-  );
-  return r.rows[0] || null;
-}
-
-async function obterMensagemComZapi(conversaId) {
-  const r = await query(
-    `SELECT cv.*, l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_conversas cv
-       JOIN movatak_leads l ON l.id = cv.lead_id
-       JOIN movatak_clientes c ON c.id = cv.cliente_id
-      WHERE cv.id = $1`,
-    [conversaId]
-  );
-  return r.rows[0] || null;
-}
-
-app.post('/movatak/admin/conversas/:id/reagir', ...exigeConversa, async (req, res) => {
-  try {
-    const { reaction } = req.body || {};
-    if (!reaction) return res.status(400).json({ error: 'Informe o emoji da reação.' });
-    const msg = await obterMensagemComZapi(req.params.id);
-    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiReagirMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id, reaction);
-    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_reacao', 'Reação enviada pelo CRM', { conversa_id: msg.id, reaction });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/admin/conversas/:id/encaminhar', ...exigeConversa, async (req, res) => {
-  try {
-    const { destino } = req.body || {};
-    if (!destino) return res.status(400).json({ error: 'Informe o destino.' });
-    const msg = await obterMensagemComZapi(req.params.id);
-    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiEncaminharMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, String(destino).replace(/\D/g, ''), msg.msg_id, msg.telefone);
-    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_encaminhamento', 'Mensagem encaminhada pelo CRM', { conversa_id: msg.id, destino });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/admin/conversas/:id/marcar-lida-zap', ...exigeConversa, async (req, res) => {
-  try {
-    const msg = await obterMensagemComZapi(req.params.id);
-    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiLerMensagem(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id);
-    await query(`UPDATE movatak_conversas SET msg_status='read', msg_status_em=NOW() WHERE id=$1`, [msg.id]).catch(() => null);
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/admin/conversas/:id/editar', ...exigeConversa, async (req, res) => {
-  try {
-    const { texto } = req.body || {};
-    if (!String(texto || '').trim()) return res.status(400).json({ error: 'Informe o novo texto.' });
-    const msg = await obterMensagemComZapi(req.params.id);
-    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
-    if (msg.direcao !== 'saida') return res.status(400).json({ error: 'Só é possível editar mensagens enviadas pelo CRM/WhatsApp.' });
-    if (!msg.msg_id) return res.status(400).json({ error: 'Mensagem sem messageId do WhatsApp.' });
-    const data = await zapiEditarTexto(msg.zapi_instance, msg.zapi_token, msg.zapi_client_token, msg.telefone, msg.msg_id, texto);
-    await query(`UPDATE movatak_conversas SET conteudo=$1 WHERE id=$2`, [texto, msg.id]);
-    await registrarEventoLead(msg.lead_id, msg.cliente_id, 'whatsapp_edicao', 'Mensagem editada pelo CRM', { conversa_id: msg.id });
-    emitirMensagemLead(msg.cliente_id, msg.lead_id, { ...msg, conteudo: texto, editada: true });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/admin/leads/:id/zapi/chat-action', ...exigeLead, async (req, res) => {
-  try {
-    const { action } = req.body || {};
-    const allowed = ['read','unread','pin','unpin','mute','unmute','archive','unarchive'];
-    if (!allowed.includes(action)) return res.status(400).json({ error: 'Ação inválida.' });
-    const lead = await obterLeadComZapi(req.params.id);
-    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
-    let data;
-    if (action === 'archive' || action === 'unarchive') {
-      const url = `${ZAPI_BASE}/${lead.zapi_instance}/token/${lead.zapi_token}/archive-chat`;
-      const resp = await axios.post(url, { phone: lead.telefone, archive: action === 'archive' }, { headers: zapiHeaders(lead.zapi_client_token) });
-      data = resp.data || {};
-      await query(`UPDATE movatak_leads SET arquivado=$1 WHERE id=$2`, [action === 'archive', lead.id]).catch(() => null);
-    } else {
-      data = await zapiModificarChat(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, action);
-      if (action === 'read') await query(`UPDATE movatak_leads SET nao_lida=false WHERE id=$1`, [lead.id]).catch(() => null);
-      if (action === 'unread') await query(`UPDATE movatak_leads SET nao_lida=true WHERE id=$1`, [lead.id]).catch(() => null);
-    }
-    await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_chat_action', 'Ação aplicada no chat do WhatsApp', { action });
-    res.json({ ok: true, data });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/admin/leads/:id/zapi/send-advanced', ...exigeLead, async (req, res) => {
-  try {
-    const { recurso, payload, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
-    const lead = await obterLeadComZapi(req.params.id);
-    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const replyResolvido = await resolverReplyInfoLead(lead.id, reply_to_conversa_id, reply_to_msg_id, null);
-    const replyMsgIdZap = replyResolvido.msgId || null;
-    const p = payload || {};
-    let msgId = null;
-    let conteudo = '';
-    let midiaUrl = null;
-    let midiaTipo = null;
-
-    if (recurso === 'document') {
-      msgId = await zapiEnviarDocumento(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.document || p.url, p.fileName || p.nome, p.caption || '', p.extension || p.ext, replyMsgIdZap);
-      conteudo = p.caption || p.fileName || 'Documento enviado'; midiaUrl = p.document || p.url; midiaTipo = 'documento';
-    } else if (recurso === 'location') {
-      msgId = await zapiEnviarLocalizacao(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.title, p.address, p.latitude, p.longitude, replyMsgIdZap);
-      conteudo = `Localização: ${p.title || ''}`.trim(); midiaTipo = 'localizacao';
-    } else if (recurso === 'link') {
-      msgId = await zapiEnviarLink(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.linkUrl || p.url, p.message || p.texto || '', p.title || '', p.image || '', replyMsgIdZap);
-      conteudo = p.message || p.texto || p.linkUrl || p.url || 'Link enviado'; midiaUrl = p.linkUrl || p.url || null; midiaTipo = 'link';
-    } else if (recurso === 'contact') {
-      msgId = await zapiEnviarContato(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.contactName || p.nome, p.contactPhone || p.telefone, !!p.contactBusiness, replyMsgIdZap);
-      conteudo = `Contato: ${p.contactName || p.nome || ''}`.trim(); midiaTipo = 'contato';
-    } else {
-      const endpoint = ZAPI_ADVANCED_ENDPOINTS[recurso];
-      if (!endpoint) return res.status(400).json({ error: 'Recurso não liberado ou não reconhecido.' });
-      const clean = limparPayloadAvancado(p);
-      clean.phone = lead.telefone;
-      if (replyMsgIdZap) clean.messageId = replyMsgIdZap;
-      const data = await zapiPost(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, endpoint, clean);
-      msgId = data.messageId || data.id || data.zaapId || null;
-      conteudo = p.message || p.text || p.caption || p.title || ('Recurso enviado: ' + recurso);
-      midiaUrl = p.image || p.video || p.gif || p.sticker || null;
-      midiaTipo = recurso;
-    }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midiaUrl || null, midiaTipo || recurso, msgId, replyResolvido.info).catch(() => null);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_recurso_avancado', 'Recurso avançado enviado pelo CRM', { recurso, conversaId });
-    res.json({ ok: true, conversaId, messageId: msgId, criado_em: new Date().toISOString() });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || JSON.stringify(e.response?.data || {}) || e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/zapi/chats', authMovatak, async (req, res) => {
-  try {
-    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
-    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const cli = c.rows[0];
-    const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
-    res.json(data);
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/zapi/sincronizar-chats', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const c = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [req.params.id]);
-    if (!c.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const cli = c.rows[0];
-    const data = await zapiListarChats(cli.zapi_instance, cli.zapi_token, cli.zapi_client_token);
-    const chats = Array.isArray(data) ? data : (Array.isArray(data.chats) ? data.chats : []);
-    let criados = 0, atualizados = 0, ignorados = 0;
-    for (const ch of chats) {
-      const phone = String(ch.phone || ch.id || '').replace(/\D/g, '');
-      if (!phone || ch.isGroup) { ignorados++; continue; }
-      const existe = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [cli.id, phone]).catch(() => ({ rows: [] }));
-      if (existe.rows.length) {
-        await query(`UPDATE movatak_leads SET nome=COALESCE(NULLIF($1,''),nome), nao_lida=COALESCE($2,nao_lida), atualizado_em=NOW() WHERE id=$3`, [ch.name || null, !!ch.unread, existe.rows[0].id]).catch(() => null);
-        atualizados++;
-      } else {
-        await query(`INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, nao_lida, criado_em, atualizado_em)
-                    VALUES ($1,$2,$3,'lead','whatsapp_sync',$4,NOW(),NOW())`, [cli.id, ch.name || phone, phone, !!ch.unread]).catch(() => null);
-        criados++;
-      }
-    }
-    res.json({ ok: true, total: chats.length, criados, atualizados, ignorados });
-  } catch(e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
-});
-
-// Webhook opcional da Z-API para status de mensagem: enviado/entregue/lido/falha.
-// Configure no painel Z-API apontando para /movatak/webhook/zapi-status.
-app.post('/movatak/webhook/zapi-status', async (req, res) => {
-  try {
-    await garantirEstruturaConversas();
-    const body = req.body || {};
-    const messageId = body.messageId || body.id || body.messageID || body.msgId || body.message_id;
-    const status = body.status || body.messageStatus || body.type || body.ack || body.event || null;
-    if (!messageId) return res.json({ ok: true, ignored: true });
-    const r = await query(`UPDATE movatak_conversas
-                             SET msg_status=$1, msg_status_em=NOW(), zapi_status_payload=$2::jsonb
-                           WHERE msg_id=$3
-                           RETURNING id, lead_id, cliente_id`, [String(status || ''), JSON.stringify(body), messageId]);
-    if (r.rows.length) emitirStatusMensagem(r.rows[0].cliente_id, r.rows[0].lead_id, r.rows[0].id, status);
-    res.json({ ok: true, atualizadas: r.rows.length });
-  } catch(e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => {
-  try {
-    const leadId = req.params.id;
-    const lead = await query(
-      `SELECT l.*, c.nome AS cliente_nome, v.nome AS vendedor_nome
-         FROM movatak_leads l
-         JOIN movatak_clientes c ON c.id = l.cliente_id
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-        WHERE l.id = $1`,
-      [leadId]
-    );
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead nao encontrado.' });
-
-    const eventos = await query(
-      `SELECT id, tipo, descricao, dados, criado_em
-         FROM movatak_lead_eventos
-        WHERE lead_id = $1
-        ORDER BY criado_em DESC
-        LIMIT 100`,
-      [leadId]
-    );
-
-    const fila = await query(
-      `SELECT id, etapa_seq, COALESCE(sequencia_fu, 1) AS sequencia_fu, proximo_envio,
-              status, data_entrada, enviado_em, tentativas_envio, erro_envio
-         FROM movatak_followup
-        WHERE lead_id = $1
-        ORDER BY proximo_envio DESC
-        LIMIT 100`,
-      [leadId]
-    );
-
-    res.json({ lead: lead.rows[0], eventos: eventos.rows, fila: fila.rows });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Lista operacional de leads do cliente
-app.get('/movatak/admin/clientes/:id/leads-operacao', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const limit = Math.min(Math.max(parseInt(req.query.limit || '80'), 1), 200);
-    const etapa = String(req.query.etapa || '').trim();
-    const busca = String(req.query.busca || '').trim();
-    const params = [req.params.id, limit];
-    let where = 'WHERE l.cliente_id = $1';
-    if (etapa) { params.push(etapa); where += ` AND l.etapa = $${params.length}`; }
-    if (busca) { params.push('%' + busca + '%'); where += ` AND (l.telefone ILIKE $${params.length} OR l.nome ILIKE $${params.length})`; }
-
-    const r = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, l.criado_em, l.atualizado_em,
-              v.nome AS vendedor_nome,
-              COUNT(f.id) FILTER (WHERE f.status = 'pendente') AS pendentes
-         FROM movatak_leads l
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-         LEFT JOIN movatak_followup f ON f.lead_id = l.id
-        ${where}
-        GROUP BY l.id, v.nome
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC
-        LIMIT $2`,
-      params
-    );
-    res.json(r.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Exportação CSV simples para reunião/prestação de contas
-app.get('/movatak/admin/clientes/:id/leads.csv', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const r = await query(
-      `SELECT l.id, l.nome, l.telefone, l.etapa, v.nome AS vendedor_nome, l.criado_em, l.atualizado_em
-         FROM movatak_leads l
-         LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-        WHERE l.cliente_id = $1
-        ORDER BY l.criado_em DESC`,
-      [req.params.id]
-    );
-    const header = ['id','nome','telefone','etapa','vendedor','criado_em','atualizado_em'];
-    const linhas = [header.map(csvEscape).join(',')].concat(r.rows.map(row => [
-      row.id, row.nome, row.telefone, row.etapa, row.vendedor_nome, row.criado_em, row.atualizado_em
-    ].map(csvEscape).join(',')));
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="leads-movatak.csv"');
-    res.send('\ufeff' + linhas.join('\n'));
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Envio manual do relatório diário para teste/implantação
-app.post('/movatak/admin/clientes/:id/relatorio-diario/enviar', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const rel = await montarRelatorioDiarioCliente(req.params.id);
-    if (!rel) return res.status(404).json({ error: 'Cliente nao encontrado.' });
-    if (!rel.cliente.whatsapp_dono) return res.status(400).json({ error: 'WhatsApp do dono nao configurado.' });
-    await zapiEnviar(rel.cliente.zapi_instance, rel.cliente.zapi_token, rel.cliente.zapi_client_token, rel.cliente.whatsapp_dono, rel.mensagem);
-    res.json({ ok: true, mensagem: rel.mensagem });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ============================================================
-// API — Campanhas, templates, ações do lead e teste Z-API
-// ============================================================
-function erroEstruturaBanco(e) {
-  const msg = String((e && e.message) || '').toLowerCase();
-  // Apenas erros de ESTRUTURA AUSENTE (tabela/coluna que não existe) devem ser
-  // tratados como "migração ainda não aplicada". Erros de USO de coluna
-  // (ex.: "must appear in the GROUP BY clause", "is ambiguous") são bugs de query
-  // e NÃO podem ser silenciados — foi o que mascarou o bug do GROUP BY.
-  const estruturaAusente =
-    msg.includes('does not exist') ||
-    msg.includes('não existe') ||
-    msg.includes('nao existe') ||
-    msg.includes('undefined column') ||
-    msg.includes('undefined table');
-  const erroDeUso =
-    msg.includes('group by') ||
-    msg.includes('is ambiguous') ||
-    msg.includes('aggregate') ||
-    msg.includes('syntax error');
-  return estruturaAusente && !erroDeUso;
-}
-
-async function garantirEstruturaCampanhasTemplates() {
-  // Proteção contra migrações parciais no Railway. Mantém o painel funcionando
-  // mesmo quando alguma versão anterior não criou todas as colunas.
-  await query(`CREATE TABLE IF NOT EXISTS movatak_followup_templates (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER,
-    nome TEXT NOT NULL,
-    trigger_msg TEXT,
-    followup_v2 JSONB DEFAULT '{}'::jsonb,
-    boas_vindas_msg TEXT,
-    comandos JSONB DEFAULT '{}'::jsonb,
-    ativo BOOLEAN DEFAULT true,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`);
-
-  await query(`CREATE TABLE IF NOT EXISTS movatak_campanhas (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    nome TEXT NOT NULL,
-    gatilho TEXT,
-    verba_diaria NUMERIC,
-    investimento_tipo TEXT DEFAULT 'diario',
-    investimento_valor NUMERIC,
-    template_id INTEGER,
-    ativo BOOLEAN DEFAULT true,
-    excluida_em TIMESTAMPTZ,
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    atualizado_em TIMESTAMPTZ DEFAULT NOW()
-  )`);
-
-  await query(`ALTER TABLE movatak_followup_templates
-    ADD COLUMN IF NOT EXISTS cliente_id INTEGER,
-    ADD COLUMN IF NOT EXISTS nome TEXT,
-    ADD COLUMN IF NOT EXISTS trigger_msg TEXT,
-    ADD COLUMN IF NOT EXISTS followup_v2 JSONB DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS boas_vindas_msg TEXT,
-    ADD COLUMN IF NOT EXISTS comandos JSONB DEFAULT '{}'::jsonb,
-    ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
-    ADD COLUMN IF NOT EXISTS excluida_em TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW()`);
-
-  await query(`ALTER TABLE movatak_campanhas
-    ADD COLUMN IF NOT EXISTS cliente_id INTEGER,
-    ADD COLUMN IF NOT EXISTS nome TEXT,
-    ADD COLUMN IF NOT EXISTS gatilho TEXT,
-    ADD COLUMN IF NOT EXISTS verba_diaria NUMERIC,
-    ADD COLUMN IF NOT EXISTS investimento_tipo TEXT DEFAULT 'diario',
-    ADD COLUMN IF NOT EXISTS investimento_valor NUMERIC,
-    ADD COLUMN IF NOT EXISTS template_id INTEGER,
-    ADD COLUMN IF NOT EXISTS questionario_ativo BOOLEAN DEFAULT true,
-    ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
-    ADD COLUMN IF NOT EXISTS excluida_em TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
-    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`);
-
-  await query(`ALTER TABLE movatak_campanhas ALTER COLUMN gatilho DROP NOT NULL`).catch(() => null);
-  await query(`UPDATE movatak_campanhas
-                 SET investimento_valor = COALESCE(investimento_valor, verba_diaria),
-                     investimento_tipo = COALESCE(investimento_tipo, 'diario'),
-                     atualizado_em = COALESCE(atualizado_em, NOW())
-               WHERE investimento_valor IS NULL OR investimento_tipo IS NULL OR atualizado_em IS NULL`).catch(() => null);
-
-  await query(`ALTER TABLE movatak_leads
-    ADD COLUMN IF NOT EXISTS campanha_id INTEGER,
-    ADD COLUMN IF NOT EXISTS campanha_id_ultimo_toque INTEGER,
-    ADD COLUMN IF NOT EXISTS template_id_origem INTEGER,
-    ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT`).catch(() => null);
-
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_cliente_ativo ON movatak_campanhas(cliente_id, ativo)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_template ON movatak_campanhas(template_id)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_campanha ON movatak_leads(campanha_id)`).catch(() => null);
-}
-
-
-// ============================================================
-// Questionário consultivo — schema, motor e recomendação
-// ============================================================
-async function garantirEstruturaQuestionario() {
-  await query(`ALTER TABLE movatak_clientes
-    ADD COLUMN IF NOT EXISTS questionario_ativo BOOLEAN DEFAULT false,
-    ADD COLUMN IF NOT EXISTS questionario_intro TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_final TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_intro_imagem TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_final_imagem TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_passos JSONB DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS questionario_recomendacao JSONB DEFAULT '[]'::jsonb,
-    ADD COLUMN IF NOT EXISTS questionario_comando_parar TEXT,
-    ADD COLUMN IF NOT EXISTS questionario_comando_ativar TEXT`).catch(() => null);
-
-  // Templates de autoatendimento (questionário), reutilizáveis e vinculáveis a campanhas.
-  await query(`CREATE TABLE IF NOT EXISTS movatak_questionario_templates (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER,
-    nome TEXT NOT NULL,
-    intro TEXT,
-    final TEXT,
-    intro_imagem TEXT,
-    final_imagem TEXT,
-    passos JSONB DEFAULT '[]'::jsonb,
-    recomendacao JSONB DEFAULT '[]'::jsonb,
-    comando_parar TEXT,
-    comando_ativar TEXT,
-    ativo BOOLEAN DEFAULT true,
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    atualizado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-  await query(`ALTER TABLE movatak_campanhas ADD COLUMN IF NOT EXISTS questionario_template_id INTEGER`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_quest_templates_cliente ON movatak_questionario_templates(cliente_id, ativo)`).catch(() => null);
-
-  await query(`CREATE TABLE IF NOT EXISTS movatak_questionario_estado (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    lead_id INTEGER,
-    telefone TEXT NOT NULL,
-    passo_idx INTEGER DEFAULT 0,
-    respostas JSONB DEFAULT '{}'::jsonb,
-    status TEXT DEFAULT 'em_andamento',
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    atualizado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-
-  await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS lembretes INTEGER DEFAULT 0`).catch(() => null);
-  await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS template_id INTEGER`).catch(() => null);
-
-  await query(`CREATE TABLE IF NOT EXISTS movatak_cobertura_cep (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    cep TEXT NOT NULL,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_quest_estado ON movatak_questionario_estado(cliente_id, telefone, status)`).catch(() => null);
-  await query(`ALTER TABLE movatak_questionario_estado ADD COLUMN IF NOT EXISTS tentativas_invalidas INTEGER DEFAULT 0`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS nao_lida BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_atualizada_em TIMESTAMPTZ`).catch(() => null);
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
-}
-
-async function garantirEstruturaPlanos() {
-  await query(`CREATE TABLE IF NOT EXISTS movatak_planos (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    nome TEXT NOT NULL,
-    valor NUMERIC,
-    nota_minima INTEGER DEFAULT 0,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-  await query(`ALTER TABLE movatak_planos ADD COLUMN IF NOT EXISTS valor NUMERIC`).catch(() => null);
-  await query(`ALTER TABLE movatak_planos ADD COLUMN IF NOT EXISTS nota_minima INTEGER DEFAULT 0`).catch(() => null);
-  // Vínculo plano <-> template de questionário (muitos-para-muitos).
-  // Plano sem nenhum vínculo aparece em todos os questionários (compatível com o comportamento atual).
-  await query(`CREATE TABLE IF NOT EXISTS movatak_plano_templates (
-    plano_id INTEGER NOT NULL,
-    template_id INTEGER NOT NULL,
-    PRIMARY KEY (plano_id, template_id)
-  )`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_plano_templates_tpl ON movatak_plano_templates(template_id)`).catch(() => null);
-}
-
-function normalizarCep(cep) {
-  return String(cep || '').replace(/\D/g, '');
-}
-
-// Envia mensagem do questionário: com mídia (legenda junto) quando houver, senão texto.
-// Avalia se AGORA (fuso de Brasília/Recife, UTC-3) está dentro de um período de
-// ausência configurado pelo cliente. Retorna { ausente, mensagem, periodoChave } —
-// periodoChave identifica o período pra controlar o "uma vez por período".
-// Data específica (feriado) tem prioridade sobre o horário recorrente semanal.
-function avaliarAusencia(cliente) {
-  const vazio = { ausente: false, mensagem: null, periodoChave: null };
-  try {
-    // Hora local de Brasília a partir do horário do servidor (Railway roda em UTC).
-    const agora = new Date(Date.now() - 3 * 3600 * 1000);
-    const ano = agora.getUTCFullYear();
-    const mes = String(agora.getUTCMonth() + 1).padStart(2, '0');
-    const dia = String(agora.getUTCDate()).padStart(2, '0');
-    const dataHoje = `${ano}-${mes}-${dia}`;
-    const diaSemana = agora.getUTCDay(); // 0=domingo
-    const minutosAgora = agora.getUTCHours() * 60 + agora.getUTCMinutes();
-
-    const paraMin = (hhmm) => {
-      const [h, m] = String(hhmm || '').split(':').map(n => parseInt(n, 10));
-      if (isNaN(h)) return null;
-      return h * 60 + (m || 0);
-    };
-    // Cobre faixas que viram a meia-noite (ex: 18:00–08:00).
-    const dentroFaixa = (ini, fim) => {
-      if (ini === null || fim === null) return false;
-      if (ini <= fim) return minutosAgora >= ini && minutosAgora < fim;
-      return minutosAgora >= ini || minutosAgora < fim; // atravessa meia-noite
-    };
-
-    // 1) Datas específicas (feriados) — prioridade. Mensagem própria de cada data.
-    const datas = Array.isArray(cliente.ausencia_datas) ? cliente.ausencia_datas : [];
-    for (const d of datas) {
-      if (d && d.data === dataHoje) {
-        const ini = paraMin(d.inicio || '00:00');
-        const fim = paraMin(d.fim || '23:59');
-        if (dentroFaixa(ini, fim)) {
-          return {
-            ausente: true,
-            mensagem: d.msg || cliente.ausencia_msg_padrao || '',
-            periodoChave: `data:${d.data}:${d.inicio || '00:00'}-${d.fim || '23:59'}`
-          };
-        }
-      }
-    }
-
-    // 2) Horário recorrente semanal — mensagem padrão.
-    const horarios = Array.isArray(cliente.ausencia_horarios) ? cliente.ausencia_horarios : [];
-    for (const h of horarios) {
-      const dias = Array.isArray(h.dias) ? h.dias : [];
-      if (!dias.includes(diaSemana)) continue;
-      const ini = paraMin(h.inicio);
-      const fim = paraMin(h.fim);
-      if (dentroFaixa(ini, fim)) {
-        // Chave por dia+faixa: o período "reinicia" a cada dia, permitindo novo aviso.
-        return {
-          ausente: true,
-          mensagem: cliente.ausencia_msg_padrao || '',
-          periodoChave: `sem:${dataHoje}:${h.inicio}-${h.fim}`
-        };
-      }
-    }
-
-    return vazio;
-  } catch (e) {
-    console.error('[ausencia] erro ao avaliar:', e.message);
-    return vazio;
-  }
-}
-
-function tipoMidia(url, hint) {
-  if (hint === 'audio' || hint === 'video' || hint === 'imagem' || hint === 'documento') return hint;
-  const u = String(url || '');
-  if (/\.(mp4|webm|mov|m4v|3gp)(\?|$)/i.test(u)) return 'video';
-  if (/\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(u)) return 'audio';
-  return 'imagem';
-}
-async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
-  // Encontra o lead_id pelo telefone para gravar na conversa
-  const lr = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 ORDER BY criado_em DESC LIMIT 1', [cliente.id, telefone]).catch(() => ({ rows: [] }));
-  const leadId = lr.rows[0] ? lr.rows[0].id : null;
-  let msgId = null;
-  if (midia && String(midia).trim()) {
-    const url = String(midia).trim();
-    if (tipoMidia(url) === 'video') {
-      msgId = await zapiEnviarVideo(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
-    } else {
-      msgId = await zapiEnviarImagem(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, url, texto);
-    }
-    // Passa o msg_id: sem ele, o webhook fromMe regravaria a mesma mensagem (duplicava na caixa).
-    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', midia, null, msgId, null, 'questionario').catch(() => null);
+  if (ativo) {
+    _lembreteAtivoLeadId = ativo.lead_id;
+    const nome = ativo.lead_nome || 'lead';
+    textos.forEach(t => { t.textContent = 'Retornar contato · ' + nome; });
+    sinos.forEach(b => { b.style.display = 'inline-flex'; });
+    // Acende o card do lead no kanban (se estiver visível)
+    const card = document.querySelector('.funil-card[data-lead-id="' + ativo.lead_id + '"]');
+    if (card) card.classList.add('lead-aceso');
   } else {
-    msgId = await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, texto);
-    if (leadId) registrarConversa(leadId, cliente.id, 'saida', texto || '', null, null, msgId, null, 'questionario').catch(() => null);
-  }
-  return msgId;
-}
-
-// Upload de imagem para o Supabase Storage. Retorna a URL pública.
-async function uploadSupabase(buffer, contentType, ext) {
-  const base = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_KEY;
-  const bucket = process.env.SUPABASE_BUCKET || 'movatak';
-  if (!base || !key) throw new Error('Storage não configurado: defina SUPABASE_URL e SUPABASE_SERVICE_KEY no Railway.');
-  const nome = 'quest/' + Date.now() + '_' + crypto.randomBytes(6).toString('hex') + '.' + ext;
-  const url = `${base.replace(/\/$/, '')}/storage/v1/object/${bucket}/${nome}`;
-  await axios.post(url, buffer, {
-    headers: {
-      'Authorization': 'Bearer ' + key,
-      'apikey': key,
-      'Content-Type': contentType,
-      'x-upsert': 'true'
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity
-  });
-  return `${base.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${nome}`;
-}
-
-async function cepTemCobertura(clienteId, cep) {
-  try {
-    const c = normalizarCep(cep);
-    if (!c) return false;
-    const r = await query(
-      `SELECT 1 FROM movatak_cobertura_cep WHERE cliente_id = $1 AND $2 LIKE cep || '%' LIMIT 1`,
-      [clienteId, c]
-    );
-    return r.rows.length > 0;
-  } catch (e) {
-    console.error('[questionario][cobertura] erro:', e.message);
-    return false;
+    _lembreteAtivoLeadId = null;
+    sinos.forEach(b => { b.style.display = 'none'; });
   }
 }
 
-function montarTextoPergunta(passo) {
-  if (!passo) return '';
-  const base = passo.pergunta || '';
-  if (passo.tipo === 'sim_nao') {
-    return base + '\n\n1 - Sim\n2 - Não';
-  }
-  if (passo.tipo === 'opcoes') {
-    const ops = Array.isArray(passo.opcoes) ? passo.opcoes : [];
-    const lista = ops.map((o, i) => `${i + 1} - ${o}`).join('\n');
-    return base + (lista ? '\n\n' + lista : '');
-  }
-  return base; // texto e cep
+function abrirLembreteAtivo() {
+  if (!_lembreteAtivoLeadId) return;
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(_lembreteAtivoLeadId)) || {};
+  const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(_lembreteAtivoLeadId, nomeAbrev);
 }
 
-function interpretarResposta(passo, texto) {
-  const t = String(texto || '').trim();
-  if (!t) return { ok: false };
-  if (passo.tipo === 'cep') {
-    const cep = normalizarCep(t);
-    if (cep.length < 8) return { ok: false, motivo: 'cep_invalido' };
-    return { ok: true, valor: cep.slice(0, 8) };
-  }
-  if (passo.tipo === 'sim_nao') {
-    const l = t.toLowerCase();
-    if (l === '1' || l === 'sim' || l === 's') return { ok: true, valor: 'Sim', indice: 1 };
-    if (l === '2' || l === 'nao' || l === 'não' || l === 'n') return { ok: true, valor: 'Não', indice: 2 };
-    return { ok: false };
-  }
-  if (passo.tipo === 'opcoes') {
-    const ops = Array.isArray(passo.opcoes) ? passo.opcoes : [];
-    const n = parseInt(t, 10);
-    if (!isNaN(n) && n >= 1 && n <= ops.length) return { ok: true, valor: ops[n - 1], indice: n };
-    const match = ops.findIndex(o => String(o).trim().toLowerCase() === t.toLowerCase());
-    if (match >= 0) return { ok: true, valor: ops[match], indice: match + 1 };
-    return { ok: false };
-  }
-  return { ok: true, valor: t }; // texto livre
+// Loop de verificação: roda ao abrir a tela e a cada 30s.
+let _lembreteIntervalo = null;
+function iniciarLoopLembretes() {
+  if (_lembreteIntervalo) clearInterval(_lembreteIntervalo);
+  carregarAgendamentosLembrete().then(verificarLembretesAgenda);
+  _lembreteIntervalo = setInterval(async () => {
+    await carregarAgendamentosLembrete();
+    verificarLembretesAgenda();
+  }, 30000);
 }
 
-// Resolve o próximo índice de passo considerando saltos condicionais.
-// passo.saltos: { "<indice_opcao>": "<id_destino>" | "__fim__" }
-// Retorna: índice do passo destino, -1 para encerrar (fim), ou null para seguir linear (idx+1).
-function resolverSaltoQuestionario(passo, indiceOpcao, passos) {
-  if (!passo || !passo.saltos || typeof passo.saltos !== 'object') return null;
-  const destino = passo.saltos[String(indiceOpcao)];
-  if (!destino) return null;
-  if (destino === '__fim__') return -1;
-  const idxDestino = passos.findIndex(p => p.id === destino);
-  return idxDestino >= 0 ? idxDestino : null; // destino inválido → segue linear
-}
+// ── PRIORIDADES — score de urgência por lead ─────────────────
+// Combina 3 fatores com dado que a query do funil já entrega:
+//  1) Aguardando resposta (última msg foi do lead) — peso forte, cresce com a espera
+//  2) Tempo parado (dias desde a última interação)
+//  3) Etapa avançada esfriando (negociação parada pesa mais)
+// A lista mostra os 5 mais urgentes; ao atender, o lead sai e entra o próximo.
 
-// Pontuação: cada pergunta "opções numeradas" pontua pela posição da opção
-// escolhida (1ª = 1 ... última = N). A soma define o plano pela nota mínima.
-function calcularPontuacao(cliente, respostas) {
-  const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-  let total = 0;
-  for (const p of passos) {
-    if (p.tipo === 'opcoes' && respostas[p.id] !== undefined) {
-      const ops = Array.isArray(p.opcoes) ? p.opcoes : [];
-      const idx = ops.findIndex(o => String(o).trim().toLowerCase() === String(respostas[p.id]).trim().toLowerCase());
-      if (idx >= 0) total += (idx + 1);
-    }
+function calcularScorePrioridade(lead) {
+  if (lead.arquivado) return 0;
+  if (lead.etapa === 'cliente' || lead.convertido_em) return 0; // já convertido, fora
+  const agora = Date.now();
+  const ultimaInteracao = new Date(lead.ultima_msg_em || lead.atualizado_em || lead.criado_em).getTime();
+
+  // Dispensa: se foi dispensado e NÃO houve mensagem nova depois disso, fica fora.
+  // Se o lead voltou a falar (msg posterior à dispensa), reaparece normalmente.
+  if (lead.prioridade_dispensada_em) {
+    const dispensaEm = new Date(lead.prioridade_dispensada_em).getTime();
+    const ultimaMsg = new Date(lead.ultima_msg_em || 0).getTime();
+    if (!isNaN(dispensaEm) && !(ultimaMsg > dispensaEm)) return 0;
   }
-  return total;
-}
 
-async function calcularRecomendacao(cliente, respostas) {
-  try {
-    const total = calcularPontuacao(cliente, respostas);
-    await garantirEstruturaPlanos();
-    const tplId = cliente.__quest_template_id || null;
-    let rp;
-    if (tplId) {
-      // Planos vinculados a este template OU sem nenhum vínculo (aparecem em todos).
-      rp = await query(
-        `SELECT p.id, p.nome, p.valor, p.nota_minima
-           FROM movatak_planos p
-          WHERE p.cliente_id = $1
-            AND (
-              EXISTS (SELECT 1 FROM movatak_plano_templates pt WHERE pt.plano_id = p.id AND pt.template_id = $2)
-              OR NOT EXISTS (SELECT 1 FROM movatak_plano_templates pt2 WHERE pt2.plano_id = p.id)
-            )
-          ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
-        [cliente.id, tplId]
-      );
-    } else {
-      // Questionário do cliente (sem template): planos sem vínculo a nenhum template.
-      // Isso evita que um produto exclusivo de um template vaze para o questionário padrão.
-      rp = await query(
-        `SELECT p.id, p.nome, p.valor, p.nota_minima
-           FROM movatak_planos p
-          WHERE p.cliente_id = $1
-            AND NOT EXISTS (SELECT 1 FROM movatak_plano_templates pt WHERE pt.plano_id = p.id)
-          ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
-        [cliente.id]
-      );
-    }
-    const planos = rp.rows || [];
-    if (!planos.length) return { plano: null, total };
-    let escolhido = planos[0]; // padrão: menor faixa
-    for (const pl of planos) {
-      if ((pl.nota_minima || 0) <= total) escolhido = pl;
-    }
-    return { plano: escolhido, total };
-  } catch (e) {
-    console.error('[questionario][recomendacao] erro:', e.message);
-    return { plano: null, total: 0 };
+  const horasParado = isNaN(ultimaInteracao) ? 0 : (agora - ultimaInteracao) / 3600000;
+  let score = 0;
+
+  // 1) Aguardando resposta: última mensagem foi do lead (entrada) e ninguém respondeu.
+  const aguardando = lead.ultima_msg_direcao === 'entrada' || lead.nao_lida === true;
+  if (aguardando) {
+    score += 100;                          // base forte
+    score += Math.min(horasParado * 8, 120); // cresce com a espera (teto)
+  } else {
+    // Sem aguardar resposta: peso só pelo tempo parado, bem menor.
+    score += Math.min(horasParado * 1.5, 60);
   }
-}
 
-// Avança o questionário a partir de fromIdx: envia cada passo; em passo que
-// "aguarda resposta" para e espera o lead; em passo só-material (aguardar=false)
-// envia e segue para o próximo automaticamente. No fim, finaliza.
-async function avancarQuestionario(cliente, lead, estadoId, respostas, fromIdx, prefix) {
-  const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-  let idx = fromIdx;
-  let pref = prefix || '';
-  let guarda = 0;
-  while (guarda++ < 50) {
-    const passo = passos[idx];
-    if (!passo) {
-      if (pref) await enviarMsgQuestionario(cliente, lead.telefone, pref, '');
-      await query(`UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$3`, [idx, JSON.stringify(respostas), estadoId]).catch(() => null);
-      await finalizarQuestionario(cliente, lead, respostas);
-      return;
-    }
-    const aguarda = passo.aguardar !== false;
-    const corpo = aguarda ? montarTextoPergunta(passo) : (passo.pergunta || '');
-    const texto = (pref ? pref + '\n\n' : '') + corpo;
-    const delaySegundos = normalizarDelayQuestionario(passo);
-    if (delaySegundos > 0) {
-      await sleep(delaySegundos * 1000);
-    }
-    await enviarMsgQuestionario(cliente, lead.telefone, texto || ' ', passo.imagem);
-    pref = '';
-    if (aguarda) {
-      await query(`UPDATE movatak_questionario_estado SET passo_idx=$1, respostas=$2::jsonb, lembretes=0, status='em_andamento', atualizado_em=NOW() WHERE id=$3`, [idx, JSON.stringify(respostas), estadoId]).catch(() => null);
-      return;
-    }
-    // passo só-material: não espera resposta, segue para o próximo
-    await query(`UPDATE movatak_questionario_estado SET passo_idx=$1, atualizado_em=NOW() WHERE id=$2`, [idx + 1, estadoId]).catch(() => null);
-    idx++;
-  }
-}
+  // 2) Tempo parado em dias (reforço para leads esquecidos).
+  const dias = horasParado / 24;
+  if (dias >= 1) score += Math.min(dias * 6, 60);
 
-// Inicia um questionário/autoatendimento específico (por template) para um lead.
-// Usado pelo Menu de Atendimento: a opção escolhida pode disparar um autoatendimento próprio.
-async function iniciarQuestionarioPorTemplate(cliente, lead, templateId) {
-  try {
-    const r = await query(
-      `SELECT * FROM movatak_questionario_templates WHERE id = $1 AND ativo = true`,
-      [templateId]
-    );
-    if (!r.rows.length) {
-      // Template não encontrado: cai no follow-up normal para não travar o lead.
-      await agendarFollowupV2(lead.id, cliente.id, 1, true);
-      await enviarFollowupsPendentesDoLead(lead.id, 1);
-      return;
-    }
-    const qt = r.rows[0];
-    const clienteEfetivo = {
-      ...cliente,
-      questionario_ativo: true,
-      questionario_intro: qt.intro,
-      questionario_final: qt.final,
-      questionario_intro_imagem: qt.intro_imagem,
-      questionario_final_imagem: qt.final_imagem,
-      questionario_passos: qt.passos || [],
-      questionario_recomendacao: qt.recomendacao || [],
-      questionario_comando_parar: qt.comando_parar,
-      questionario_comando_ativar: qt.comando_ativar,
-      __quest_template_id: qt.id
-    };
-    await iniciarQuestionario(clienteEfetivo, lead);
-  } catch (e) {
-    console.error('[menu][template]', e.message);
-  }
-}
-
-// Retorna um objeto "cliente efetivo": uma cópia do cliente com os campos de
-// questionário sobrescritos pelo template de autoatendimento vinculado à campanha
-// Resolve os passos do questionário a partir de um template_id específico.
-// Usado quando o estado do questionário sabe qual template originou o fluxo —
-// garante que a resposta do lead seja interpretada com os passos certos, mesmo
-// que a campanha do lead aponte para outro template (ou nenhum).
-async function resolverQuestionarioPorTemplateId(cliente, templateId) {
-  try {
-    if (!templateId) return null;
-    const r = await query(
-      `SELECT * FROM movatak_questionario_templates WHERE id = $1 AND ativo = true`,
-      [templateId]
-    );
-    if (!r.rows.length) return null;
-    const qt = r.rows[0];
-    return {
-      ...cliente,
-      questionario_intro: qt.intro,
-      questionario_final: qt.final,
-      questionario_intro_imagem: qt.intro_imagem,
-      questionario_final_imagem: qt.final_imagem,
-      questionario_passos: qt.passos || [],
-      questionario_recomendacao: qt.recomendacao || [],
-      questionario_comando_parar: qt.comando_parar,
-      questionario_comando_ativar: qt.comando_ativar,
-      __quest_template_id: qt.id
-    };
-  } catch (e) {
-    console.error('[questionario][resolver-por-id]', e.message);
-    return null;
-  }
-}
-
-// do lead. Se a campanha não tem template, usa o questionário do próprio cliente.
-async function resolverQuestionarioDoLead(cliente, lead) {
-  try {
-    if (!lead || !lead.campanha_id) return cliente;
-    const r = await query(
-      `SELECT qt.*
-         FROM movatak_campanhas c
-         JOIN movatak_questionario_templates qt
-           ON qt.id = c.questionario_template_id AND qt.ativo = true
-        WHERE c.id = $1`,
-      [lead.campanha_id]
-    );
-    if (!r.rows.length) return cliente;
-    const qt = r.rows[0];
-    return {
-      ...cliente,
-      questionario_intro: qt.intro,
-      questionario_final: qt.final,
-      questionario_intro_imagem: qt.intro_imagem,
-      questionario_final_imagem: qt.final_imagem,
-      questionario_passos: qt.passos || [],
-      questionario_recomendacao: qt.recomendacao || [],
-      questionario_comando_parar: qt.comando_parar,
-      questionario_comando_ativar: qt.comando_ativar,
-      __quest_template_id: qt.id
-    };
-  } catch (e) {
-    console.error('[questionario][resolver-template]', e.message);
-    return cliente;
-  }
-}
-
-// ============================================================
-// Menu de Atendimento — execução no fluxo da conversa
-// ============================================================
-
-// Envia a Boas-Vindas ao Lead (mensagem de saudação independente do follow-up).
-// É o "passo zero": enviada na entrada, se preenchida. NÃO gera evento, NÃO
-// registra conversa, NÃO marca o lead — é totalmente invisível para o sistema.
-// Não interfere na mecânica de follow-up, que segue normalmente depois.
-async function enviarBoasVindasLead(cliente, telefone) {
-  try {
-    const msg1 = (cliente.boas_vindas_lead_msg1 || '').trim();
-    const msg2 = (cliente.boas_vindas_lead_msg2 || '').trim();
-    if (!msg1 && !msg2) return; // nada preenchido → não envia nada (comportamento idêntico ao de hoje)
-    if (msg1) {
-      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg1).catch(e => console.error('[boas-vindas][msg1]', e.message));
-    }
-    if (msg2) {
-      const delaySeg = Math.min(Math.max(parseInt(cliente.boas_vindas_lead_delay) || 5, 1), 60);
-      await new Promise(r => setTimeout(r, delaySeg * 1000));
-      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg2).catch(e => console.error('[boas-vindas][msg2]', e.message));
-    }
-  } catch (e) {
-    console.error('[boas-vindas]', e.message);
-  }
-}
-
-// Envia o menu de atendimento para o lead e cria o estado "aguardando escolha".
-async function enviarMenuAtendimento(cliente, lead) {
-  try {
-    const texto = (cliente.menu_atend_texto || '').trim();
-    if (!texto) return false;
-    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone, texto);
-    await registrarConversa(lead.id, cliente.id, 'saida', texto, null, null, null, null, 'menu').catch(() => null);
-    // Pausa o follow-up enquanto o lead decide o setor
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]).catch(() => null);
-    // Cria/atualiza o estado de menu (encerra estados antigos do mesmo lead)
-    await query(`UPDATE movatak_menu_estado SET status='cancelado', atualizado_em=NOW() WHERE lead_id=$1 AND status='aguardando'`, [lead.id]).catch(() => null);
-    await query(
-      `INSERT INTO movatak_menu_estado (cliente_id, lead_id, status, tentativas) VALUES ($1, $2, 'aguardando', 0)`,
-      [cliente.id, lead.id]
-    );
-    await registrarEventoLead(lead.id, cliente.id, 'menu_enviado', 'Menu de atendimento enviado ao lead', {}).catch(() => null);
-    return true;
-  } catch (e) {
-    console.error('[menu][enviar]', e.message);
-    return false;
-  }
-}
-
-// Processa a resposta do lead ao menu. Retorna true se tratou (e o fluxo deve parar aqui).
-async function processarRespostaMenu(cliente, lead, estado, texto) {
-  try {
-    const mapa = Array.isArray(cliente.menu_atend_mapa) ? cliente.menu_atend_mapa : [];
-    const resp = String(texto || '').trim().toLowerCase();
-
-    // Tenta casar por resposta exata (número) OU pelo nome do setor
-    let escolha = mapa.find(m => String(m.resposta).trim().toLowerCase() === resp);
-    if (!escolha) {
-      // Casa pelo nome do setor digitado
-      const setoresRes = await query('SELECT id, nome FROM movatak_setores WHERE cliente_id=$1', [cliente.id]).catch(() => ({ rows: [] }));
-      const setorPorNome = setoresRes.rows.find(s => String(s.nome).trim().toLowerCase() === resp);
-      if (setorPorNome) escolha = mapa.find(m => Number(m.setor_id) === Number(setorPorNome.id));
-    }
-
-    if (escolha) {
-      // Grava o setor
-      await query('UPDATE movatak_leads SET setor_id=$1, atualizado_em=NOW() WHERE id=$2', [escolha.setor_id, lead.id]);
-      // Move para a coluna do kanban, se a opção tiver coluna definida
-      if (escolha.coluna_id) {
-        await query('UPDATE movatak_leads SET funil_coluna_id=$1, atualizado_em=NOW() WHERE id=$2', [escolha.coluna_id, lead.id]).catch(() => null);
-      }
-      await query(`UPDATE movatak_menu_estado SET status='concluido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
-      await registrarEventoLead(lead.id, cliente.id, 'menu_respondido', 'Lead escolheu setor pelo menu', { resposta: resp, setor_id: escolha.setor_id, coluna_id: escolha.coluna_id || null, template_id: escolha.template_id || null }).catch(() => null);
-      // Se a opção aponta para um autoatendimento próprio, inicia ele agora.
-      if (escolha.template_id) {
-        await iniciarQuestionarioPorTemplate(cliente, lead, escolha.template_id).catch(e => console.error('[menu][template-start]', e.message));
-      }
-      // Ação automática ao final do menu: marcar como não lido no WhatsApp (via Z-API)
-      if (cliente.menu_atend_marcar_nao_lido && cliente.zapi_instance) {
-        await zapiMarcarNaoLido(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone)
-          .catch(e => console.error('[menu][nao-lido]', e.message));
-      }
-      return true;
-    }
-
-    // Resposta inválida → vai para atendimento humano (recurso existente)
-    await query(`UPDATE movatak_menu_estado SET status='invalido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
-    await pararAtendimentoLead(cliente.id, lead.id, 'menu_invalido', texto).catch(e => console.error('[menu][parar]', e.message));
-    return true;
-  } catch (e) {
-    console.error('[menu][resposta]', e.message);
-    return false;
-  }
-}
-
-async function iniciarQuestionario(cliente, lead) {
-  try {
-    cliente = await resolverQuestionarioDoLead(cliente, lead);
-    const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-    if (!passos.length) {
-      await agendarFollowupV2(lead.id, cliente.id, 1, true);
-      await enviarFollowupsPendentesDoLead(lead.id, 1);
-      return;
-    }
-    const nome = lead.nome ? (' ' + String(lead.nome).split(' ')[0]) : '';
-
-    // pausa o follow-up automático enquanto o questionário roda
-    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
-    await moverLeadParaFunilSlug(cliente.id, lead.id, 'auto_atendimento').catch(e => console.error('[funil][auto_atendimento]', e.message));
-
-    // cria estado — grava qual template originou (se houver), pra que ao processar
-    // a resposta do lead a gente use ESTE template, e não re-resolva pela campanha.
-    const ins = await query(
-      `INSERT INTO movatak_questionario_estado (cliente_id, lead_id, telefone, passo_idx, respostas, status, template_id)
-       VALUES ($1, $2, $3, 0, '{}'::jsonb, 'em_andamento', $4)
-       RETURNING id`,
-      [cliente.id, lead.id, lead.telefone, cliente.__quest_template_id || null]
-    );
-    const estadoId = ins.rows[0].id;
-
-    // 2) introdução (opcional, texto e/ou imagem)
-    const introTxt = (cliente.questionario_intro && String(cliente.questionario_intro).trim())
-      ? String(cliente.questionario_intro).replace(/{nome}/g, nome)
-      : '';
-    const introImg = cliente.questionario_intro_imagem || '';
-    if (introTxt || introImg) {
-      await enviarMsgQuestionario(cliente, lead.telefone, introTxt || ' ', introImg);
-    }
-
-    // 3) primeiro passo (avança por etapas só-material até a primeira que espera resposta)
-    await avancarQuestionario(cliente, lead, estadoId, {}, 0, '');
-
-    await registrarEventoLead(lead.id, cliente.id, 'questionario_iniciado', 'Questionário consultivo iniciado', { total_perguntas: passos.length });
-  } catch (e) {
-    console.error('[questionario][iniciar] erro:', e.message);
-  }
-}
-
-async function processarRespostaQuestionario(cliente, lead, estado, texto) {
-  try {
-    // Prioridade: o template que o estado registrou (campanha OU início manual pelo
-    // painel). Só cai no resolver-por-campanha se o estado não tiver template gravado
-    // (estados antigos, criados antes dessa coluna existir).
-    const porTemplate = estado.template_id ? await resolverQuestionarioPorTemplateId(cliente, estado.template_id) : null;
-    cliente = porTemplate || await resolverQuestionarioDoLead(cliente, lead);
-    const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-    const idx = estado.passo_idx || 0;
-    const passo = passos[idx];
-    if (!passo) {
-      await query(`UPDATE movatak_questionario_estado SET status='concluido', atualizado_em=NOW() WHERE id=$1`, [estado.id]).catch(() => null);
-      return;
-    }
-
-    const respostas = (estado.respostas && typeof estado.respostas === 'object') ? estado.respostas : {};
-
-    // Passo só-material (não espera resposta): apenas segue adiante.
-    if (passo.aguardar === false) {
-      await avancarQuestionario(cliente, lead, estado.id, respostas, idx + 1, '');
-      return;
-    }
-
-    const interp = interpretarResposta(passo, texto);
-    if (!interp.ok) {
-      const tentativas = (estado.tentativas_invalidas || 0) + 1;
-      await query(
-        `UPDATE movatak_questionario_estado SET tentativas_invalidas = $1, atualizado_em = NOW() WHERE id = $2`,
-        [tentativas, estado.id]
-      );
-
-      if (tentativas <= 2) {
-        // Ainda dentro do limite — envia dica e re-pergunta
-        const dica = interp.motivo === 'cep_invalido'
-          ? 'Não consegui ler o CEP. Me envia os 8 números, ex: 50000000.'
-          : `Não entendi sua resposta. (${tentativas}/2)`;
-        await enviarMsgQuestionario(cliente, lead.telefone, dica + '\n\n' + montarTextoPergunta(passo), passo.imagem);
-      } else {
-        // Limite atingido — transfere para vendedor e encerra questionário
-        const cmdParar = String(cliente.questionario_comando_parar || '').trim();
-        const msgTransfer = cmdParar
-          ? `Vou transferir seu atendimento para um dos meus colegas. 😊\n\nSe quiser falar agora com um atendente, é só responder ${cmdParar}.`
-          : 'Vou transferir seu atendimento para um dos meus colegas. 😊';
-        await enviarMsgQuestionario(cliente, lead.telefone, msgTransfer, null);
-        await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [estado.id]);
-        await atribuirVendedorBalanceado(cliente.id, lead.id).catch(() => null);
-        await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(() => null);
-        await agendarFollowupV2(lead.id, cliente.id, 1, true);
-        await enviarFollowupsPendentesDoLead(lead.id, 1);
-        await registrarEventoLead(lead.id, cliente.id, 'questionario_transferido', 'Lead transferido após 2 respostas inválidas', { passo_idx: estado.passo_idx });
-        console.log(`[questionario][transferido] lead ${lead.id} transferido após ${tentativas} tentativas inválidas`);
-      }
-      return;
-    }
-
-    // Resposta válida — zera o contador de tentativas inválidas
-    await query(
-      `UPDATE movatak_questionario_estado SET tentativas_invalidas = 0 WHERE id = $1`,
-      [estado.id]
-    );
-
-    respostas[passo.id] = interp.valor;
-
-    let notaCep = '';
-    if (passo.tipo === 'cep') {
-      const coberto = await cepTemCobertura(cliente.id, interp.valor);
-      respostas._cobertura = coberto;
-      respostas._cep = interp.valor;
-      notaCep = coberto
-        ? '✅ Boa notícia: atendemos a sua região!'
-        : '⚠️ Vou confirmar a disponibilidade na sua região e já te retorno.';
-    }
-
-    // "Encerrar após esta pergunta": independente do tipo, ao responder esta
-    // pergunta o questionário vai direto para a mensagem final (com recomendação).
-    if (passo.encerrar_apos) {
-      await query(`UPDATE movatak_questionario_estado SET respostas=$1::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$2`, [JSON.stringify(respostas), estado.id]).catch(() => null);
-      if (notaCep) await enviarMsgQuestionario(cliente, lead.telefone, notaCep, '').catch(() => null);
-      await finalizarQuestionario(cliente, lead, respostas);
-      return;
-    }
-
-    // Salto condicional: se a pergunta (opções/sim_não) define um destino para a
-    // opção escolhida, pula para essa pergunta ou encerra (__fim__). Senão, segue linear.
-    let proximoIdx = idx + 1;
-    if ((passo.tipo === 'opcoes' || passo.tipo === 'sim_nao') && interp.indice) {
-      const destino = resolverSaltoQuestionario(passo, interp.indice, passos);
-      if (destino === -1) {
-        // Salto para o fim: grava respostas e finaliza.
-        await query(`UPDATE movatak_questionario_estado SET respostas=$1::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$2`, [JSON.stringify(respostas), estado.id]).catch(() => null);
-        if (notaCep) await enviarMsgQuestionario(cliente, lead.telefone, notaCep, '').catch(() => null);
-        await finalizarQuestionario(cliente, lead, respostas);
-        return;
-      }
-      if (destino !== null) proximoIdx = destino;
-    }
-
-    await avancarQuestionario(cliente, lead, estado.id, respostas, proximoIdx, notaCep);
-  } catch (e) {
-    console.error('[questionario][processar] erro:', e.message);
-  }
-}
-
-async function finalizarQuestionario(cliente, lead, respostas) {
-  try {
-    const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
-    const rec = await calcularRecomendacao(cliente, respostas);
-    const nome = lead.nome ? (' ' + String(lead.nome).split(' ')[0]) : '';
-    const planoTxt = rec.plano
-      ? (rec.plano.nome + (rec.plano.valor != null ? ' — R$ ' + Number(rec.plano.valor).toFixed(2).replace('.', ',') : ''))
-      : 'um dos nossos planos';
-
-    if (rec.plano) {
-      await query(`UPDATE movatak_leads SET plano_id = $1, atualizado_em = NOW() WHERE id = $2`, [rec.plano.id, lead.id]).catch(() => null);
-    }
-
-    const finalTpl = (cliente.questionario_final && String(cliente.questionario_final).trim())
-      ? cliente.questionario_final
-      : 'Prontinho{nome}! Com base nas suas respostas, o plano ideal pra você é: {plano}. Um consultor já vai falar com você pra finalizar. 🙌';
-    const finalMsg = finalTpl.replace(/{nome}/g, nome).replace(/{plano}/g, planoTxt);
-    await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
-
-    const resumoLinhas = passos
-      .filter(p => p.pergunta_curta && String(p.pergunta_curta).trim() && respostas[p.id] !== undefined)
-      .map(p => `${String(p.pergunta_curta).trim()}: ${respostas[p.id]}`);
-    const cobTxt = (respostas._cobertura === true) ? 'SIM' : (respostas._cobertura === false ? 'NÃO (verificar)' : '—');
-    const resumo =
-      '🔔 Lead qualificado!\n' +
-      `Nome: ${lead.nome || '—'}\n` +
-      `Fone: ${lead.telefone}` +
-      (resumoLinhas.length ? '\n' + resumoLinhas.join('\n') : '') +
-      (respostas._cep ? `\nCEP: ${respostas._cep} | Cobertura: ${cobTxt}` : '') +
-      (rec.plano ? `\nPlano sugerido: ${rec.plano.nome}` : '');
-
-    const destino = cliente.whatsapp_dono || MOVATAK_ADMIN_WA;
-    if (destino) {
-      await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, destino, resumo)
-        .catch(e => console.error('[questionario][resumo vendedor]', e.message));
-    }
-
-    await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(e => console.error('[funil][em_negociacao]', e.message));
-    await atribuirVendedorBalanceado(cliente.id, lead.id).catch(e => console.error('[funil][distribuicao]', e.message));
-
-    if (cliente.acao_arquivar_ao_final) {
-      await zapiArquivar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone)
-        .catch(e => console.error('[zapi][arquivar]', e.message));
-    }
-    if (cliente.acao_marcar_nao_lido) {
-      await zapiMarcarNaoLido(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, lead.telefone)
-        .catch(e => console.error('[zapi][nao_lido]', e.message));
-    }
-
-    await registrarEventoLead(lead.id, cliente.id, 'questionario_concluido', 'Questionário concluído e plano recomendado', { respostas, plano_id: rec.plano ? rec.plano.id : null });
-
-    // Menu de Atendimento "após questionário": agora que o lead terminou as
-    // perguntas, oferece o menu de setor (se ativo e configurado para esta posição).
-    if (cliente.menu_atend_ativo && cliente.menu_atend_posicao === 'apos_questionario') {
-      await enviarMenuAtendimento(cliente, lead).catch(e => console.error('[menu][pos-quest]', e.message));
-    }
-  } catch (e) {
-    console.error('[questionario][finalizar] erro:', e.message);
-  }
-}
-
-// Lead que travou no meio do questionário: manda lembrete e, se continuar sem
-// responder, encerra e devolve o lead para o follow-up normal.
-async function processarQuestionariosParados() {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(
-      `SELECT q.*, c.zapi_instance, c.zapi_token, c.zapi_client_token,
-              c.questionario_passos, c.quest_lembrete_msg, c.quest_lembrete_minutos,
-              l.nome AS lead_nome, l.etapa AS lead_etapa
-         FROM movatak_questionario_estado q
-         JOIN movatak_clientes c ON c.id = q.cliente_id
-         JOIN movatak_leads l ON l.id = q.lead_id
-        WHERE q.status = 'em_andamento'
-          AND q.atualizado_em < NOW() - make_interval(mins =>
-                COALESCE(NULLIF(c.quest_lembrete_minutos, 0), $1::int))`,
-      [MOVATAK_QUEST_LEMBRETE_HORAS * 60]
-    );
-    for (const est of r.rows) {
-      try {
-        const cliente = {
-          id: est.cliente_id,
-          zapi_instance: est.zapi_instance,
-          zapi_token: est.zapi_token,
-          zapi_client_token: est.zapi_client_token,
-          questionario_passos: est.questionario_passos
-        };
-        const lead = { id: est.lead_id, telefone: est.telefone, nome: est.lead_nome };
-        const passos = Array.isArray(est.questionario_passos) ? est.questionario_passos : [];
-        const passo = passos[est.passo_idx || 0];
-
-        if ((est.lembretes || 0) < MOVATAK_QUEST_MAX_LEMBRETES) {
-          // Mensagem configurada pelo cliente. Se vazia, não envia lembrete
-          // (mas ainda marca como processado para seguir o fluxo de abandono depois).
-          const msgLembrete = (est.quest_lembrete_msg || '').trim();
-          if (msgLembrete) {
-            await enviarMsgQuestionario(cliente, lead.telefone, msgLembrete, null);
-          }
-          await query(`UPDATE movatak_questionario_estado SET lembretes = COALESCE(lembretes,0) + 1, atualizado_em = NOW() WHERE id = $1`, [est.id]);
-          await registrarEventoLead(lead.id, est.cliente_id, 'questionario_lembrete', 'Lembrete enviado por inatividade no questionário', { passo_idx: est.passo_idx });
-          console.log(`[questionario][lembrete] enviado -> lead ${lead.id}`);
-        } else {
-          await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [est.id]);
-          if (est.lead_etapa !== 'cliente') {
-            await agendarFollowupV2(lead.id, est.cliente_id, 1, true);
-            await enviarFollowupsPendentesDoLead(lead.id, 1);
-          }
-          await registrarEventoLead(lead.id, est.cliente_id, 'questionario_abandonado', 'Questionário sem resposta; lead devolvido ao follow-up', { passo_idx: est.passo_idx });
-          console.log(`[questionario][abandonado] devolvido ao follow-up -> lead ${lead.id}`);
-        }
-      } catch (e) {
-        console.error('[questionario][parado] erro no estado', est.id, e.message);
-      }
-    }
-  } catch (e) {
-    console.error('[questionario][parados] erro:', e.message);
-  }
-}
-
-
-async function resolverTemplateCampanha(clienteId, templateRef) {
-  await garantirEstruturaCampanhasTemplates();
-  const ref = String(templateRef || '').trim();
-  if (!ref) return null;
-  if (ref.startsWith('custom:')) {
-    const n = parseInt(ref.replace('custom:', '').replace(/\D/g, ''), 10);
-    return Number.isFinite(n) ? n : null;
-  }
-  if (/^\d+$/.test(ref)) return parseInt(ref, 10);
-  const t = TEMPLATES_FOLLOWUP[ref];
-  if (!t) return null;
-  const r = await query(
-    `INSERT INTO movatak_followup_templates
-       (cliente_id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, ativo)
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, true)
-     RETURNING id`,
-    [clienteId, t.nome, t.trigger_msg || null, JSON.stringify(t.followup_v2 || {}), t.boas_vindas_msg || null, JSON.stringify(t.comandos || {})]
+  // 3) Etapa avançada esfriando: negociação/proposta parada = dinheiro escapando.
+  const etapaQuente = /negocia|proposta|fechamento|pagamento/i.test(
+    (lead.etapa || '') + ' ' + (lead._colunaNome || '')
   );
-  return r.rows[0].id;
+  if (etapaQuente && horasParado > 1) score += 50;
+
+  return Math.round(score);
 }
 
-app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (req, res) => {
+// Leads dispensados manualmente do painel de prioridades (só nesta sessão).
+let _prioridadesDispensadas = new Set();
+
+// Dispensa permanente: o lead some das prioridades e só volta se mandar nova
+// mensagem. Persiste no backend (não é mais só visual da sessão).
+async function dispensarPrioridade(ev, leadId) {
+  if (ev) ev.stopPropagation();
+  _prioridadesDispensadas.add(Number(leadId));
+  // Atualiza o estado local pra sumir na hora, mesmo antes do refresh.
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId));
+  if (lead) lead.prioridade_dispensada_em = new Date().toISOString();
+  renderPainelPrioridades();
+  atualizarBadgePrioridades();
   try {
-    await garantirEstruturaCampanhasTemplates();
-    const r = await query(
-      `WITH camp AS (
-           SELECT c.*,
-                  COUNT(*) OVER (PARTITION BY c.cliente_id, LOWER(TRIM(COALESCE(c.gatilho,'')))) AS qtd_mesmo_gatilho
-             FROM movatak_campanhas c
-            WHERE c.cliente_id = $1
-              AND c.excluida_em IS NULL
-        )
-        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em,
-              t.nome AS template_nome,
-              c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
-              (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
-              COUNT(l.id)::int AS leads,
-              COUNT(l.id) FILTER (WHERE l.etapa = 'cliente')::int AS vendas,
-              COALESCE(ROUND((100.0 * COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') / NULLIF(COUNT(l.id),0))::numeric, 1), 0) AS conversao,
-              COALESCE(c.investimento_valor, c.verba_diaria, 0) AS investimento,
-              CASE WHEN COUNT(l.id) > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id),0))::numeric, 2) ELSE NULL END AS cpl,
-              CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
-         FROM camp c
-         LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
-         LEFT JOIN movatak_leads l
-           ON (CASE WHEN c.qtd_mesmo_gatilho > 1
-                    THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
-                    ELSE l.campanha_id = c.id
-               END)
-        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
-        ORDER BY c.ativo DESC, c.criado_em DESC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
+    await api('/movatak/admin/leads/' + leadId + '/dispensar-prioridade', { method: 'POST' });
   } catch (e) {
-    console.error('[campanhas][listar]', e.message);
-    // Não quebra o painel se a migração de campanhas ainda não foi executada.
-    if (erroEstruturaBanco(e)) return res.json([]);
-    res.status(500).json({ error: e.message });
+    // Falhou no servidor: mantém escondido na sessão, mas avisa.
+    const status = document.getElementById('funil-status');
+    if (status) { status.style.color = 'var(--amber)'; status.textContent = 'Prioridade dispensada localmente (erro ao salvar: ' + e.message + ')'; }
   }
-});
-
-app.post('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id } = req.body || {};
-    if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
-    const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
-    if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
-    const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
-    const investimentoValor = parseMoedaParaNumero(investimento_valor !== undefined ? investimento_valor : verba_diaria);
-    // A partir da v2.1.3 permitimos o mesmo gatilho em mais de uma campanha.
-    // Observação: quando isso acontece, a atribuição exata por campanha fica compartilhada pelo gatilho.
-    const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
-    const questTplId = (questionario_template_id !== undefined && questionario_template_id !== null && String(questionario_template_id) !== '') ? parseInt(questionario_template_id, 10) : null;
-    const r = await query(
-      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id, ativo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true) RETURNING *`,
-      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId, typeof questionario_ativo === 'boolean' ? questionario_ativo : true, questTplId]
-    );
-    res.json(r.rows[0]);
-  } catch (e) {
-    console.error('[campanhas][criar]', e.message);
-    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de campanhas não existe ou está desatualizada. Rode a MIGRACOES-v2.1.1.sql no PostgreSQL do Railway.' });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo, questionario_template_id } = req.body || {};
-    const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
-    const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
-    const templateDbId = template_id === undefined ? undefined : await resolverTemplateCampanha(null, template_id);
-    const questTplProvided = questionario_template_id !== undefined;
-    const questTplId = questTplProvided ? ((questionario_template_id === null || String(questionario_template_id) === '') ? null : parseInt(questionario_template_id, 10)) : null;
-    const r = await query(
-      `UPDATE movatak_campanhas
-          SET nome = COALESCE($1, nome),
-              gatilho = CASE WHEN $2::text IS NULL THEN gatilho ELSE $2 END,
-              verba_diaria = CASE WHEN $3::text IS NULL THEN verba_diaria ELSE $3::numeric END,
-              investimento_valor = CASE WHEN $3::text IS NULL THEN investimento_valor ELSE $3::numeric END,
-              investimento_tipo = COALESCE($4, investimento_tipo),
-              template_id = CASE WHEN $5::text IS NULL THEN template_id ELSE $5::int END,
-              ativo = COALESCE($6, ativo),
-              questionario_ativo = COALESCE($8, questionario_ativo),
-              questionario_template_id = CASE WHEN $9::boolean THEN $10::int ELSE questionario_template_id END,
-              atualizado_em = NOW()
-        WHERE id = $7 RETURNING *`,
-      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null, questTplProvided, questTplId]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-app.delete('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const r = await query(
-      `UPDATE movatak_campanhas
-          SET ativo = false,
-              excluida_em = NOW(),
-              atualizado_em = NOW()
-        WHERE id = $1 AND excluida_em IS NULL
-        RETURNING id, nome`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada ou já excluída.' });
-    res.json({ ok: true, campanha: r.rows[0] });
-  } catch (e) {
-    console.error('[campanhas][excluir]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.delete('/movatak/admin/templates-followup/:id', ...exigeTemplateFU, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const templateId = String(req.params.id || '').replace(/\D/g, '');
-    if (!templateId) return res.status(400).json({ error: 'Template inválido.' });
-
-    const usado = await query(
-      `SELECT COUNT(*)::int AS total
-         FROM movatak_campanhas
-        WHERE template_id = $1
-          AND ativo = true
-          AND excluida_em IS NULL`,
-      [templateId]
-    );
-    if (parseInt((usado.rows[0] || {}).total || 0, 10) > 0) {
-      return res.status(400).json({ error: 'Este template está vinculado a campanha ativa. Exclua a campanha ou troque o template antes.' });
-    }
-
-    const r = await query(
-      `UPDATE movatak_followup_templates
-          SET ativo = false
-        WHERE id = $1 AND ativo = true
-        RETURNING id, nome`,
-      [templateId]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Template personalizado não encontrado.' });
-    res.json({ ok: true, template: r.rows[0] });
-  } catch (e) {
-    console.error('[templates][excluir]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-async function listarTemplatesCustom(clienteId) {
-  await garantirEstruturaCampanhasTemplates();
-  const r = await query(
-    `SELECT id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, criado_em
-       FROM movatak_followup_templates
-      WHERE cliente_id = $1 AND COALESCE(ativo, true) = true
-      ORDER BY criado_em DESC`,
-    [clienteId]
-  );
-  return r.rows;
 }
 
-app.get('/movatak/admin/templates-followup', authMovatakOuApp, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    // Cliente só vê os próprios templates: força o cliente_id do token.
-    const clienteId = req.ehCliente ? req.clienteId : (req.query.cliente_id || req.query.clienteId || null);
-    const padroes = Object.entries(TEMPLATES_FOLLOWUP).map(([id, t]) => ({
-      id,
-      nome: t.nome,
-      tipo: 'padrao'
-    }));
-    if (!clienteId) return res.json(padroes);
-
-    let custom = [];
-    try {
-      custom = (await listarTemplatesCustom(clienteId)).map(t => ({
-        id: 'custom:' + t.id,
-        nome: t.nome,
-        tipo: 'cliente'
-      }));
-    } catch (e) {
-      if (!erroEstruturaBanco(e)) throw e;
-      console.error('[templates][listar-custom]', e.message);
-    }
-
-    res.json([...padroes, ...custom]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Atualiza as mensagens de um TEMPLATE específico (o selecionado no dropdown).
-// Só templates personalizados (custom:ID) podem ser editados — os padrão são fixos.
-app.patch('/movatak/admin/clientes/:id/template-followup-mensagens', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const templateRef = String(req.body.template || '').trim();
-    const recebido = req.body.followup_v2 || {};
-    const followup_v2 = {
-      fu1: {
-        msg1: String((recebido.fu1 && recebido.fu1.msg1) || '').trim(),
-        msg2: String((recebido.fu1 && recebido.fu1.msg2) || '').trim()
-      },
-      fu2: {
-        msg1: String((recebido.fu2 && recebido.fu2.msg1) || '').trim(),
-        msg2: String((recebido.fu2 && recebido.fu2.msg2) || '').trim(),
-        msg3: String((recebido.fu2 && recebido.fu2.msg3) || '').trim()
-      }
-    };
-
-    if (!templateRef) {
-      return res.status(400).json({ error: 'SEM_TEMPLATE' });
-    }
-
-    // Templates padrão (constantes no código) não podem ser editados.
-    if (!templateRef.startsWith('custom:')) {
-      return res.status(400).json({ error: 'TEMPLATE_PADRAO' });
-    }
-
-    const templateDbId = templateRef.replace('custom:', '').replace(/\D/g, '');
-    const upd = await query(
-      `UPDATE movatak_followup_templates
-          SET followup_v2 = $1::jsonb
-        WHERE id = $2 AND cliente_id = $3 AND ativo = true
-        RETURNING id, nome`,
-      [JSON.stringify(followup_v2), templateDbId, req.params.id]
-    );
-    if (!upd.rows.length) return res.status(404).json({ error: 'Template não encontrado.' });
-
-    // Conta uso para informar o alcance.
-    const usoCamp = await query(
-      `SELECT COUNT(*)::int AS total FROM movatak_campanhas WHERE template_id = $1 AND ativo = true AND excluida_em IS NULL`,
-      [templateDbId]
-    ).catch(() => ({ rows: [{ total: 0 }] }));
-
-    res.json({ ok: true, template: upd.rows[0], usado_em_campanhas: usoCamp.rows[0].total });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/movatak/admin/clientes/:id/templates-followup', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const body = req.body || {};
-    const nome = String(body.nome || '').trim();
-    const followup = body.followup_v2 || body.followup || {};
-    if (!nome) return res.status(400).json({ error: 'Informe o nome do template.' });
-    if (!followup || typeof followup !== 'object') return res.status(400).json({ error: 'Template sem mensagens de follow-up.' });
-
-    const r = await query(
-      `INSERT INTO movatak_followup_templates
-         (cliente_id, nome, trigger_msg, followup_v2, boas_vindas_msg, comandos, ativo)
-       VALUES ($1, $2, $3, $4::jsonb, $5, $6::jsonb, true)
-       RETURNING id, nome`,
-      [
-        req.params.id,
-        nome,
-        body.trigger_msg ? String(body.trigger_msg).trim() : null,
-        JSON.stringify(followup),
-        body.boas_vindas_msg || null,
-        JSON.stringify(body.comandos || {})
-      ]
-    );
-    res.json({ ok: true, id: 'custom:' + r.rows[0].id, nome: r.rows[0].nome });
-  } catch (e) {
-    console.error('[templates][criar]', e.message);
-    if (erroEstruturaBanco(e)) return res.status(400).json({ error: 'Tabela de templates não existe no banco. Rode a MIGRACOES-v2.1.1.sql no PostgreSQL do Railway.' });
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.get('/movatak/admin/clientes/:id/template-conteudo', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const templateId = String(req.query.template || '').trim();
-    if (!templateId) return res.status(400).json({ error: 'Informe o template.' });
-    let t = null;
-
-    if (templateId.startsWith('custom:')) {
-      const templateDbId = templateId.replace('custom:', '').replace(/\D/g, '');
-      const r = await query(
-        `SELECT nome, trigger_msg, followup_v2, boas_vindas_msg, comandos
-           FROM movatak_followup_templates
-          WHERE id = $1 AND cliente_id = $2 AND ativo = true`,
-        [templateDbId, req.params.id]
-      );
-      if (!r.rows.length) return res.status(404).json({ error: 'Template personalizado não encontrado.' });
-      const row = r.rows[0];
-      t = {
-        nome: row.nome,
-        trigger_msg: row.trigger_msg || '',
-        followup_v2: row.followup_v2 || {},
-        boas_vindas_msg: row.boas_vindas_msg || '',
-        comandos: row.comandos || {}
-      };
-    } else {
-      const base = TEMPLATES_FOLLOWUP[templateId];
-      if (!base) return res.status(404).json({ error: 'Template não encontrado.' });
-      t = {
-        nome: base.nome,
-        trigger_msg: base.trigger_msg || '',
-        followup_v2: base.followup_v2 || {},
-        boas_vindas_msg: base.boas_vindas_msg || '',
-        comandos: base.comandos || {}
-      };
-    }
-    res.json(t);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/aplicar-template', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaCampanhasTemplates();
-    const templateId = String((req.body || {}).template || '').trim();
-    let t = null;
-
-    if (templateId.startsWith('custom:')) {
-      const templateDbId = templateId.replace('custom:', '').replace(/\D/g, '');
-      const r = await query(
-        `SELECT * FROM movatak_followup_templates
-          WHERE id = $1 AND cliente_id = $2 AND ativo = true`,
-        [templateDbId, req.params.id]
-      );
-      if (!r.rows.length) return res.status(400).json({ error: 'Template personalizado não encontrado.' });
-      const row = r.rows[0];
-      t = {
-        nome: row.nome,
-        trigger_msg: row.trigger_msg,
-        followup_v2: row.followup_v2 || {},
-        boas_vindas_msg: row.boas_vindas_msg || '',
-        comandos: row.comandos || null
-      };
-    } else {
-      t = TEMPLATES_FOLLOWUP[templateId];
-    }
-
-    if (!t) return res.status(400).json({ error: 'Template inválido.' });
-
-    const comandosJson = t.comandos ? JSON.stringify(t.comandos) : null;
-    await query(
-      `UPDATE movatak_clientes
-          SET followup_msgs_v2 = $1::jsonb,
-              boas_vindas_msg = $2,
-              trigger_msg = COALESCE(NULLIF($3,''), trigger_msg),
-              comandos = COALESCE($4::jsonb, comandos)
-        WHERE id = $5`,
-      [JSON.stringify(t.followup_v2), t.boas_vindas_msg, t.trigger_msg || '', comandosJson, req.params.id]
-    );
-    res.json({ ok: true, template: templateId });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/testar-zapi', authMovatak, async (req, res) => {
-  try {
-    const r = await query('SELECT * FROM movatak_clientes WHERE id = $1', [req.params.id]);
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const c = r.rows[0];
-    const destino = String((req.body || {}).telefone || c.whatsapp_dono || MOVATAK_ADMIN_WA).replace(/\D/g, '');
-    if (!destino) return res.status(400).json({ error: 'Informe um telefone para teste.' });
-    const msg = `Teste Z-API Movatak CRM ${MOVATAK_VERSION} — ${new Date().toLocaleString('pt-BR')}`;
-    await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, destino, msg);
-    res.json({ ok: true, telefone: destino });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.patch('/movatak/admin/leads/:id/cliente', ...exigeLead, async (req, res) => {
-  try {
-    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    await query(`UPDATE movatak_leads SET etapa = 'cliente', convertido_em = NOW(), atualizado_em = NOW() WHERE id = $1`, [req.params.id]);
-    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [req.params.id]);
-    await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'cliente_manual', 'Lead marcado como cliente pelo painel');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/leads/:id/descartar', ...exigeLead, async (req, res) => {
-  try {
-    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    await query(`UPDATE movatak_leads SET etapa = 'descartado', atualizado_em = NOW() WHERE id = $1`, [req.params.id]);
-    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [req.params.id]);
-    await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'descartado_manual', 'Lead descartado pelo painel');
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/leads/:id/vendedor', ...exigeLead, async (req, res) => {
-  try {
-    const vendedorId = req.body && req.body.vendedor_id ? parseInt(req.body.vendedor_id) : null;
-    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    await query(`UPDATE movatak_leads SET vendedor_id = $1, atualizado_em = NOW() WHERE id = $2`, [vendedorId, req.params.id]);
-    await registrarEventoLead(req.params.id, lead.rows[0].cliente_id, 'vendedor_atribuido_manual', 'Vendedor atribuído manualmente pelo painel', { vendedor_id: vendedorId });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Exclui o lead DEFINITIVAMENTE, junto com todos os dados relacionados a ele.
-// Diferente de "descartar" (que só muda a etapa) — aqui o lead some do sistema.
-app.delete('/movatak/admin/leads/:id', ...exigeLead, async (req, res) => {
-  try {
-    const lead = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
-    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const leadId = req.params.id;
-    // Apaga tudo que referencia o lead antes de apagar o lead em si, pra não deixar órfãos.
-    await query('DELETE FROM movatak_conversas WHERE lead_id = $1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_followup WHERE lead_id = $1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_lead_eventos WHERE lead_id = $1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_mensagens WHERE lead_id = $1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_menu_estado WHERE lead_id = $1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_questionario_estado WHERE lead_id = $1', [leadId]).catch(() => null);
-    await query('DELETE FROM movatak_leads WHERE id = $1', [leadId]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// Health check + Versão
-// ============================================================
-// ============================================================
-// API — Planos/Pacotes por cliente (usados na recomendação por pontuação)
-// ============================================================
-app.get('/movatak/admin/clientes/:id/planos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    const r = await query(
-      `SELECT p.id, p.nome, p.valor, p.nota_minima,
-              COALESCE(array_agg(pt.template_id) FILTER (WHERE pt.template_id IS NOT NULL), '{}') AS template_ids
-         FROM movatak_planos p
-         LEFT JOIN movatak_plano_templates pt ON pt.plano_id = p.id
-        WHERE p.cliente_id = $1
-        GROUP BY p.id, p.nome, p.valor, p.nota_minima
-        ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/planos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    const { nome, valor, nota_minima } = req.body || {};
-    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do plano.' });
-    const r = await query(
-      'INSERT INTO movatak_planos (cliente_id, nome, valor, nota_minima) VALUES ($1, $2, $3, $4) RETURNING id, nome, valor, nota_minima',
-      [req.params.id, String(nome).trim(), (valor !== '' && valor != null) ? parseMoedaParaNumero(valor) : null, parseInt(nota_minima, 10) || 0]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/planos/:id', ...exigePlano, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    const { nome, valor, nota_minima, template_ids } = req.body || {};
-    await query(
-      `UPDATE movatak_planos
-          SET nome = COALESCE($1, nome),
-              valor = CASE WHEN $2::text IS NULL THEN valor ELSE $2::numeric END,
-              nota_minima = COALESCE($3, nota_minima)
-        WHERE id = $4`,
-      [
-        nome ? String(nome).trim() : null,
-        (valor !== undefined && valor !== '' && valor !== null) ? parseMoedaParaNumero(valor) : null,
-        (nota_minima !== undefined && nota_minima !== '') ? (parseInt(nota_minima, 10) || 0) : null,
-        req.params.id
-      ]
-    );
-    // Atualiza os vínculos de template, se enviados (lista completa = substitui tudo).
-    if (Array.isArray(template_ids)) {
-      await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]);
-      for (const tid of template_ids) {
-        const t = parseInt(tid, 10);
-        if (Number.isFinite(t)) {
-          await query('INSERT INTO movatak_plano_templates (plano_id, template_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.params.id, t]).catch(() => null);
-        }
-      }
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/planos/:id', ...exigePlano, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    // Desvincula os leads que usam este plano (evita o bloqueio da foreign key).
-    // Os leads continuam existindo, apenas sem plano associado.
-    await query('UPDATE movatak_leads SET plano_id = NULL, atualizado_em = NOW() WHERE plano_id = $1', [req.params.id]).catch(() => null);
-    await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]).catch(() => null);
-    await query('DELETE FROM movatak_planos WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// ============================================================
-// API — Questionário consultivo (config por cliente + cobertura CEP)
-// ============================================================
-app.post('/movatak/admin/upload-imagem', authMovatakOuApp, async (req, res) => {
-  try {
-    const dataUrl = (req.body && req.body.dataUrl) || '';
-    // O navegador pode mandar parâmetros extras no content-type (ex: "audio/webm;codecs=opus")
-    // antes do ";base64," — por isso o (?:;[^;,]+)* aceita qualquer quantidade deles no meio.
-    const m = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[^;,]+)*;base64,(.+)$/i.exec(dataUrl);
-    const TIPOS_PERMITIDOS = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'video/mp4', 'video/webm', 'video/quicktime', 'audio/webm', 'audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/x-m4a', 'audio/aac'];
-    const contentType = m ? m[1].toLowerCase() : '';
-    if (!m || !TIPOS_PERMITIDOS.includes(contentType)) {
-      return res.status(400).json({ error: 'Arquivo inválido. Envie imagem (PNG, JPG, WEBP), vídeo (MP4, WEBM, MOV) ou áudio (WEBM, OGG, MP3, M4A, WAV).' });
-    }
-    const ehVideo = contentType.startsWith('video/');
-    const ehAudio = contentType.startsWith('audio/');
-    const tipo = ehVideo ? 'video' : (ehAudio ? 'audio' : 'imagem');
-    const extMap = {
-      'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp',
-      'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
-      'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/wav': 'wav', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac'
-    };
-    const ext = extMap[contentType] || (ehVideo ? 'mp4' : (ehAudio ? 'webm' : 'jpg'));
-    const buffer = Buffer.from(m[2], 'base64');
-    const limite = ehVideo ? 20 * 1024 * 1024 : 8 * 1024 * 1024;
-    if (buffer.length > limite) {
-      return res.status(413).json({ error: ehVideo ? 'Vídeo muito grande (máx 20MB).' : 'Arquivo muito grande (máx 8MB).' });
-    }
-    const url = await uploadSupabase(buffer, contentType, ext);
-    res.json({ ok: true, url, tipo });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(
-      `SELECT questionario_ativo, questionario_intro, questionario_final,
-              questionario_intro_imagem, questionario_final_imagem,
-              questionario_passos, questionario_recomendacao,
-              questionario_comando_parar, questionario_comando_ativar,
-              acao_arquivar_ao_final, acao_marcar_nao_lido,
-              quest_lembrete_msg, quest_lembrete_minutos
-         FROM movatak_clientes WHERE id = $1`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
-    const rp = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [req.params.id]);
-    const cob = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({
-      ativo: !!r.rows[0].questionario_ativo,
-      intro: r.rows[0].questionario_intro || '',
-      final: r.rows[0].questionario_final || '',
-      intro_imagem: r.rows[0].questionario_intro_imagem || '',
-      final_imagem: r.rows[0].questionario_final_imagem || '',
-      passos: r.rows[0].questionario_passos || [],
-      recomendacao: r.rows[0].questionario_recomendacao || [],
-      comando_parar: r.rows[0].questionario_comando_parar || '',
-      comando_ativar: r.rows[0].questionario_comando_ativar || '',
-      planos: rp.rows,
-      cobertura_total: cob.rows[0].total,
-      acao_arquivar_ao_final: !!r.rows[0].acao_arquivar_ao_final,
-      acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido,
-      quest_lembrete_msg: r.rows[0].quest_lembrete_msg || '',
-      quest_lembrete_minutos: r.rows[0].quest_lembrete_minutos || null
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar, acao_arquivar_ao_final, acao_marcar_nao_lido, quest_lembrete_msg, quest_lembrete_minutos } = req.body || {};
-    await query(
-      `UPDATE movatak_clientes
-          SET questionario_ativo = COALESCE($1, questionario_ativo),
-              questionario_intro = $2,
-              questionario_final = $3,
-              questionario_intro_imagem = $4,
-              questionario_final_imagem = $5,
-              questionario_passos = $6::jsonb,
-              questionario_recomendacao = $7::jsonb,
-              acao_arquivar_ao_final = COALESCE($8, acao_arquivar_ao_final),
-              acao_marcar_nao_lido = COALESCE($9, acao_marcar_nao_lido),
-              questionario_comando_parar = $10,
-              questionario_comando_ativar = $11,
-              quest_lembrete_msg = $12,
-              quest_lembrete_minutos = $13
-        WHERE id = $14`,
-      [
-        typeof ativo === 'boolean' ? ativo : null,
-        intro || null,
-        final || null,
-        intro_imagem || null,
-        final_imagem || null,
-        JSON.stringify(Array.isArray(passos) ? passos : []),
-        JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
-        typeof acao_arquivar_ao_final === 'boolean' ? acao_arquivar_ao_final : null,
-        typeof acao_marcar_nao_lido === 'boolean' ? acao_marcar_nao_lido : null,
-        (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
-        (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null,
-        (typeof quest_lembrete_msg === 'string' && quest_lembrete_msg.trim()) ? quest_lembrete_msg.trim() : null,
-        (Number.isInteger(quest_lembrete_minutos) && quest_lembrete_minutos > 0) ? quest_lembrete_minutos : null,
-        req.params.id
-      ]
-    );
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-// ============================================================
-// API — Templates de autoatendimento (questionário) por campanha
-// ============================================================
-app.get('/movatak/admin/clientes/:id/questionario-templates', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(
-      `SELECT id, nome, criado_em, atualizado_em,
-              COALESCE(jsonb_array_length(passos), 0) AS qtd_passos
-         FROM movatak_questionario_templates
-        WHERE cliente_id = $1 AND ativo = true
-        ORDER BY criado_em DESC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query(`SELECT * FROM movatak_questionario_templates WHERE id = $1`, [req.params.tid]);
-    if (!r.rows.length) return res.status(404).json({ error: 'Template de questionário não encontrado.' });
-    const t = r.rows[0];
-    res.json({
-      id: t.id,
-      nome: t.nome,
-      intro: t.intro || '',
-      final: t.final || '',
-      intro_imagem: t.intro_imagem || '',
-      final_imagem: t.final_imagem || '',
-      passos: t.passos || [],
-      recomendacao: t.recomendacao || [],
-      comando_parar: t.comando_parar || '',
-      comando_ativar: t.comando_ativar || ''
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/questionario-templates', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const { nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar } = req.body || {};
-    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do template de autoatendimento.' });
-    const r = await query(
-      `INSERT INTO movatak_questionario_templates
-         (cliente_id, nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar)
-       VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10) RETURNING id`,
-      [
-        req.params.id, String(nome).trim(), intro || null, final || null, intro_imagem || null, final_imagem || null,
-        JSON.stringify(Array.isArray(passos) ? passos : []),
-        JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
-        (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
-        (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null
-      ]
-    );
-    res.json({ ok: true, id: r.rows[0].id });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const { nome, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar } = req.body || {};
-    const r = await query(
-      `UPDATE movatak_questionario_templates
-          SET nome = COALESCE($1, nome),
-              intro = $2, final = $3, intro_imagem = $4, final_imagem = $5,
-              passos = $6::jsonb, recomendacao = $7::jsonb,
-              comando_parar = $8, comando_ativar = $9,
-              atualizado_em = NOW()
-        WHERE id = $10 RETURNING id`,
-      [
-        nome ? String(nome).trim() : null, intro || null, final || null, intro_imagem || null, final_imagem || null,
-        JSON.stringify(Array.isArray(passos) ? passos : []),
-        JSON.stringify(Array.isArray(recomendacao) ? recomendacao : []),
-        (typeof comando_parar === 'string' && comando_parar.trim()) ? comando_parar.trim() : null,
-        (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null,
-        req.params.tid
-      ]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Template de questionário não encontrado.' });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    // Desvincula das campanhas que o usavam (elas voltam ao questionário do cliente).
-    await query(`UPDATE movatak_campanhas SET questionario_template_id = NULL WHERE questionario_template_id = $1`, [req.params.tid]).catch(() => null);
-    await query(`UPDATE movatak_questionario_templates SET ativo = false, atualizado_em = NOW() WHERE id = $1`, [req.params.tid]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-// API — Mensagens Rápidas (enviadas manualmente do Kanban)
-// ============================================================
-async function garantirEstruturaConversas() {
-  await query(`CREATE TABLE IF NOT EXISTS movatak_conversas (
-    id SERIAL PRIMARY KEY,
-    lead_id INTEGER NOT NULL,
-    cliente_id INTEGER NOT NULL,
-    direcao TEXT NOT NULL CHECK (direcao IN ('entrada','saida')),
-    conteudo TEXT,
-    midia_url TEXT,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_tipo TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_id TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_conversa_id INTEGER`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_msg_id TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_direcao TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_conteudo TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_midia_url TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_midia_tipo TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_status_em TIMESTAMPTZ`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS zapi_status_payload JSONB DEFAULT '{}'::jsonb`).catch(() => null);
-  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS origem TEXT DEFAULT 'humano'`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_conversas_lead ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_conversas_sla ON movatak_conversas(cliente_id, criado_em)`).catch(() => null);
-  // Garante que a mesma mensagem do WhatsApp (mesmo lead + mesmo messageId) nunca
-  // seja gravada duas vezes — fecha a corrida entre o envio pelo painel e o webhook fromMe.
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_conversas_lead_msgid ON movatak_conversas(lead_id, msg_id) WHERE msg_id IS NOT NULL`).catch(() => null);
-}
-
-function normalizarReplyInfoConversa(replyInfo) {
-  if (!replyInfo) return {
-    reply_to_conversa_id: null,
-    reply_to_msg_id: null,
-    reply_to_direcao: null,
-    reply_to_conteudo: null,
-    reply_to_midia_url: null,
-    reply_to_midia_tipo: null,
-    reply_payload: null
-  };
-  return {
-    reply_to_conversa_id: replyInfo.reply_to_conversa_id || replyInfo.conversa_id || null,
-    reply_to_msg_id: replyInfo.reply_to_msg_id || replyInfo.msg_id || null,
-    reply_to_direcao: replyInfo.reply_to_direcao || replyInfo.direcao || null,
-    reply_to_conteudo: replyInfo.reply_to_conteudo || replyInfo.conteudo || null,
-    reply_to_midia_url: replyInfo.reply_to_midia_url || replyInfo.midia_url || null,
-    reply_to_midia_tipo: replyInfo.reply_to_midia_tipo || replyInfo.midia_tipo || null,
-    reply_payload: replyInfo.reply_payload || null
-  };
-}
-
-async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId, replyInfo = null, origem = 'humano') {
-  if (!leadId || !clienteId) return null;
-  await garantirEstruturaConversas();
-  // Evita duplicar a mesma mensagem do WhatsApp: se já existe uma conversa com esse
-  // msg_id pra esse lead, não insere de novo.
-  if (msgId) {
-    const existe = await query(
-      'SELECT id FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
-      [leadId, msgId]
-    ).catch(() => ({ rows: [] }));
-    if (existe.rows.length) return null; // já registrada — não duplica nem reemite socket
-  }
-  const reply = normalizarReplyInfoConversa(replyInfo);
-  const ins = await query(
-    `INSERT INTO movatak_conversas
-       (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id,
-        reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
-        reply_to_midia_url, reply_to_midia_tipo, reply_payload, origem)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15) RETURNING id`,
-    [
-      leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null,
-      reply.reply_to_conversa_id, reply.reply_to_msg_id, reply.reply_to_direcao, reply.reply_to_conteudo,
-      reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {}),
-      direcao === 'entrada' ? 'lead' : (origem || 'humano')
-    ]
-  ).catch(e => { console.error('[conversa] erro ao registrar:', e.message); return null; });
-  if (!ins || !ins.rows.length) return null;
-  const novoId = ins.rows[0].id;
-
-  // Regra correta de leitura da caixa de entrada:
-  // - entrada do cliente => fica não lida;
-  // - saída do vendedor/painel/WhatsApp Web => limpa o não lido.
-  // Isso evita que mensagens enviadas pelo próprio WhatsApp Web apareçam como novas.
-  if (direcao === 'entrada') {
-    query(`UPDATE movatak_leads SET nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
-  } else if (direcao === 'saida') {
-    query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
-  }
-
-  // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
-  // sem precisar dar reload na tela.
-  emitirMensagemLead(clienteId, leadId, {
-    id: novoId,
-    direcao,
-    conteudo: conteudo || '',
-    midia_url: midiaUrl || null,
-    midia_tipo: midiaTipo || null,
-    msg_id: msgId || null,
-    reply_to_conversa_id: reply.reply_to_conversa_id,
-    reply_to_msg_id: reply.reply_to_msg_id,
-    reply_to_direcao: reply.reply_to_direcao,
-    reply_to_conteudo: reply.reply_to_conteudo,
-    reply_to_midia_url: reply.reply_to_midia_url,
-    reply_to_midia_tipo: reply.reply_to_midia_tipo,
-    criado_em: new Date().toISOString()
+function leadsPriorizados() {
+  const leads = (funilState.leads || []).map(l => {
+    // anexa o nome da coluna para a regra de etapa quente
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(l.funil_coluna_id));
+    return { ...l, _colunaNome: col ? col.nome : '' };
   });
-  return novoId;
+  return leads
+    .map(l => ({ lead: l, score: calcularScorePrioridade(l) }))
+    .filter(x => x.score > 0 && !_prioridadesDispensadas.has(Number(x.lead.id)))
+    .sort((a, b) => b.score - a.score);
 }
 
-async function garantirEstruturaMensagensRapidas() {
-  await query(`CREATE TABLE IF NOT EXISTS movatak_mensagens_rapidas (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    titulo TEXT NOT NULL,
-    texto TEXT NOT NULL,
-    midia_url TEXT,
-    ordem INTEGER DEFAULT 0,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS midia_url TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS vezes_usado INTEGER DEFAULT 0`).catch(() => null);
-  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb`).catch(() => null);
-  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS template_id INTEGER`).catch(() => null);
+function atualizarBadgePrioridades() {
+  const lista = leadsPriorizados();
+  const total = lista.length;
+  document.querySelectorAll('.btn-prioridades').forEach(btn => {
+    btn.style.display = total > 0 ? 'inline-flex' : 'none';
+  });
+  document.querySelectorAll('.badge-prioridades').forEach(b => {
+    b.textContent = total;
+    b.style.display = total > 0 ? 'inline-block' : 'none';
+  });
+  // Se o painel estiver aberto, re-renderiza (renovação do top 5).
+  const painel = document.getElementById('painel-prioridades');
+  if (painel && painel.dataset.aberto === '1') renderPainelPrioridades();
 }
 
-app.get('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens, template_id FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+function corUrgencia(score) {
+  if (score >= 150) return 'var(--red)';
+  if (score >= 90) return 'var(--amber)';
+  return 'var(--accent)';
+}
 
-app.post('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaMensagensRapidas();
-    const { titulo, texto, midia_url, itens, template_id } = req.body || {};
-    const sequencia = Array.isArray(itens) ? itens.filter(it => it && (it.texto || it.midia_url)) : [];
-    if (!titulo) return res.status(400).json({ error: 'Título obrigatório.' });
-    if (!sequencia.length && !texto) return res.status(400).json({ error: 'Texto obrigatório.' });
-    // Quando é uma sequência, "texto" guarda um resumo (usado em listagem/busca);
-    // o conteúdo real que será disparado mensagem por mensagem fica em "itens".
-    const textoFinal = sequencia.length
-      ? (texto || sequencia.map(it => it.texto || '').filter(Boolean).join(' ')).trim().slice(0, 500) || titulo.trim()
-      : texto.trim();
-    const r = await query(
-      'INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens, template_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING id, titulo, texto, midia_url, ordem, itens, template_id',
-      [req.params.id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia), template_id ? parseInt(template_id, 10) : null]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+function rotuloEspera(lead) {
+  const agora = Date.now();
+  const t = new Date(lead.ultima_msg_em || lead.atualizado_em || lead.criado_em).getTime();
+  if (isNaN(t)) return '';
+  const min = Math.floor((agora - t) / 60000);
+  if (min < 60) return min + ' min';
+  const h = Math.floor(min / 60);
+  if (h < 24) return h + 'h';
+  return Math.floor(h / 24) + 'd';
+}
 
-app.patch('/movatak/admin/mensagens-rapidas/:id', ...exigeMsgRapida, async (req, res) => {
-  try {
-    const { titulo, texto, midia_url, itens } = req.body || {};
-    await query(
-      `UPDATE movatak_mensagens_rapidas SET
-         titulo = COALESCE($1, titulo),
-         texto = COALESCE($2, texto),
-         midia_url = CASE WHEN $3::text IS NULL THEN midia_url ELSE $3 END,
-         itens = CASE WHEN $4::jsonb IS NULL THEN itens ELSE $4::jsonb END
-       WHERE id=$5`,
-      [
-        titulo || null, texto || null,
-        midia_url !== undefined ? (midia_url || null) : null,
-        Array.isArray(itens) ? JSON.stringify(itens) : null,
-        req.params.id
-      ]
-    );
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/mensagens-rapidas/:id', ...exigeMsgRapida, async (req, res) => {
-  try {
-    await query('DELETE FROM movatak_mensagens_rapidas WHERE id=$1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Incrementa o ranking de uso por ID — usado pelas sequências, já que o texto
-// salvo é só um resumo e não bate com o texto de nenhuma mensagem realmente enviada.
-app.post('/movatak/admin/mensagens-rapidas/:id/usar', ...exigeMsgRapida, async (req, res) => {
-  try {
-    await query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE id=$1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Inicia o autoatendimento de um template a partir do painel, para um lead.
-// Reaproveita o MESMO motor do autoatendimento automático, então respeita tudo:
-// perguntas que esperam resposta do lead, saltos, opções, delays, etc.
-app.post('/movatak/admin/leads/:id/iniciar-autoatendimento', ...exigeLead, async (req, res) => {
-  try {
-    const templateId = req.body && req.body.template_id ? parseInt(req.body.template_id, 10) : null;
-    if (!templateId) return res.status(400).json({ error: 'template_id é obrigatório.' });
-    const rl = await query(
-      `SELECT l.*, c.* FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id WHERE l.id = $1`,
-      [req.params.id]
-    );
-    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    // Despausa a automação deste lead: se estiver pausado, o webhook ignora as
-    // respostas dele e o autoatendimento trava na primeira pergunta que espera resposta.
-    await query('UPDATE movatak_leads SET automacao_pausada = false WHERE id = $1', [req.params.id]).catch(() => null);
-    // Separa lead e cliente do JOIN (ambos têm colunas; reconsultamos pra ter objetos limpos)
-    const leadRow = await query('SELECT * FROM movatak_leads WHERE id = $1', [req.params.id]);
-    const lead = leadRow.rows[0];
-    const cliRow = await query('SELECT * FROM movatak_clientes WHERE id = $1', [lead.cliente_id]);
-    const cliente = cliRow.rows[0];
-    // Cancela qualquer questionário em andamento desse lead antes de reiniciar,
-    // pra não embolar dois fluxos ao mesmo tempo.
-    await query(
-      `UPDATE movatak_questionario_estado SET status='cancelado', atualizado_em=NOW()
-        WHERE cliente_id=$1 AND telefone=$2 AND status IN ('em_andamento','aguardando')`,
-      [cliente.id, lead.telefone]
-    ).catch(() => null);
-    await iniciarQuestionarioPorTemplate(cliente, lead, templateId);
-    await registrarEventoLead(lead.id, cliente.id, 'autoatendimento_manual', 'Autoatendimento iniciado manualmente pelo painel', { template_id: templateId });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/leads/:id/mensagem-rapida', ...exigeLead, async (req, res) => {
-  try {
-    const { texto, midia_url, midia_tipo, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
-    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
-    const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
-    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const row = rl.rows[0];
-    let tipoFinal = null;
-    let msgId = null;
-    const replyResolvido = await resolverReplyInfoLead(row.id, reply_to_conversa_id, reply_to_msg_id, null);
-    const replyMsgIdZap = replyResolvido.msgId || null;
-    if (midia_url) {
-      tipoFinal = tipoMidia(midia_url, midia_tipo);
-      if (tipoFinal === 'video') {
-        msgId = await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '', replyMsgIdZap);
-      } else if (tipoFinal === 'audio') {
-        msgId = await zapiEnviarAudio(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, replyMsgIdZap);
-      } else {
-        msgId = await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '', replyMsgIdZap);
-      }
-    } else {
-      msgId = await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto, replyMsgIdZap);
-    }
-    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
-    await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
-    // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
-    if (texto) {
-      query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE cliente_id=$1 AND texto=$2', [row.cliente_id, texto]).catch(() => null);
-    }
-    res.json({ ok: true, conversaId, criado_em: new Date().toISOString() });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Alias usado pelo Kanban. Mantém compatibilidade com telas que chamam /mensagem-kanban
-// em vez de /mensagem-rapida.
-app.post('/movatak/admin/leads/:id/mensagem-kanban', ...exigeLead, async (req, res) => {
-  try {
-    const { texto, midia_url } = req.body || {};
-    if (!texto && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
-    const rl = await query('SELECT l.id, l.telefone, l.cliente_id, c.zapi_instance, c.zapi_token, c.zapi_client_token FROM movatak_leads l JOIN movatak_clientes c ON c.id=l.cliente_id WHERE l.id=$1', [req.params.id]);
-    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const row = rl.rows[0];
-
-    if (midia_url) {
-      const tipo = tipoMidia(midia_url);
-      if (tipo === 'video') {
-        await zapiEnviarVideo(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
-      } else {
-        await zapiEnviarImagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, midia_url, texto || '');
-      }
-    } else {
-      await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto);
-    }
-
-    await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null).catch(() => null);
-    await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual_kanban', 'Mensagem enviada manualmente pelo Kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-app.post('/movatak/admin/leads/:id/reativar-followup', ...exigeLead, async (req, res) => {
-  try {
-    const rl = await query('SELECT id, cliente_id, etapa FROM movatak_leads WHERE id=$1', [req.params.id]);
-    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const lead = rl.rows[0];
-    await query(`UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await agendarFollowupV2(lead.id, lead.cliente_id, 1, true);
-    await enviarFollowupsPendentesDoLead(lead.id, 1);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up reativado manualmente pelo kanban', {});
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Funil de Atendimento — Kanban de leads + listas/tags WhatsApp
-// ============================================================
-// Distribui lead para o vendedor com menor número de leads atribuídos.
-// Em empate, escolhe aleatoriamente entre os empatados.
-async function atribuirVendedorBalanceado(clienteId, leadId) {
-  try {
-    const vRes = await query(
-      `SELECT id FROM movatak_vendedores WHERE cliente_id=$1 AND COALESCE(ativo,true)=true ORDER BY id ASC`,
-      [clienteId]
-    );
-    if (!vRes.rows.length) return null;
-    const counts = await query(
-      `SELECT vendedor_id, COUNT(*)::int AS cnt
-         FROM movatak_leads
-        WHERE cliente_id=$1 AND vendedor_id IS NOT NULL
-        GROUP BY vendedor_id`,
-      [clienteId]
-    );
-    const countMap = {};
-    for (const r of counts.rows) countMap[r.vendedor_id] = r.cnt;
-    let minCnt = Infinity;
-    for (const v of vRes.rows) {
-      const c = countMap[v.id] || 0;
-      if (c < minCnt) minCnt = c;
-    }
-    const candidatos = vRes.rows.filter(v => (countMap[v.id] || 0) === minCnt);
-    const escolhido = candidatos[Math.floor(Math.random() * candidatos.length)];
-    await query(
-      `UPDATE movatak_leads SET vendedor_id=$1, atualizado_em=NOW() WHERE id=$2`,
-      [escolhido.id, leadId]
-    );
-    console.log(`[funil] Lead ${leadId} atribuído ao vendedor ${escolhido.id} (mínimo: ${minCnt} leads)`);
-    return escolhido.id;
-  } catch (e) {
-    console.error('[funil][distribuicao] Erro ao atribuir vendedor:', e.message);
-    return null;
+function abrirPainelPrioridades() {
+  let painel = document.getElementById('painel-prioridades');
+  if (!painel) {
+    painel = document.createElement('div');
+    painel.id = 'painel-prioridades';
+    painel.style.cssText = 'position:fixed;top:0;right:0;width:360px;max-width:92vw;height:100vh;background:var(--bg2);border-left:1px solid var(--border2);box-shadow:-8px 0 30px rgba(0,0,0,.25);z-index:2000;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .25s ease';
+    painel.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-size:16px;font-weight:800;color:var(--text)">🔥 Prioridades</div>
+          <div style="font-size:12px;color:var(--text2)">Atenda do topo pra baixo</div>
+        </div>
+        <button onclick="fecharPainelPrioridades()" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:5px 10px;cursor:pointer">✕</button>
+      </div>
+      <div id="painel-prioridades-lista" style="flex:1;overflow-y:auto;padding:14px"></div>`;
+    document.body.appendChild(painel);
   }
+  painel.dataset.aberto = '1';
+  renderPainelPrioridades();
+  requestAnimationFrame(() => { painel.style.transform = 'translateX(0)'; });
 }
 
-function slugifyFunil(nome) {
-  return String(nome || '')
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase().replace(/[^a-z0-9]+/g, '_')
-    .replace(/^_+|_+$/g, '') || ('etapa_' + Date.now());
+function fecharPainelPrioridades() {
+  const painel = document.getElementById('painel-prioridades');
+  if (!painel) return;
+  painel.dataset.aberto = '0';
+  painel.style.transform = 'translateX(100%)';
 }
 
-function etapaSistemaPorSlug(slug) {
-  const mapa = {
-    novo_contato: 'lead',
-    auto_atendimento: 'auto_atendimento',
-    aguardando_resposta: 'followup',
-    em_negociacao: 'negociacao',
-    cliente_fechado: 'cliente',
-    perdido: 'descartado'
-  };
-  return mapa[slug] || slug;
-}
-
-function slugFunilPorEtapa(etapa) {
-  const mapa = {
-    lead: 'novo_contato',
-    auto_atendimento: 'auto_atendimento',
-    followup: 'aguardando_resposta',
-    negociacao: 'em_negociacao',
-    cliente: 'cliente_fechado',
-    descartado: 'perdido'
-  };
-  return mapa[etapa] || 'novo_contato';
-}
-
-function extrairZapiTagId(payload) {
-  if (!payload) return null;
-  return payload.id || payload.tagId || payload.tag_id || payload?.data?.id || payload?.data?.tagId || payload?.tag?.id || null;
-}
-
-async function garantirEstruturaFunil() {
-  await query(`CREATE TABLE IF NOT EXISTS movatak_funil_colunas (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    nome TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    ordem INTEGER DEFAULT 0,
-    cor TEXT,
-    etapa_sistema TEXT,
-    sincronizar_whatsapp BOOLEAN DEFAULT true,
-    zapi_tag_id TEXT,
-    zapi_sync_erro TEXT,
-    ativo BOOLEAN DEFAULT true,
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    atualizado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-
-  await query(`ALTER TABLE movatak_funil_colunas
-    ADD COLUMN IF NOT EXISTS cor TEXT,
-    ADD COLUMN IF NOT EXISTS etapa_sistema TEXT,
-    ADD COLUMN IF NOT EXISTS sincronizar_whatsapp BOOLEAN DEFAULT true,
-    ADD COLUMN IF NOT EXISTS zapi_tag_id TEXT,
-    ADD COLUMN IF NOT EXISTS zapi_sync_erro TEXT,
-    ADD COLUMN IF NOT EXISTS ativo BOOLEAN DEFAULT true,
-    ADD COLUMN IF NOT EXISTS comando TEXT,
-    ADD COLUMN IF NOT EXISTS setor_id INTEGER,
-    ADD COLUMN IF NOT EXISTS ausencia_ativa BOOLEAN DEFAULT false,
-    ADD COLUMN IF NOT EXISTS ia_ativa BOOLEAN DEFAULT false,
-    ADD COLUMN IF NOT EXISTS nicho_template TEXT,
-    ADD COLUMN IF NOT EXISTS agenda_tipo TEXT,
-    ADD COLUMN IF NOT EXISTS agenda_status TEXT,
-    ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
-    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
-
-  // Configuração de ausência do cliente:
-  //   ausencia_msg_padrao  → mensagem disparada nos horários recorrentes de ausência
-  //   ausencia_horarios    → JSONB: [{ dias:[0..6], inicio:"HH:MM", fim:"HH:MM" }]  (0=domingo)
-  //   ausencia_datas       → JSONB: [{ data:"YYYY-MM-DD", inicio:"HH:MM", fim:"HH:MM", msg:"..." }]
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS ausencia_msg_padrao TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS ausencia_horarios JSONB DEFAULT '[]'::jsonb`).catch(() => null);
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS ausencia_datas JSONB DEFAULT '[]'::jsonb`).catch(() => null);
-
-  // Controle de "uma vez por período": registra qual período de ausência já foi
-  // avisado a cada lead, pra não repetir dentro do mesmo período.
-  await query(`CREATE TABLE IF NOT EXISTS movatak_ausencia_enviada (
-    id SERIAL PRIMARY KEY,
-    lead_id INTEGER NOT NULL,
-    cliente_id INTEGER NOT NULL,
-    periodo_chave TEXT NOT NULL,
-    criado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_ausencia_lead_periodo ON movatak_ausencia_enviada(lead_id, periodo_chave)`).catch(() => null);
-
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_arquivar_ao_final BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_marcar_nao_lido BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS nicho TEXT`).catch(() => null);
-  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`).catch(() => null);
-  await query(`ALTER TABLE movatak_leads
-    ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER`).catch(() => null);
-
-  await query(`ALTER TABLE movatak_leads
-    ADD COLUMN IF NOT EXISTS convertido_em TIMESTAMPTZ`).catch(() => null);
-
-  await query(`ALTER TABLE movatak_leads
-    ADD COLUMN IF NOT EXISTS prioridade_dispensada_em TIMESTAMPTZ`).catch(() => null);
-
-  await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_funil_colunas_cliente_slug ON movatak_funil_colunas(cliente_id, slug)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_cliente_setor_atualizado ON movatak_leads(cliente_id, setor_id, atualizado_em DESC)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_conversas_lead_criado_desc ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
-}
-
-
-const NICHO_TEMPLATES = {
-  estetica: {
-    label: 'Clínica de estética',
-    agendaTipos: ['avaliacao','consulta','retorno'],
-    colunas: [
-      ['Novo lead','novo_lead','lead'], ['Avaliação solicitada','avaliacao_solicitada','negociacao'],
-      ['Consulta agendada','consulta_agendada','negociacao','consulta'], ['Confirmar presença','confirmar_presenca','followup'],
-      ['Compareceu','compareceu','negociacao'], ['Procedimento realizado','procedimento_realizado','cliente'],
-      ['Retorno / Pós-venda','retorno_pos_venda','followup','retorno'], ['Perdido','perdido','descartado']
-    ]
-  },
-  barbearia: {
-    label: 'Barbearia',
-    agendaTipos: ['corte','barba','combo','retorno'],
-    colunas: [
-      ['Novo contato','novo_contato','lead'], ['Serviço desejado','servico_desejado','negociacao'],
-      ['Horário solicitado','horario_solicitado','negociacao'], ['Agendado','agendado','negociacao','corte'],
-      ['Confirmado','confirmado','followup'], ['Atendido','atendido','cliente'], ['Reagendar','reagendar','followup','retorno'], ['Perdido','perdido','descartado']
-    ]
-  },
-  salao: {
-    label: 'Salão de beleza',
-    agendaTipos: ['escova','coloracao','manicure','retorno'],
-    colunas: [
-      ['Novo contato','novo_contato','lead'], ['Serviço desejado','servico_desejado','negociacao'],
-      ['Orçamento enviado','orcamento_enviado','negociacao'], ['Agendado','agendado','negociacao','escova'],
-      ['Confirmado','confirmado','followup'], ['Atendido','atendido','cliente'], ['Retorno / Fidelização','retorno_fidelizacao','followup','retorno'], ['Perdido','perdido','descartado']
-    ]
-  },
-  odontologia: {
-    label: 'Clínica odontológica',
-    agendaTipos: ['avaliacao','consulta','retorno'],
-    colunas: [
-      ['Novo lead','novo_lead','lead'], ['Triagem','triagem','negociacao'], ['Avaliação agendada','avaliacao_agendada','negociacao','avaliacao'],
-      ['Confirmar presença','confirmar_presenca','followup'], ['Plano de tratamento enviado','plano_tratamento_enviado','negociacao'],
-      ['Tratamento iniciado','tratamento_iniciado','cliente'], ['Retorno','retorno','followup','retorno'], ['Perdido','perdido','descartado']
-    ]
-  },
-  provedor: {
-    label: 'Provedor de internet',
-    agendaTipos: ['instalacao','suporte','visita_tecnica'],
-    colunas: [
-      ['Novo lead','novo_lead','lead'], ['Verificar cobertura','verificar_cobertura','negociacao'], ['Plano escolhido','plano_escolhido','negociacao'],
-      ['Instalação agendada','instalacao_agendada','negociacao','instalacao'], ['Instalado','instalado','cliente'],
-      ['Suporte','suporte','followup','suporte'], ['Financeiro','financeiro','negociacao'], ['Perdido','perdido','descartado']
-    ]
-  },
-  assistencia: {
-    label: 'Assistência técnica',
-    agendaTipos: ['orcamento','suporte','retirada','entrega'],
-    colunas: [
-      ['Novo atendimento','novo_atendimento','lead'], ['Diagnóstico','diagnostico','negociacao'], ['Orçamento enviado','orcamento_enviado','negociacao','orcamento'],
-      ['Serviço agendado','servico_agendado','negociacao','suporte'], ['Em execução','em_execucao','negociacao'],
-      ['Pronto para entrega','pronto_entrega','followup','entrega'], ['Entregue','entregue','cliente'], ['Cancelado','cancelado','descartado']
-    ]
-  },
-  grafica_dtf: {
-    label: 'DTF / Gráfica',
-    agendaTipos: ['producao','retirada','envio','retorno'],
-    colunas: [
-      ['Novo orçamento','novo_orcamento','lead'], ['Modelo enviado','modelo_enviado','negociacao'], ['Aguardando arte','aguardando_arte','followup'],
-      ['Pagamento pendente','pagamento_pendente','negociacao'], ['Produção','producao','negociacao','producao'],
-      ['Envio / Retirada','envio_retirada','followup','envio'], ['Pedido concluído','pedido_concluido','cliente'], ['Perdido','perdido','descartado']
-    ]
-  },
-  generico: {
-    label: 'Comercial genérico',
-    agendaTipos: ['atendimento','retorno','reuniao'],
-    colunas: [
-      ['Novo contato','novo_contato','lead'], ['Em atendimento','em_atendimento','negociacao'], ['Proposta enviada','proposta_enviada','negociacao'],
-      ['Retorno agendado','retorno_agendado','followup','retorno'], ['Negociação','negociacao','negociacao'],
-      ['Cliente fechado','cliente_fechado','cliente'], ['Perdido','perdido','descartado']
-    ]
-  }
-};
-
-function normalizarNichoCliente(v) {
-  const key = String(v || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-  const aliases = { clinica_estetica: 'estetica', estetica_clinica: 'estetica', salao_de_beleza: 'salao', salao_beleza: 'salao', clinica_odontologica: 'odontologia', odontologica: 'odontologia', provedor_internet: 'provedor', isp: 'provedor', assistencia_tecnica: 'assistencia', dtf: 'grafica_dtf', grafica: 'grafica_dtf', dtf_grafica: 'grafica_dtf', generico_comercial: 'generico' };
-  const finalKey = aliases[key] || key;
-  return NICHO_TEMPLATES[finalKey] ? finalKey : '';
-}
-
-function getNichoTemplate(nicho) {
-  const key = normalizarNichoCliente(nicho) || 'generico';
-  return { key, ...(NICHO_TEMPLATES[key] || NICHO_TEMPLATES.generico) };
-}
-
-async function aplicarTemplateNichoCliente(clienteId, nicho, opts = {}) {
-  await garantirEstruturaFunil();
-  const tpl = getNichoTemplate(nicho);
-  const sincronizar = opts.sincronizar !== false;
-  let ordemBase = 0;
-  const maxR = await query('SELECT COALESCE(MAX(ordem),0)::int AS max FROM movatak_funil_colunas WHERE cliente_id=$1', [clienteId]).catch(() => ({ rows: [{ max: 0 }] }));
-  ordemBase = parseInt((maxR.rows[0] || {}).max || 0, 10);
-  const criadas = [];
-  let pos = ordemBase + 1;
-  for (const item of tpl.colunas) {
-    const [nome, slugBase, etapa, agendaTipo] = item;
-    const slug = slugifyFunil(slugBase || nome);
-    const ins = await query(
-      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp, nicho_template, agenda_tipo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT (cliente_id, slug) DO UPDATE SET
-         nome = EXCLUDED.nome,
-         etapa_sistema = EXCLUDED.etapa_sistema,
-         nicho_template = EXCLUDED.nicho_template,
-         agenda_tipo = COALESCE(EXCLUDED.agenda_tipo, movatak_funil_colunas.agenda_tipo),
-         ativo = true,
-         atualizado_em = NOW()
-       RETURNING *`,
-      [clienteId, nome, slug, pos++, etapa || etapaSistemaPorSlug(slug), sincronizar, tpl.key, agendaTipo || null]
-    ).catch(e => { console.error('[nicho][coluna]', e.message); return { rows: [] }; });
-    if (ins.rows[0]) criadas.push(ins.rows[0]);
-  }
-  await query('UPDATE movatak_clientes SET nicho=$1, agenda_ativa=true WHERE id=$2', [tpl.key, clienteId]).catch(() => null);
-  return { key: tpl.key, label: tpl.label, colunas: criadas };
-}
-
-async function garantirEstruturaAgenda() {
-  await garantirEstruturaFunil();
-  await query(`CREATE TABLE IF NOT EXISTS movatak_agendamentos (
-    id SERIAL PRIMARY KEY,
-    cliente_id INTEGER NOT NULL,
-    lead_id INTEGER,
-    vendedor_id INTEGER,
-    titulo TEXT NOT NULL,
-    tipo TEXT,
-    status TEXT DEFAULT 'agendado',
-    inicio TIMESTAMPTZ NOT NULL,
-    fim TIMESTAMPTZ,
-    observacao TEXT,
-    funil_coluna_id INTEGER,
-    criado_em TIMESTAMPTZ DEFAULT NOW(),
-    atualizado_em TIMESTAMPTZ DEFAULT NOW()
-  )`).catch(() => null);
-  await query(`ALTER TABLE movatak_agendamentos
-    ADD COLUMN IF NOT EXISTS vendedor_id INTEGER,
-    ADD COLUMN IF NOT EXISTS tipo TEXT,
-    ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'agendado',
-    ADD COLUMN IF NOT EXISTS fim TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS observacao TEXT,
-    ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER,
-    ADD COLUMN IF NOT EXISTS cancelado_em TIMESTAMPTZ,
-    ADD COLUMN IF NOT EXISTS lembrete_min INTEGER DEFAULT 0,
-    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_cliente_inicio ON movatak_agendamentos(cliente_id, inicio)`).catch(() => null);
-  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_agendamentos_lead ON movatak_agendamentos(lead_id)`).catch(() => null);
-}
-
-async function buscarColunaAgenda(clienteId, tipo, colunaId) {
-  if (colunaId) {
-    const r = await query('SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND id=$2 AND ativo=true LIMIT 1', [clienteId, colunaId]).catch(() => ({ rows: [] }));
-    if (r.rows[0]) return r.rows[0].id;
-  }
-  const tipoNorm = String(tipo || '').trim().toLowerCase();
-  if (tipoNorm) {
-    const r = await query('SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND ativo=true AND agenda_tipo=$2 ORDER BY ordem ASC, id ASC LIMIT 1', [clienteId, tipoNorm]).catch(() => ({ rows: [] }));
-    if (r.rows[0]) return r.rows[0].id;
-  }
-  const fallback = await query(
-    `SELECT id FROM movatak_funil_colunas
-      WHERE cliente_id=$1 AND ativo=true AND (slug LIKE '%agend%' OR LOWER(nome) LIKE '%agend%')
-      ORDER BY ordem ASC, id ASC LIMIT 1`,
-    [clienteId]
-  ).catch(() => ({ rows: [] }));
-  return fallback.rows[0] ? fallback.rows[0].id : null;
-}
-
-async function garantirFunilPadraoCliente(clienteId) {
-  await garantirEstruturaFunil();
-  // Se o cliente JÁ tem colunas (ativas ou não), o funil dele já foi inicializado.
-  // Não recriamos nem reaplicamos nada — o usuário tem autonomia total sobre as
-  // colunas (excluir, criar), inclusive sobre as que vieram de um template. O
-  // template só é (re)aplicado quando o usuário clica explicitamente em "aplicar".
-  const existe = await query('SELECT 1 FROM movatak_funil_colunas WHERE cliente_id=$1 LIMIT 1', [clienteId]).catch(() => ({ rows: [] }));
-  if (existe.rows.length) return;
-
-  const cliNichoR = await query('SELECT nicho FROM movatak_clientes WHERE id=$1', [clienteId]).catch(() => ({ rows: [] }));
-  const nichoCliente = normalizarNichoCliente((cliNichoR.rows[0] || {}).nicho);
-  if (nichoCliente) {
-    // Primeira inicialização de um cliente com nicho: aplica o template uma única vez.
-    await aplicarTemplateNichoCliente(clienteId, nichoCliente, { sincronizar: false }).catch(e => console.error('[nicho][garantir-funil]', e.message));
+function renderPainelPrioridades() {
+  const box = document.getElementById('painel-prioridades-lista');
+  if (!box) return;
+  const top = leadsPriorizados().slice(0, 5);
+  if (!top.length) {
+    box.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:13px;margin-top:40px">✅ Tudo em dia!<br>Nenhum lead urgente agora.</div>';
     return;
   }
-  const padrao = [
-    { nome: 'Novo contato', slug: 'novo_contato', ordem: 1, etapa: 'lead' },
-    { nome: 'Auto Atendimento', slug: 'auto_atendimento', ordem: 2, etapa: 'auto_atendimento' },
-    { nome: 'Aguardando resposta', slug: 'aguardando_resposta', ordem: 3, etapa: 'followup' },
-    { nome: 'Em negociação', slug: 'em_negociacao', ordem: 4, etapa: 'negociacao' },
-    { nome: 'Cliente fechado', slug: 'cliente_fechado', ordem: 5, etapa: 'cliente' },
-    { nome: 'Perdido', slug: 'perdido', ordem: 6, etapa: 'descartado' }
-  ];
-  for (const c of padrao) {
-    await query(
-      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp)
-       VALUES ($1, $2, $3, $4, $5, true)
-       ON CONFLICT (cliente_id, slug) DO NOTHING`,
-      [clienteId, c.nome, c.slug, c.ordem, c.etapa]
-    ).catch(() => null);
-  }
+  box.innerHTML = top.map((x, i) => {
+    const l = x.lead;
+    const cor = corUrgencia(x.score);
+    const aguardando = l.ultima_msg_direcao === 'entrada' || l.nao_lida === true;
+    const tag = aguardando ? 'aguardando resposta' : 'parado';
+    const nome = escapeHtml(l.nome || l.telefone || 'Lead');
+    return `<div style="position:relative;background:var(--bg3);border:1px solid var(--border);border-left:4px solid ${cor};border-radius:10px;padding:12px 14px;margin-bottom:10px;transition:border-color .2s" onmouseover="this.style.borderColor='var(--border2)'" onmouseout="this.style.borderColor='var(--border)'">
+      <button onclick="dispensarPrioridade(event, ${l.id})" title="Dispensar — mostra o próximo" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--text3);font-size:15px;line-height:1;cursor:pointer;padding:2px 5px;border-radius:6px" onmouseover="this.style.color='var(--red)';this.style.background='var(--bg4)'" onmouseout="this.style.color='var(--text3)';this.style.background='none'">✕</button>
+      <div onclick="atenderPrioridade(${l.id})" style="cursor:pointer;padding-right:20px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+          <div style="font-weight:700;font-size:14px;color:var(--text)">${i + 1}. ${nome}</div>
+          <div style="font-size:11px;font-weight:700;color:${cor}">${rotuloEspera(l)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
+          <span style="background:${cor};color:#fff;border-radius:6px;padding:1px 7px;font-weight:600">${tag}</span>
+          ${l._colunaNome ? '<span>· ' + escapeHtml(l._colunaNome) + '</span>' : ''}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
-async function sincronizarColunaComWhatsapp(colunaId) {
-  await garantirEstruturaFunil();
-  const r = await query(
-    `SELECT fc.*, c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_funil_colunas fc
-       JOIN movatak_clientes c ON c.id = fc.cliente_id
-      WHERE fc.id = $1`,
-    [colunaId]
-  );
-  if (!r.rows.length) throw new Error('Coluna não encontrada.');
-  const col = r.rows[0];
-  if (col.zapi_tag_id) return col.zapi_tag_id;
-  if (!col.zapi_instance || !col.zapi_token || !col.zapi_client_token) {
-    throw new Error('Z-API não configurada para este cliente.');
-  }
-  const payload = await zapiCriarEtiqueta(col.zapi_instance, col.zapi_token, col.zapi_client_token, col.nome);
-  const tagId = extrairZapiTagId(payload);
-  if (!tagId) throw new Error('A Z-API não retornou o ID da lista/tag criada.');
-  await query(`UPDATE movatak_funil_colunas SET zapi_tag_id=$1, zapi_sync_erro=NULL, atualizado_em=NOW() WHERE id=$2`, [String(tagId), colunaId]);
-  return String(tagId);
-}
-
-async function moverLeadParaFunilSlug(clienteId, leadId, slug) {
-  await garantirFunilPadraoCliente(clienteId);
-  const col = await query(
-    `SELECT id FROM movatak_funil_colunas WHERE cliente_id=$1 AND slug=$2 AND ativo=true LIMIT 1`,
-    [clienteId, slug]
-  );
-  if (!col.rows.length) return;
-  await moverLeadParaColunaFunil(leadId, col.rows[0].id, false);
-}
-
-async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
-  await garantirEstruturaFunil();
-  const r = await query(
-    `SELECT l.id, l.cliente_id, l.telefone, l.nome, l.funil_coluna_id AS coluna_anterior_id,
-            fc.id AS coluna_id, fc.nome AS coluna_nome, fc.slug, fc.etapa_sistema, fc.sincronizar_whatsapp, fc.zapi_tag_id, fc.setor_id AS coluna_setor_id,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token
-       FROM movatak_leads l
-       JOIN movatak_funil_colunas fc ON fc.id = $2 AND fc.cliente_id = l.cliente_id AND fc.ativo = true
-       JOIN movatak_clientes c ON c.id = l.cliente_id
-      WHERE l.id = $1`,
-    [leadId, colunaId]
-  );
-  if (!r.rows.length) throw new Error('Lead ou coluna não encontrados.');
-  const row = r.rows[0];
-  let tagId = row.zapi_tag_id;
-
-  if (row.sincronizar_whatsapp && !tagId) {
-    try {
-      tagId = await sincronizarColunaComWhatsapp(colunaId);
-    } catch (e) {
-      await query(`UPDATE movatak_funil_colunas SET zapi_sync_erro=$1, atualizado_em=NOW() WHERE id=$2`, [String(e.message || e).slice(0, 500), colunaId]).catch(() => null);
+function atenderPrioridade(leadId) {
+  const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId)) || {};
+  const nomeAbrev = String(lead.nome || '').slice(0, 40);
+  // 1) Abre a conversa do lead
+  if (typeof abrirPainelLead === 'function') abrirPainelLead(leadId, nomeAbrev);
+  // 2) Fecha o painel de prioridades pra não cobrir a janela de mensagens
+  fecharPainelPrioridades();
+  // 3) Aponta para o card no kanban: rola até ele e dá um destaque temporário
+  setTimeout(() => {
+    const card = document.querySelector('.funil-card[data-lead-id="' + leadId + '"]');
+    if (card) {
+      card.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      card.classList.add('lead-aceso');
+      setTimeout(() => card.classList.remove('lead-aceso'), 3000);
     }
-  }
-
-  const etapa = row.etapa_sistema || etapaSistemaPorSlug(row.slug);
-  if (etapa === 'cliente') {
-    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, convertido_em=COALESCE(convertido_em, NOW()), atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
-    // Distribuição balanceada: só atribui se ainda não tem vendedor
-    const lr = await query(`SELECT vendedor_id FROM movatak_leads WHERE id=$1`, [leadId]);
-    if (lr.rows[0] && !lr.rows[0].vendedor_id) {
-      await atribuirVendedorBalanceado(row.cliente_id, leadId).catch(() => null);
-    }
-  } else if (etapa === 'descartado') {
-    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
-    await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
-  } else {
-    await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
-  }
-
-  // O lead herda o setor da coluna para onde foi movido. Sem isso, o lead ficaria
-  // na coluna de um setor mas com setor_id de outro — sumindo do filtro por setor e
-  // do CRM do vendedor daquele setor. Só atualiza se a coluna tiver setor definido.
-  if (row.coluna_setor_id) {
-    await query(`UPDATE movatak_leads SET setor_id=$1, atualizado_em=NOW() WHERE id=$2`, [row.coluna_setor_id, leadId]).catch(() => null);
-  }
-
-  if (row.sincronizar_whatsapp && tagId && row.zapi_instance && row.zapi_token && row.zapi_client_token && row.telefone) {
-    const tagsAntigas = await query(
-      `SELECT zapi_tag_id FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true AND zapi_tag_id IS NOT NULL AND id <> $2`,
-      [row.cliente_id, colunaId]
-    ).catch(() => ({ rows: [] }));
-    for (const t of tagsAntigas.rows) {
-      await zapiRemoverEtiqueta(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, t.zapi_tag_id);
-    }
-    await zapiAtribuirEtiqueta(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, tagId);
-  }
-
-  if (registrar) {
-    await registrarEventoLead(leadId, row.cliente_id, 'funil_movido', `Lead movido para ${row.coluna_nome}`, { coluna_id: colunaId, coluna_nome: row.coluna_nome, etapa });
-  }
-  return { ok: true, coluna: { id: colunaId, nome: row.coluna_nome, etapa_sistema: etapa } };
+  }, 120);
 }
-
-// Reconcilia o setor dos leads com o setor das colunas onde eles estão. Útil para
-// corrigir leads movidos antes do fix (que ficaram com setor_id de um setor mas em
-// coluna de outro). Atualiza só quando há divergência.
-app.post('/movatak/admin/clientes/:id/reconciliar-setores', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const r = await query(
-      `UPDATE movatak_leads l
-          SET setor_id = fc.setor_id, atualizado_em = NOW()
-         FROM movatak_funil_colunas fc
-        WHERE l.funil_coluna_id = fc.id
-          AND l.cliente_id = $1
-          AND fc.setor_id IS NOT NULL
-          AND (l.setor_id IS DISTINCT FROM fc.setor_id)
-        RETURNING l.id`,
-      [clienteId]
-    );
-    res.json({ ok: true, leads_corrigidos: r.rows.length });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/diagnostico', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const telefoneRaw = String(req.query.telefone || '').trim();
-    if (!telefoneRaw) return res.status(400).json({ error: 'Informe o telefone.' });
-    const variantes = variantesTelefone(telefoneRaw);
-    if (!variantes.length) return res.status(400).json({ error: 'Telefone inválido.' });
-
-    const ph = variantes.map((_, i) => '$' + (i + 2)).join(',');
-    const rl = await query(
-      `SELECT l.*, camp.nome AS campanha_nome, camp.template_id AS camp_template_id,
-              camp.questionario_ativo AS camp_quest_ativo, camp.questionario_template_id AS camp_quest_template_id,
-              ft.nome AS template_followup_nome, qt.nome AS template_quest_nome
-         FROM movatak_leads l
-         LEFT JOIN movatak_campanhas camp ON camp.id = l.campanha_id
-         LEFT JOIN movatak_followup_templates ft ON ft.id = COALESCE(camp.template_id, l.template_id_origem)
-         LEFT JOIN movatak_questionario_templates qt ON qt.id = camp.questionario_template_id
-        WHERE l.cliente_id = $1 AND l.telefone IN (${ph})
-        ORDER BY l.atualizado_em DESC NULLS LAST, l.criado_em DESC LIMIT 1`,
-      [clienteId, ...variantes]
-    );
-    if (!rl.rows.length) return res.json({ encontrado: false, variantes_buscadas: variantes });
-    const lead = rl.rows[0];
-
-    const [estado, eventos, followups] = await Promise.all([
-      query(`SELECT id, passo_idx, tentativas_invalidas, status, atualizado_em FROM movatak_questionario_estado WHERE lead_id = $1 ORDER BY id DESC LIMIT 3`, [lead.id]).catch(() => ({ rows: [] })),
-      query(`SELECT tipo, descricao, criado_em FROM movatak_lead_eventos WHERE lead_id = $1 ORDER BY id DESC LIMIT 15`, [lead.id]).catch(() => ({ rows: [] })),
-      query(`SELECT sequencia_fu, etapa_seq, status, proximo_envio FROM movatak_followup WHERE lead_id = $1 ORDER BY COALESCE(sequencia_fu,1), etapa_seq`, [lead.id]).catch(() => ({ rows: [] }))
-    ]);
-
-    // Qual fonte de questionário este lead usa?
-    let fonteQuest = 'Questionário do cliente (padrão)';
-    if (lead.camp_quest_ativo === false) fonteQuest = 'Sem autoatendimento (vai direto ao follow-up)';
-    else if (lead.camp_quest_template_id) fonteQuest = 'Modelo: ' + (lead.template_quest_nome || ('#' + lead.camp_quest_template_id));
-
-    res.json({
-      encontrado: true,
-      variantes_buscadas: variantes,
-      lead: {
-        id: lead.id, nome: lead.nome, telefone: lead.telefone, etapa: lead.etapa,
-        automacao_pausada: lead.automacao_pausada,
-        campanha: lead.campanha_nome || null,
-        gatilho_detectado: lead.gatilho_detectado || null,
-        template_followup: lead.template_followup_nome || 'Padrão do cliente',
-        fonte_questionario: fonteQuest,
-        criado_em: lead.criado_em, atualizado_em: lead.atualizado_em
-      },
-      questionario_estado: estado.rows,
-      eventos: eventos.rows,
-      followups: followups.rows
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
 
 // ── DASHBOARD SLA — tempo de resposta por setor e vendedor ───
-// Cruza cada mensagem de ENTRADA (lead) com a próxima SAÍDA, calcula o gap,
-// e agrega por setor → vendedor. Separa respostas humanas de automáticas.
-app.get('/movatak/admin/clientes/:id/sla', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaConversas();
-    const clienteId = parseInt(req.params.id, 10);
-    const dias = Math.max(1, Math.min(parseInt(req.query.dias || '30', 10), 180));
+function fmtTempoSLA(seg) {
+  if (seg == null) return '—';
+  if (seg < 60) return Math.round(seg) + 's';
+  const min = seg / 60;
+  if (min < 60) return Math.round(min) + ' min';
+  const h = min / 60;
+  if (h < 24) return h.toFixed(1).replace('.0', '') + 'h';
+  return (h / 24).toFixed(1).replace('.0', '') + 'd';
+}
 
-    // Para cada mensagem de entrada, acha a próxima saída do mesmo lead (a "resposta").
-    // gap_seg = segundos entre a entrada e essa resposta.
-    // primeira = true se é a primeira resposta após uma sequência de entradas (1ª resposta).
-    const r = await query(
-      `WITH msgs AS (
-         SELECT c.id, c.lead_id, c.direcao, c.origem, c.criado_em,
-                l.setor_id, l.vendedor_id
-           FROM movatak_conversas c
-           JOIN movatak_leads l ON l.id = c.lead_id
-          WHERE c.cliente_id = $1
-            AND c.criado_em >= NOW() - ($2 || ' days')::INTERVAL
-       ),
-       entradas AS (
-         SELECT m.*,
-                LAG(direcao) OVER (PARTITION BY lead_id ORDER BY criado_em) AS dir_anterior
-           FROM msgs m
-       ),
-       respostas AS (
-         SELECT e.lead_id, e.setor_id, e.vendedor_id, e.criado_em AS entrada_em,
-                (e.dir_anterior IS DISTINCT FROM 'entrada') AS primeira_da_sequencia,
-                (SELECT s.criado_em FROM msgs s
-                   WHERE s.lead_id = e.lead_id AND s.direcao = 'saida' AND s.criado_em > e.criado_em
-                   ORDER BY s.criado_em ASC LIMIT 1) AS resposta_em,
-                (SELECT s.origem FROM msgs s
-                   WHERE s.lead_id = e.lead_id AND s.direcao = 'saida' AND s.criado_em > e.criado_em
-                   ORDER BY s.criado_em ASC LIMIT 1) AS resposta_origem
-           FROM entradas e
-          WHERE e.direcao = 'entrada'
-       )
-       SELECT setor_id, vendedor_id,
-              resposta_origem,
-              primeira_da_sequencia,
-              COUNT(*) FILTER (WHERE resposta_em IS NOT NULL)::int AS respondidas,
-              COUNT(*) FILTER (WHERE resposta_em IS NULL)::int AS sem_resposta,
-              AVG(EXTRACT(EPOCH FROM (resposta_em - entrada_em))) FILTER (WHERE resposta_em IS NOT NULL) AS gap_medio_seg
-         FROM respostas
-        GROUP BY setor_id, vendedor_id, resposta_origem, primeira_da_sequencia`,
-      [clienteId, dias]
-    );
-
-    // Nomes de setores e vendedores
-    const setoresR = await query('SELECT id, nome, cor FROM movatak_setores WHERE cliente_id=$1', [clienteId]).catch(() => ({ rows: [] }));
-    const vendedoresR = await query('SELECT id, nome FROM movatak_vendedores WHERE cliente_id=$1', [clienteId]).catch(() => ({ rows: [] }));
-    const setorNome = new Map(setoresR.rows.map(s => [Number(s.id), s]));
-    const vendNome = new Map(vendedoresR.rows.map(v => [Number(v.id), v.nome]));
-
-    // Quantos leads estão esperando AGORA (última msg foi do lead, sem resposta).
-    const esperandoR = await query(
-      `WITH ult AS (
-         SELECT DISTINCT ON (c.lead_id) c.lead_id, c.direcao, l.setor_id, l.vendedor_id
-           FROM movatak_conversas c
-           JOIN movatak_leads l ON l.id = c.lead_id
-          WHERE c.cliente_id = $1 AND COALESCE(l.arquivado,false) = false
-          ORDER BY c.lead_id, c.criado_em DESC
-       )
-       SELECT setor_id, vendedor_id, COUNT(*)::int AS esperando
-         FROM ult WHERE direcao = 'entrada'
-        GROUP BY setor_id, vendedor_id`,
-      [clienteId]
-    ).catch(() => ({ rows: [] }));
-
-    // Monta estrutura hierárquica: setor → vendedores → métricas.
-    const ehAuto = (o) => ['followup', 'ausencia', 'menu', 'questionario', 'recomendacao', 'bot'].includes(o);
-    const setores = {};
-    function getSetor(sid) {
-      const k = sid == null ? 0 : Number(sid);
-      if (!setores[k]) {
-        const s = setorNome.get(k);
-        setores[k] = { setor_id: k, setor_nome: s ? s.nome : 'Sem setor', setor_cor: s ? s.cor : null, vendedores: {} };
-      }
-      return setores[k];
-    }
-    function getVend(setor, vid) {
-      const k = vid == null ? 0 : Number(vid);
-      if (!setor.vendedores[k]) {
-        setor.vendedores[k] = {
-          vendedor_id: k, vendedor_nome: vid ? (vendNome.get(k) || 'Vendedor') : 'Sem vendedor',
-          primeira_humano_seg: null, primeira_humano_n: 0,
-          primeira_auto_seg: null, primeira_auto_n: 0,
-          geral_humano_seg: null, geral_humano_n: 0,
-          geral_auto_seg: null, geral_auto_n: 0,
-          sem_resposta: 0, esperando: 0
-        };
-      }
-      return setor.vendedores[k];
-    }
-    function acumular(alvoSeg, alvoN, gap, n) {
-      // média ponderada incremental
-      const totalN = alvoN + n;
-      if (totalN === 0) return [alvoSeg, alvoN];
-      const somaAtual = (alvoSeg || 0) * alvoN;
-      const novaSoma = somaAtual + gap * n;
-      return [novaSoma / totalN, totalN];
-    }
-
-    for (const row of r.rows) {
-      const setor = getSetor(row.setor_id);
-      const v = getVend(setor, row.vendedor_id);
-      const auto = ehAuto(row.resposta_origem);
-      const gap = row.gap_medio_seg != null ? Number(row.gap_medio_seg) : null;
-      const n = Number(row.respondidas) || 0;
-      v.sem_resposta += Number(row.sem_resposta) || 0;
-      if (gap != null && n > 0) {
-        if (row.primeira_da_sequencia) {
-          if (auto) { [v.primeira_auto_seg, v.primeira_auto_n] = acumular(v.primeira_auto_seg, v.primeira_auto_n, gap, n); }
-          else { [v.primeira_humano_seg, v.primeira_humano_n] = acumular(v.primeira_humano_seg, v.primeira_humano_n, gap, n); }
-        }
-        if (auto) { [v.geral_auto_seg, v.geral_auto_n] = acumular(v.geral_auto_seg, v.geral_auto_n, gap, n); }
-        else { [v.geral_humano_seg, v.geral_humano_n] = acumular(v.geral_humano_seg, v.geral_humano_n, gap, n); }
-      }
-    }
-    for (const row of esperandoR.rows) {
-      const setor = getSetor(row.setor_id);
-      const v = getVend(setor, row.vendedor_id);
-      v.esperando += Number(row.esperando) || 0;
-    }
-
-    // Converte para arrays e arredonda.
-    const out = Object.values(setores).map(s => {
-      const vends = Object.values(s.vendedores).map(v => ({
-        ...v,
-        primeira_humano_seg: v.primeira_humano_seg != null ? Math.round(v.primeira_humano_seg) : null,
-        primeira_auto_seg: v.primeira_auto_seg != null ? Math.round(v.primeira_auto_seg) : null,
-        geral_humano_seg: v.geral_humano_seg != null ? Math.round(v.geral_humano_seg) : null,
-        geral_auto_seg: v.geral_auto_seg != null ? Math.round(v.geral_auto_seg) : null
-      }));
-      return { ...s, vendedores: vends };
-    });
-
-    res.json({ dias, setores: out });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) => {
-  try {
-    // Segurança: se for o cliente (portal), força o cliente_id do token —
-    // ignora o :id da URL para ele nunca acessar outro cliente.
-    const clienteId = req.ehCliente ? req.clienteId : parseInt(req.params.id, 10);
-    const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
-    await garantirFunilPadraoCliente(clienteId);
-    // Garante a coluna do avatar antes da query referenciá-la (no-op se já existe).
-    await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
-
-    // "Todos" mostra todas as colunas. Um setor específico mostra só as colunas
-    // atribuídas a ele (configurado pelo seletor de setor no cabeçalho da coluna).
-    const colunasParams = [clienteId];
-    let filtroColunaSetorSql = '';
-    if (setorFiltro) {
-      colunasParams.push(setorFiltro);
-      filtroColunaSetorSql = ' AND setor_id = $2';
-    }
-    const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, ia_ativa, nicho_template, agenda_tipo, agenda_status
-         FROM movatak_funil_colunas
-        WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
-        ORDER BY ordem ASC, id ASC`,
-      colunasParams
-    );
-    const colunas = colunasRes.rows.map(c => ({ ...c, leads: [] }));
-    const colById = new Map(colunas.map(c => [Number(c.id), c]));
-    const colBySlug = new Map(colunas.map(c => [c.slug, c]));
-
-    const params = [clienteId];
-    let filtroSetorSql = '';
-    if (setorFiltro) {
-      params.push(setorFiltro);
-      filtroSetorSql = ' AND l.setor_id = $2';
-    }
-    const leads = await query(
-      `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em, ult.midia_tipo AS ultima_msg_midia
-         FROM (
-           SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  l.nao_lida, l.arquivado, l.foto_url,
-                  s.nome AS setor_nome, s.cor AS setor_cor,
-                  l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
-                  v.nome AS vendedor_nome,
-                  p.nome AS plano_nome, p.valor AS plano_valor,
-                  COUNT(f.id) FILTER (WHERE f.status='pendente')::int AS followups_pendentes,
-                  MIN(COALESCE(f.sequencia_fu,1)) FILTER (WHERE f.status='pendente')::int AS fu_sequencia_ativa
-             FROM movatak_leads l
-             LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
-             LEFT JOIN movatak_planos p ON p.id = l.plano_id
-             LEFT JOIN movatak_setores s ON s.id = l.setor_id
-             LEFT JOIN movatak_followup f ON f.lead_id = l.id
-            WHERE l.cliente_id=$1${filtroSetorSql}
-            GROUP BY l.id, v.nome, p.nome, p.valor, s.nome, s.cor
-         ) lb
-         LEFT JOIN LATERAL (
-           SELECT conteudo, direcao, criado_em, midia_tipo FROM movatak_conversas c
-            WHERE c.lead_id = lb.id ORDER BY c.criado_em DESC LIMIT 1
-         ) ult ON true
-        ORDER BY lb.atualizado_em DESC NULLS LAST, lb.criado_em DESC
-        LIMIT 500`,
-      params
-    );
-
-    // Leads ativos (não arquivados) — vão para o kanban central.
-    const leadsAtivos = leads.rows.filter(l => !l.arquivado);
-    for (const lead of leadsAtivos) {
-      let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
-      if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
-      if (!coluna) coluna = colunas[0];
-      if (coluna) coluna.leads.push(lead);
-    }
-
-    // Colunas de vendedores (sempre as últimas — leads atribuídos de qualquer etapa)
-    const vRes = await query(
-      `SELECT id, nome FROM movatak_vendedores WHERE cliente_id=$1 AND COALESCE(ativo,true)=true ORDER BY nome ASC`,
-      [clienteId]
-    );
-    const colunasVendedores = vRes.rows.map(v => ({
-      id: `vendedor_${v.id}`,
-      vendedor_id: v.id,
-      nome: v.nome,
-      leads: leadsAtivos.filter(l => l.vendedor_id === v.id)
-    }));
-
-    // Setores do cliente + contagem ao vivo (independente do filtro atual,
-    // pra mostrar "Financeiro 5 / Negociação 4" nas abas mesmo trocando de aba).
-    const clienteInfoRes = await query(
-      `SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1`,
-      [clienteId]
-    ).catch(() => ({ rows: [] }));
-    const clienteInfo = clienteInfoRes.rows[0] || {};
-
-    const setoresRes = await query(
-      `SELECT id, nome, cor FROM movatak_setores
-        WHERE cliente_id=$1 AND COALESCE(ativo,true)=true
-        ORDER BY ordem_bot ASC, nome ASC`,
-      [clienteId]
-    );
-    const contagemSetoresRes = await query(
-      `SELECT setor_id, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE nao_lida = true)::int AS nao_lidas
-         FROM movatak_leads
-        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false
-        GROUP BY setor_id`,
-      [clienteId]
-    );
-    const contagemPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.cnt]));
-    const naoLidasPorSetor = new Map(contagemSetoresRes.rows.map(r => [r.setor_id, r.nao_lidas]));
-    const setores = setoresRes.rows.map(s => ({
-      ...s,
-      leads_count: contagemPorSetor.get(s.id) || 0,
-      nao_lidas: naoLidasPorSetor.get(s.id) || 0
-    }));
-    const totalGeral = contagemSetoresRes.rows.reduce((acc, r) => acc + r.cnt, 0);
-    const totalNaoLidas = contagemSetoresRes.rows.reduce((acc, r) => acc + r.nao_lidas, 0);
-
-    res.json({
-      colunas, colunasVendedores,
-      setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
-      nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
-      leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Métricas do rodapé do Funil de Atendimento (Total de leads, Novas mensagens,
-// Em negociação, Conversão do mês). Aceita o mesmo filtro ?setor= do board.
-app.get('/movatak/admin/clientes/:id/funil/metricas', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
-    const params = [clienteId];
-    let filtroSetorSql = '';
-    if (setorFiltro) { params.push(setorFiltro); filtroSetorSql = ' AND l.setor_id = $2'; }
-
-    const totaisR = await query(
-      `SELECT
-         COUNT(*)::int AS total_leads,
-         COUNT(*) FILTER (WHERE l.nao_lida = true)::int AS novas_mensagens,
-         COUNT(*) FILTER (WHERE l.criado_em >= date_trunc('month', now()))::int AS criados_mes,
-         COUNT(*) FILTER (WHERE l.convertido_em >= date_trunc('month', now()))::int AS convertidos_mes
-       FROM movatak_leads l
-       WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false${filtroSetorSql}`,
-      params
-    );
-    const negociacaoR = await query(
-      `SELECT COUNT(*)::int AS n
-         FROM movatak_leads l
-         LEFT JOIN movatak_funil_colunas c ON c.id = l.funil_coluna_id
-        WHERE l.cliente_id=$1 AND COALESCE(l.arquivado,false)=false${filtroSetorSql}
-          AND COALESCE(c.etapa_sistema, l.etapa) = 'negociacao'`,
-      params
-    );
-    const t = totaisR.rows[0] || {};
-    const conversaoMes = t.criados_mes > 0 ? Math.round((t.convertidos_mes / t.criados_mes) * 100) : 0;
-    res.json({
-      totalLeads: t.total_leads || 0,
-      novasMensagens: t.novas_mensagens || 0,
-      emNegociacao: (negociacaoR.rows[0] || {}).n || 0,
-      conversaoMes
-    });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-app.get('/movatak/admin/nichos-templates', authMovatak, async (req, res) => {
-  try {
-    res.json(Object.entries(NICHO_TEMPLATES).map(([key, tpl]) => ({
-      key,
-      label: tpl.label,
-      agendaTipos: tpl.agendaTipos || [],
-      colunas: (tpl.colunas || []).map(c => ({ nome: c[0], slug: c[1], etapa: c[2], agenda_tipo: c[3] || null }))
-    })));
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/funil/aplicar-nicho', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    const nicho = normalizarNichoCliente(req.body?.nicho);
-    if (!nicho) return res.status(400).json({ error: 'Nicho inválido.' });
-    const result = await aplicarTemplateNichoCliente(clienteId, nicho, { sincronizar: req.body?.sincronizar_whatsapp !== false });
-    res.json({ ok: true, ...result });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/agendamentos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const clienteId = parseInt(req.params.id, 10);
-    const dias = Math.max(1, Math.min(parseInt(req.query.dias || '30', 10), 120));
-    const r = await query(
-      `SELECT a.*, l.nome AS lead_nome, l.telefone AS lead_telefone, c.nome AS coluna_nome
-         FROM movatak_agendamentos a
-         LEFT JOIN movatak_leads l ON l.id = a.lead_id
-         LEFT JOIN movatak_funil_colunas c ON c.id = a.funil_coluna_id
-        WHERE a.cliente_id=$1
-          AND a.inicio >= NOW() - INTERVAL '1 day'
-          AND a.inicio <= NOW() + ($2 || ' days')::INTERVAL
-        ORDER BY a.inicio ASC
-        LIMIT 200`,
-      [clienteId, dias]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/agendamentos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const clienteId = parseInt(req.params.id, 10);
-    const { lead_id, titulo, tipo, inicio, fim, status, observacao, coluna_id, mover_kanban, lembrete_min } = req.body || {};
-    if (!titulo || !inicio) return res.status(400).json({ error: 'Título e data/horário são obrigatórios.' });
-    const tipoNorm = String(tipo || 'atendimento').trim().toLowerCase();
-    const lembreteNorm = [5, 15, 30, 60].includes(Number(lembrete_min)) ? Number(lembrete_min) : 0;
-    const colunaDestino = await buscarColunaAgenda(clienteId, tipoNorm, coluna_id || null);
-    const ins = await query(
-      `INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id, lembrete_min)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING *`,
-      [clienteId, lead_id || null, titulo, tipoNorm, status || 'agendado', inicio, fim || null, observacao || null, colunaDestino, lembreteNorm]
-    );
-    if (lead_id && colunaDestino && mover_kanban !== false) {
-      await moverLeadParaColunaFunil(lead_id, colunaDestino, true).catch(e => console.error('[agenda][mover-kanban]', e.message));
-      await registrarEventoLead(lead_id, clienteId, 'agendamento_criado', 'Agendamento criado e lead movido no kanban', { agendamento_id: ins.rows[0].id, tipo: tipoNorm, inicio, coluna_id: colunaDestino }).catch(() => null);
-    }
-    res.json({ ok: true, agendamento: ins.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/agendamentos/:id', ...exigeAgendamento, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const { status, observacao, inicio, fim, funil_coluna_id } = req.body || {};
-    const r = await query(
-      `UPDATE movatak_agendamentos SET
-         status = COALESCE($1, status),
-         observacao = CASE WHEN $2::text IS NULL THEN observacao ELSE $2 END,
-         inicio = COALESCE($3::timestamptz, inicio),
-         fim = COALESCE($4::timestamptz, fim),
-         funil_coluna_id = COALESCE($5, funil_coluna_id),
-         atualizado_em = NOW()
-       WHERE id=$6 RETURNING *`,
-      [status || null, observacao !== undefined ? observacao : null, inicio || null, fim || null, funil_coluna_id || null, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.json({ ok: true, agendamento: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Muda o status do agendamento e, opcionalmente, move o lead para uma coluna.
-app.patch('/movatak/admin/agendamentos/:id/status', ...exigeAgendamento, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const { status, mover_para_coluna_id } = req.body || {};
-    if (!status) return res.status(400).json({ error: 'Informe o status.' });
-    const r = await query(
-      `UPDATE movatak_agendamentos SET status=$1, atualizado_em=NOW() WHERE id=$2 RETURNING *`,
-      [status, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    const ag = r.rows[0];
-    let leadMovido = false;
-    // Se foi pedido pra mover o lead, valida que a coluna é do mesmo cliente e ativa.
-    if (mover_para_coluna_id && ag.lead_id) {
-      const col = await query(
-        'SELECT id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true',
-        [mover_para_coluna_id, ag.cliente_id]
-      );
-      if (col.rows.length) {
-        await moverLeadParaColunaFunil(ag.lead_id, mover_para_coluna_id).catch(() => null);
-        await registrarEventoLead(ag.lead_id, ag.cliente_id, 'agenda_status', `Agendamento "${ag.titulo || ''}" → ${status}`, { agendamento_id: ag.id, status }).catch(() => null);
-        leadMovido = true;
-      }
-    }
-    res.json({ ok: true, agendamento: ag, lead_movido: leadMovido });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-// Exclui um agendamento permanentemente (delete real).
-// Não apaga o lead nem a conversa.
-app.delete('/movatak/admin/agendamentos/:id', ...exigeAgendamento, async (req, res) => {
-  try {
-    await garantirEstruturaAgenda();
-    const r = await query(
-      `DELETE FROM movatak_agendamentos WHERE id=$1 RETURNING id, lead_id, cliente_id, titulo`,
-      [req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Agendamento não encontrado.' });
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/funil/colunas', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    const clienteId = parseInt(req.params.id, 10);
-    await garantirFunilPadraoCliente(clienteId);
-    const nome = String((req.body && req.body.nome) || '').trim();
-    if (!nome) return res.status(400).json({ error: 'Informe o nome da etapa.' });
-    const slugBase = slugifyFunil(nome);
-    const ordemR = await query('SELECT COALESCE(MAX(ordem),0)+1 AS ordem FROM movatak_funil_colunas WHERE cliente_id=$1', [clienteId]);
-    const etapa = etapaSistemaPorSlug(slugBase);
-    const ins = await query(
-      `INSERT INTO movatak_funil_colunas (cliente_id, nome, slug, ordem, etapa_sistema, sincronizar_whatsapp)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING *`,
-      [clienteId, nome, slugBase, ordemR.rows[0].ordem, etapa, req.body?.sincronizar_whatsapp !== false]
-    );
-    let col = ins.rows[0];
-    if (col.sincronizar_whatsapp) {
-      try {
-        await sincronizarColunaComWhatsapp(col.id);
-        const rr = await query('SELECT * FROM movatak_funil_colunas WHERE id=$1', [col.id]);
-        col = rr.rows[0] || col;
-      } catch (e) {
-        await query(`UPDATE movatak_funil_colunas SET zapi_sync_erro=$1 WHERE id=$2`, [String(e.message || e).slice(0, 500), col.id]).catch(() => null);
-        col.zapi_sync_erro = e.message;
-      }
-    }
-    res.json({ ok: true, coluna: col });
-  } catch (e) {
-    if (String(e.message || '').includes('duplicate')) return res.status(409).json({ error: 'Já existe uma etapa/lista com esse nome.' });
-    res.status(500).json({ error: e.message });
+// Abre o dashboard SLA numa ABA SEPARADA (não sobrecarrega o funil).
+function abrirDashboardSLA() {
+  const id = funilState.clienteId;
+  const nome = funilState.clienteNome || '';
+  if (!id) return;
+  const auth = (() => {
+    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    catch(e) { return secret || ''; }
+  })();
+  if (auth) {
+    try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
+    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
   }
-});
-
-app.patch('/movatak/admin/funil/colunas/:id', ...exigeColuna, async (req, res) => {
-  try {
-    await garantirEstruturaFunil();
-    const { nome, ordem, ativo, cor, comando } = req.body || {};
-    const r = await query(
-      `UPDATE movatak_funil_colunas
-          SET nome = COALESCE($1, nome),
-              ordem = COALESCE($2, ordem),
-              ativo = COALESCE($3, ativo),
-              cor = CASE WHEN $5::text IS NULL THEN cor ELSE $5 END,
-              comando = CASE WHEN $6::text IS NULL THEN comando ELSE NULLIF($6, '') END,
-              atualizado_em = NOW()
-        WHERE id = $4
-        RETURNING *`,
-      [nome || null, Number.isFinite(Number(ordem)) ? Number(ordem) : null, typeof ativo === 'boolean' ? ativo : null, req.params.id, cor !== undefined ? (cor || null) : null, comando !== undefined ? String(comando).trim() : null]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/funil/colunas/:id/setor', ...exigeColuna, async (req, res) => {
-  try {
-    const setorId = req.body && req.body.setor_id ? parseInt(req.body.setor_id, 10) : null;
-    const r = await query(
-      `UPDATE movatak_funil_colunas SET setor_id = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
-      [setorId, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/funil/colunas/:id/ausencia', ...exigeColuna, async (req, res) => {
-  try {
-    const ativa = !!(req.body && req.body.ausencia_ativa);
-    const r = await query(
-      `UPDATE movatak_funil_colunas SET ausencia_ativa = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
-      [ativa, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/funil/colunas/:id/ia', ...exigeColuna, async (req, res) => {
-  try {
-    const ativa = !!(req.body && req.body.ia_ativa);
-    const r = await query(
-      `UPDATE movatak_funil_colunas SET ia_ativa = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
-      [ativa, req.params.id]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
-    res.json({ ok: true, coluna: r.rows[0] });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/funil/colunas/:id', ...exigeColuna, async (req, res) => {
-  try {
-    await garantirEstruturaFunil();
-    // Colunas de vendedor são virtuais no front (ex: "vendedor_12") — nunca chegam
-    // como ID numérico real. Se vier algo não-numérico, rejeita explicitamente.
-    const idRaw = String(req.params.id || '');
-    if (idRaw.startsWith('vendedor_') || idRaw.startsWith('vendedor-')) {
-      return res.status(400).json({ error: 'Colunas de vendedor não podem ser excluídas pelo kanban. Remova ou desative o vendedor no menu de vendedores.' });
-    }
-    const colId = parseInt(idRaw, 10);
-    if (!Number.isFinite(colId)) return res.status(400).json({ error: 'ID inválido.' });
-
-    // Confirmação e destino são obrigatórios (regra do briefing).
-    const { confirmar, destino_coluna_id } = req.body || {};
-    if (!confirmar) return res.status(400).json({ error: 'Confirmação obrigatória para excluir a coluna.' });
-    if (!destino_coluna_id) return res.status(400).json({ error: 'Escolha uma coluna de destino para realocar os leads.' });
-
-    const cr = await query('SELECT id, cliente_id, nome FROM movatak_funil_colunas WHERE id=$1 AND ativo=true', [colId]);
-    if (!cr.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
-    const col = cr.rows[0];
-
-    // O destino precisa ser uma coluna ativa do MESMO cliente e diferente da que será excluída.
-    const destId = parseInt(destino_coluna_id, 10);
-    if (destId === colId) return res.status(400).json({ error: 'A coluna de destino não pode ser a mesma que está sendo excluída.' });
-    const dest = await query('SELECT id FROM movatak_funil_colunas WHERE id=$1 AND cliente_id=$2 AND ativo=true', [destId, col.cliente_id]);
-    if (!dest.rows.length) return res.status(400).json({ error: 'Coluna de destino inválida.' });
-
-    // Conta e realoca os leads desta coluna para o destino, registrando o evento.
-    const leadsR = await query('SELECT id FROM movatak_leads WHERE funil_coluna_id=$1', [colId]);
-    const qtdLeads = leadsR.rows.length;
-    if (qtdLeads) {
-      await query(
-        `UPDATE movatak_leads SET funil_coluna_id=$1, atualizado_em=NOW() WHERE funil_coluna_id=$2`,
-        [destId, colId]
-      );
-      for (const l of leadsR.rows) {
-        registrarEventoLead(l.id, col.cliente_id, 'coluna_excluida', `Lead realocado: coluna "${col.nome}" excluída`, { de: colId, para: destId }).catch(() => null);
+  const url = new URL(window.location.href);
+  url.searchParams.delete('funil');
+  url.searchParams.set('sla', '1');
+  url.searchParams.set('clienteId', String(id));
+  url.searchParams.set('clienteNome', nome || '');
+  const win = window.open(url.toString(), '_blank');
+  if (win) {
+    try {
+      if (auth) {
+        win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
+        win.sessionStorage.setItem(SENHA_KEY, auth);
+        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
       }
-    }
-
-    // Soft delete — nunca apaga a linha.
-    await query('UPDATE movatak_funil_colunas SET ativo=false, atualizado_em=NOW() WHERE id=$1', [colId]);
-    res.json({ ok: true, leads_realocados: qtdLeads, destino_coluna_id: destId });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/funil/colunas/reordenar', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaFunil();
-    const clienteId = parseInt(req.params.id, 10);
-    const ordem = Array.isArray(req.body?.ordem) ? req.body.ordem : null;
-    if (!ordem || !ordem.length) return res.status(400).json({ error: 'Envie ordem: [ids...] na sequência desejada.' });
-    let pos = 1;
-    for (const colId of ordem) {
-      const id = parseInt(colId, 10);
-      if (!Number.isFinite(id)) continue;
-      await query(
-        `UPDATE movatak_funil_colunas SET ordem=$1, atualizado_em=NOW() WHERE id=$2 AND cliente_id=$3`,
-        [pos, id, clienteId]
-      ).catch(() => null);
-      pos++;
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/funil/colunas/:id/sincronizar-whatsapp', ...exigeColuna, async (req, res) => {
-  try {
-    const tagId = await sincronizarColunaComWhatsapp(req.params.id);
-    res.json({ ok: true, zapi_tag_id: tagId });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/leads/:id/vendedor', ...exigeLead, async (req, res) => {
-  try {
-    const { vendedor_id } = req.body || {};
-    await query(
-      `UPDATE movatak_leads SET vendedor_id=$1, atualizado_em=NOW() WHERE id=$2`,
-      [vendedor_id || null, req.params.id]
-    );
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-
-app.post('/movatak/admin/leads/:id/mensagem-kanban', ...exigeLead, async (req, res) => {
-  try {
-    const leadId = parseInt(req.params.id, 10);
-    const mensagem = String((req.body && req.body.mensagem) || '').trim();
-    if (!leadId) return res.status(400).json({ error: 'Lead inválido.' });
-    if (!mensagem) return res.status(400).json({ error: 'Digite a mensagem.' });
-    if (mensagem.length > 2000) return res.status(400).json({ error: 'Mensagem muito longa. Limite: 2000 caracteres.' });
-
-    const r = await query(
-      `SELECT l.id, l.cliente_id, l.nome, l.telefone, l.vendedor_id,
-              c.zapi_instance, c.zapi_token, c.zapi_client_token
-         FROM movatak_leads l
-         JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1 AND c.ativo = true`,
-      [leadId]
-    );
-    if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
-    const lead = r.rows[0];
-    if (!lead.telefone) return res.status(400).json({ error: 'Lead sem telefone cadastrado.' });
-    if (!lead.zapi_instance || !lead.zapi_token || !lead.zapi_client_token) {
-      return res.status(400).json({ error: 'Z-API não configurada para este cliente.' });
-    }
-
-    await zapiEnviar(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, mensagem);
-    await registrarEventoLead(
-      lead.id,
-      lead.cliente_id,
-      'mensagem_manual_kanban',
-      'Mensagem manual enviada pelo Funil de Atendimento',
-      { origem: 'funil_kanban', vendedor_id: lead.vendedor_id || null, tamanho: mensagem.length }
-    );
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[funil][mensagem-kanban]', e.message);
-    res.status(500).json({ error: e.message });
+    } catch(e) {}
+  } else {
+    window.location.href = url.toString();
   }
-});
+}
 
-app.patch('/movatak/admin/leads/:id/funil', ...exigeLead, async (req, res) => {
-  try {
-    const colunaId = parseInt(req.body?.coluna_id, 10);
-    if (!colunaId) return res.status(400).json({ error: 'Informe a coluna de destino.' });
-    const result = await moverLeadParaColunaFunil(req.params.id, colunaId, true);
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+function ehPaginaSLA() {
+  return new URLSearchParams(window.location.search).get('sla') === '1';
+}
 
-app.get('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query('SELECT cep FROM movatak_cobertura_cep WHERE cliente_id = $1 ORDER BY cep ASC', [req.params.id]);
-    res.json({ total: r.rows.length, ceps: r.rows.map(x => x.cep) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+// Monta a página SLA em tela cheia (aba separada).
+function iniciarPaginaSLA() {
+  const params = new URLSearchParams(window.location.search);
+  const id = Number(params.get('clienteId'));
+  const nome = params.get('clienteNome') || '';
+  if (!id) return;
+  funilState = { ...funilState, clienteId: id, clienteNome: nome };
 
-app.post('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
+  const headerTitle = document.querySelector('.header-title');
+  const headerSub = document.querySelector('.header-sub');
+  if (headerTitle) headerTitle.textContent = '📊 Tempo de resposta (SLA)';
+  if (headerSub) headerSub.textContent = nome ? 'Cliente: ' + nome : '';
+
+  const main = document.querySelector('main');
+  if (main) {
+    main.className = '';
+    main.innerHTML = `
+      <div style="max-width:920px;margin:0 auto;padding:24px 16px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--text2)">
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:var(--green);display:inline-block"></span> humano</span>
+            <span style="display:inline-flex;align-items:center;gap:5px"><span style="width:10px;height:10px;border-radius:50%;background:var(--amber);display:inline-block"></span> automático</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="sla-periodo" onchange="carregarDashboardSLA()" class="fu-textarea" style="min-height:auto;padding:8px 14px;max-width:170px;font-size:13px">
+              <option value="7">Últimos 7 dias</option>
+              <option value="30" selected>Últimos 30 dias</option>
+              <option value="90">Últimos 90 dias</option>
+            </select>
+            <button class="btn-cancel" style="padding:8px 14px;font-size:13px" onclick="carregarDashboardSLA()">↻ Atualizar</button>
+          </div>
+        </div>
+        <div id="sla-conteudo"><div class="fu-hint">Carregando...</div></div>
+      </div>`;
+  }
+  carregarDashboardSLA();
+}
+
+
+async function carregarDashboardSLA() {
+  const box = document.getElementById('sla-conteudo');
+  if (!box || !funilState.clienteId) return;
+  const dias = document.getElementById('sla-periodo')?.value || '30';
+  box.innerHTML = '<div class="fu-hint">Carregando métricas...</div>';
   try {
-    await garantirEstruturaQuestionario();
-    const modo = (req.body && req.body.modo) || 'substituir';
-    const lista = String((req.body && req.body.ceps) || '')
-      .split(/[\n,;\s]+/)
-      .map(s => s.replace(/\D/g, ''))
-      .filter(Boolean)
-      .filter((v, i, a) => a.indexOf(v) === i);
-    if (modo === 'substituir') {
-      await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
+    const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/sla?dias=' + dias);
+    renderDashboardSLA(r);
+  } catch (e) {
+    box.innerHTML = '<div style="color:var(--red);font-size:13px">Erro: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+// Gera um donut SVG (humano vs automático). frac = fração humana (0..1).
+function donutSLA(humanoN, autoN, size) {
+  const total = humanoN + autoN;
+  const sz = size || 90;
+  const r = sz / 2 - 8;
+  const cx = sz / 2, cy = sz / 2;
+  const circ = 2 * Math.PI * r;
+  if (total === 0) {
+    return `<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--bg4)" stroke-width="10"/>
+      <text x="${cx}" y="${cy+4}" text-anchor="middle" font-size="11" fill="var(--text3)">sem dados</text>
+    </svg>`;
+  }
+  const fracH = humanoN / total;
+  const dashH = circ * fracH;
+  return `<svg width="${sz}" height="${sz}" viewBox="0 0 ${sz} ${sz}">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--amber)" stroke-width="10"/>
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--green)" stroke-width="10"
+      stroke-dasharray="${dashH} ${circ - dashH}" stroke-dashoffset="${circ/4}" transform="rotate(-90 ${cx} ${cy})" stroke-linecap="round"/>
+    <text x="${cx}" y="${cy-2}" text-anchor="middle" font-size="18" font-weight="800" fill="var(--text)">${Math.round(fracH*100)}%</text>
+    <text x="${cx}" y="${cy+13}" text-anchor="middle" font-size="9" fill="var(--text2)">humano</text>
+  </svg>`;
+}
+
+// Barra horizontal (pauzinho) com valor e label. maxSeg normaliza a largura.
+function barraSLA(label, seg, maxSeg, cor) {
+  const pct = (seg != null && maxSeg > 0) ? Math.max(4, Math.min(100, (seg / maxSeg) * 100)) : 0;
+  return `<div style="margin:6px 0">
+    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:3px">
+      <span>${label}</span><span style="color:${cor};font-weight:700">${fmtTempoSLA(seg)}</span>
+    </div>
+    <div style="height:8px;background:var(--bg4);border-radius:5px;overflow:hidden">
+      <div style="height:100%;width:${pct}%;background:${cor};border-radius:5px;transition:width .5s ease"></div>
+    </div>
+  </div>`;
+}
+
+function renderDashboardSLA(data) {
+  const box = document.getElementById('sla-conteudo');
+  if (!box) return;
+  const setores = (data && data.setores) || [];
+  if (!setores.length) {
+    box.innerHTML = '<div style="text-align:center;color:var(--text2);font-size:14px;margin:50px 0">📭 Sem dados de conversa no período.</div>';
+    return;
+  }
+
+  // ── Resumo geral (cards do topo) ──
+  let totalEsperando = 0, totalRespondidas = 0, totalSemResp = 0;
+  let somaPrimHumano = 0, nPrimHumano = 0;
+  const todosVend = [];
+  setores.forEach(s => (s.vendedores || []).forEach(v => {
+    totalEsperando += v.esperando || 0;
+    totalSemResp += v.sem_resposta || 0;
+    totalRespondidas += (v.primeira_humano_n || 0) + (v.primeira_auto_n || 0);
+    if (v.primeira_humano_seg != null && v.primeira_humano_n > 0) {
+      somaPrimHumano += v.primeira_humano_seg * v.primeira_humano_n;
+      nPrimHumano += v.primeira_humano_n;
     }
-    let inseridos = 0;
-    for (const cep of lista) {
-      const r = await query(
-        `INSERT INTO movatak_cobertura_cep (cliente_id, cep) VALUES ($1, $2)
-         ON CONFLICT (cliente_id, cep) DO NOTHING`,
-        [req.params.id, cep]
-      );
-      inseridos += r.rowCount || 0;
-    }
-    const tot = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({ ok: true, inseridos, total: tot.rows[0].total });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+    todosVend.push({ ...v, _setor: s.setor_nome });
+  }));
+  const mediaPrimHumano = nPrimHumano > 0 ? somaPrimHumano / nPrimHumano : null;
+  const totalMsgs = totalRespondidas + totalSemResp;
+  const pctResp = totalMsgs > 0 ? Math.round((totalRespondidas / totalMsgs) * 100) : 100;
 
-app.delete('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+  const card = (titulo, valor, cor, sub) => `
+    <div style="flex:1;min-width:140px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:16px 18px">
+      <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">${titulo}</div>
+      <div style="font-size:28px;font-weight:800;color:${cor};line-height:1">${valor}</div>
+      ${sub ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + sub + '</div>' : ''}
+    </div>`;
 
-// Reset de lead para testes: apaga o lead e tudo ligado a ele, por telefone.
-app.post('/movatak/admin/reset-lead', authMovatakOuApp, async (req, res) => {
-  try {
-    const tel = String((req.body && req.body.telefone) || '').replace(/\D/g, '');
-    if (tel.length < 8) return res.status(400).json({ error: 'Telefone inválido.' });
+  const resumo = `<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:22px">
+    ${card('Esperando agora', totalEsperando, totalEsperando > 0 ? 'var(--red)' : 'var(--green)', totalEsperando > 0 ? 'precisam de resposta' : 'tudo em dia')}
+    ${card('1ª resposta (média)', fmtTempoSLA(mediaPrimHumano), 'var(--accent)', 'atendimento humano')}
+    ${card('Taxa de resposta', pctResp + '%', pctResp >= 80 ? 'var(--green)' : 'var(--amber)', totalRespondidas + ' de ' + totalMsgs + ' msgs')}
+  </div>`;
 
-    // Segurança: o cliente só pode resetar leads da PRÓPRIA operação.
-    // Para admin, opera em todos. Para cliente, restringe ao cliente_id do token.
-    const filtroCliente = req.ehCliente ? ' AND cliente_id = $2' : '';
-    const paramsBase = req.ehCliente ? [tel, req.clienteId] : [tel];
+  // ── Ranking de vendedores (barras / pauzinhos) ──
+  const comTempo = todosVend.filter(v => v.primeira_humano_seg != null).sort((a, b) => a.primeira_humano_seg - b.primeira_humano_seg);
+  const maxTempo = comTempo.length ? Math.max(...comTempo.map(v => v.primeira_humano_seg)) : 1;
+  let ranking = '';
+  if (comTempo.length) {
+    ranking = `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:22px">
+      <div style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:14px">⚡ Velocidade de 1ª resposta (humano)</div>
+      ${comTempo.map((v, i) => {
+        const medalha = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : (i + 1) + '.';
+        const cor = i === 0 ? 'var(--green)' : i < 3 ? 'var(--accent)' : 'var(--text2)';
+        return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+          <span style="width:24px;text-align:center;font-size:13px">${medalha}</span>
+          <span style="width:120px;font-size:12px;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(v.vendedor_nome)}</span>
+          <div style="flex:1;height:10px;background:var(--bg4);border-radius:6px;overflow:hidden">
+            <div style="height:100%;width:${Math.max(5, (v.primeira_humano_seg/maxTempo)*100)}%;background:${cor};border-radius:6px"></div>
+          </div>
+          <span style="width:60px;text-align:right;font-size:12px;font-weight:700;color:${cor}">${fmtTempoSLA(v.primeira_humano_seg)}</span>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
 
-    const sel = `SELECT id FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1${filtroCliente}`;
-    const found = await query(sel, paramsBase);
-    const removidos = found.rows.length;
-    if (removidos) {
-      // Apaga dependências dos leads encontrados (já restritos ao cliente, se for o caso).
-      const ids = found.rows.map(r => r.id);
-      const phIds = ids.map((_, i) => '$' + (i + 1)).join(',');
-      await query(`DELETE FROM movatak_followup WHERE lead_id IN (${phIds})`, ids).catch(() => null);
-      await query(`DELETE FROM movatak_mensagens WHERE lead_id IN (${phIds})`, ids).catch(() => null);
-      await query(`DELETE FROM movatak_lead_eventos WHERE lead_id IN (${phIds})`, ids).catch(() => null);
-      await query(`DELETE FROM movatak_etiqueta_log WHERE lead_id IN (${phIds})`, ids).catch(() => null);
-      await query(`DELETE FROM movatak_questionario_estado WHERE lead_id IN (${phIds})`, ids).catch(() => null);
-      await query(`DELETE FROM movatak_leads WHERE id IN (${phIds})`, ids);
-    }
-    res.json({ ok: true, removidos });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
+  // ── Cards por setor (com donut + barras) ──
+  const cardsSetores = setores.map(s => {
+    const vends = (s.vendedores || []).sort((a, b) => (b.esperando || 0) - (a.esperando || 0));
+    const corSetor = s.setor_cor || 'var(--accent)';
+    const esperandoSetor = vends.reduce((acc, v) => acc + (v.esperando || 0), 0);
+    // Totais do setor pro donut
+    let hN = 0, aN = 0;
+    vends.forEach(v => { hN += (v.geral_humano_n || 0); aN += (v.geral_auto_n || 0); });
+    const maxV = Math.max(1, ...vends.map(v => Math.max(v.primeira_humano_seg || 0, v.primeira_auto_seg || 0)));
 
-app.get('/movatak/health', (req, res) => {
-  res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
-});
+    return `<div style="background:var(--bg2);border:1px solid var(--border);border-radius:14px;margin-bottom:16px;overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);border-left:4px solid ${corSetor}">
+        <div style="font-weight:800;font-size:15px;color:var(--text)">${escapeHtml(s.setor_nome)}</div>
+        ${esperandoSetor > 0
+          ? '<div style="font-size:12px;color:var(--red);font-weight:700;background:rgba(255,90,90,.12);padding:4px 10px;border-radius:20px">⏳ ' + esperandoSetor + ' esperando</div>'
+          : '<div style="font-size:12px;color:var(--green);font-weight:700;background:rgba(0,208,132,.12);padding:4px 10px;border-radius:20px">✓ em dia</div>'}
+      </div>
+      <div style="display:flex;gap:18px;padding:18px;flex-wrap:wrap">
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;min-width:100px">
+          ${donutSLA(hN, aN, 100)}
+          <div style="display:flex;gap:10px;font-size:10px">
+            <span style="color:var(--green)">● humano</span>
+            <span style="color:var(--amber)">● auto</span>
+          </div>
+        </div>
+        <div style="flex:1;min-width:240px">
+          ${vends.map(v => `
+            <div style="padding:8px 0;border-bottom:1px solid var(--border)">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:2px">
+                <span style="font-weight:700;font-size:13px;color:var(--text)">${escapeHtml(v.vendedor_nome)}</span>
+                ${v.esperando > 0 ? '<span style="font-size:10px;color:var(--red);font-weight:700;background:rgba(255,90,90,.12);padding:2px 8px;border-radius:12px">' + v.esperando + ' esperando</span>' : ''}
+              </div>
+              ${barraSLA('1ª resposta — humano', v.primeira_humano_seg, maxV, 'var(--green)')}
+              ${(v.primeira_auto_n > 0) ? barraSLA('1ª resposta — auto', v.primeira_auto_seg, maxV, 'var(--amber)') : ''}
+              ${v.sem_resposta > 0 ? '<div style="font-size:10px;color:var(--text3);margin-top:4px">' + v.sem_resposta + ' sem resposta</div>' : ''}
+            </div>`).join('')}
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 
-app.get('/movatak/version', (req, res) => {
-  res.json({ version: MOVATAK_VERSION });
-});
+  box.innerHTML = resumo + ranking + cardsSetores;
+}
+
+
+
+async function iniciarPaginaFunilAtendimento() {
+  const params = new URLSearchParams(window.location.search);
+  const id = Number(params.get('clienteId'));
+  const nome = params.get('clienteNome') || '';
+  if (!id) return;
+
+  funilState = { clienteId: id, clienteNome: nome, colunas: [], setores: [], setorAtivo: null, leads: [], totalGeral: 0, filtroInbox: 'todos', buscaInbox: '' };
+  const btnMsgs = document.getElementById('btn-msgs-rapidas');
+  if (btnMsgs) btnMsgs.style.display = '';
+  const btnAgenda = document.getElementById('btn-agenda');
+  if (btnAgenda) btnAgenda.style.display = '';
+  const btnTemplate = document.getElementById('btn-template-funil');
+  if (btnTemplate) btnTemplate.style.display = '';
+  document.querySelectorAll('.btn-sla').forEach(b => { b.style.display = 'inline-flex'; });
+  const headerTitle = document.querySelector('.header-title');
+  const headerSub = document.querySelector('.header-sub');
+  if (headerTitle) headerTitle.textContent = 'Funil de Atendimento';
+  if (headerSub) headerSub.textContent = nome ? 'Cliente: ' + nome : 'Gestão de leads';
+
+  const main = document.querySelector('main');
+  if (main) {
+    main.classList.add('funil-main-3col');
+    main.innerHTML = `
+      <div class="funil-page funil-page-3col">
+        <div class="funil-layout-controls" id="funil-layout-controls">
+          <span class="layout-label">Visual:</span>
+          <button type="button" class="funil-layout-btn" id="layout-btn-inbox" onclick="toggleColunaFunil('inbox')" title="Mostrar/ocultar caixa de entrada">☰ Inbox</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-kanban" onclick="toggleColunaFunil('kanban')" title="Mostrar/ocultar funil">▦ Kanban</button>
+          <button type="button" class="funil-layout-btn" id="layout-btn-chat" onclick="toggleColunaFunil('chat')" title="Mostrar/ocultar conversa">💬 Chat</button>
+          <button type="button" class="funil-layout-btn" onclick="mostrarTodasColunasFunil()" title="Restaurar layout completo">Mostrar tudo</button>
+        </div>
+        <div class="funil-3col-grid" id="funil-layout-grid">
+          <!-- Coluna 1: Caixa de entrada (conversas) -->
+          <div class="funil-inbox-col">
+            <div class="funil-inbox-head">
+              <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
+            </div>
+            <div class="funil-inbox-filtros" id="funil-inbox-filtros"></div>
+            <div id="funil-inbox-lista" class="funil-inbox-lista">
+              <div class="state-row"><div class="spinner"></div>Carregando...</div>
+            </div>
+          </div>
+
+          <!-- Coluna 2: Kanban (métricas + toolbar + abas de setor ficam aqui dentro) -->
+          <div class="funil-kanban-col">
+            <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
+            <div class="funil-toolbar">
+              <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
+              <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
+              <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
+            </div>
+            <div id="funil-lote-bar" style="display:none;background:var(--bg2);border:1px solid var(--accent);border-radius:10px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:12px;flex-wrap:wrap;flex-shrink:0">
+              <span id="funil-lote-count" style="font-size:13px;color:var(--accent);font-weight:600"></span>
+              <button class="btn-save" style="padding:7px 14px;font-size:12px" onclick="abrirModalLote()">Enviar mensagem em lote</button>
+              <button class="btn-cancel" style="padding:7px 14px;font-size:12px" onclick="limparSelecaoLote()">Cancelar seleção</button>
+            </div>
+            <div id="funil-board" class="funil-board">
+              <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+            </div>
+            <div id="funil-vendedores-section" style="margin-top:20px;display:none">
+              <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Distribuição por Vendedor</div>
+              <div class="fu-hint" style="margin-bottom:10px">Leads atribuídos automaticamente ao final do fluxo. Arraste um lead para outro vendedor para reatribuir.</div>
+              <div id="funil-board-vendedores" class="funil-board"></div>
+            </div>
+          </div>
+
+          <!-- Coluna 3: Conversa do lead selecionado (sempre visível) -->
+          <div class="funil-chat-col" id="funil-painel">
+            <div id="funil-chat-vazio" class="funil-chat-vazio">
+              <div style="font-size:32px;margin-bottom:8px">💬</div>
+              <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
+            </div>
+            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
+                <div>
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
+                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
+                  <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
+                  <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
+                </div>
+              </div>
+              <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
+                <button id="painel-tab-conversa" onclick="painelTab('conversa')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid var(--accent)">💬 Conversa</button>
+                <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
+              </div>
+              <div style="flex:1;display:flex;flex-direction:column;min-height:0">
+                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
+                  <div id="painel-conversa"><div style="font-size:12px;color:var(--text2)">Carregando conversa...</div></div>
+                </div>
+                <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
+                  <div style="font-size:11px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:10px">Histórico de eventos</div>
+                  <div id="painel-historico"><div style="font-size:12px;color:var(--text2)">Carregando...</div></div>
+                </div>
+              </div>
+              <div style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
+                <div id="painel-reply-preview" style="display:none;margin-bottom:8px"></div>
+                <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
+                  <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
+                  <div id="painel-midia-el"></div>
+                </div>
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
+                  onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
+                  onpaste="painelColarArea(event)"
+                  ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
+                    📎
+                    <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                  </label>
+                  <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
+                    style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
+                  <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+                  <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
+                  <div style="position:relative">
+                    <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
+                    <div id="menu-recursos-whatsapp" style="display:none;position:fixed;right:18px;bottom:86px;width:280px;max-height:420px;overflow:auto;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;z-index:10000;box-shadow:0 18px 42px rgba(0,0,0,.55)">
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Enviar recurso Z-API</div>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('document')">📄 Documento/PDF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('link')">🔗 Link com preview</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('location')">📍 Localização</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('contact')">👤 Contato</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('pix')">💠 Botão PIX</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('option_list')">☑️ Lista de opções</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('poll')">📊 Enquete</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('sticker')">🏷️ Sticker</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('gif')">🎞️ GIF</button>
+                      <button class="zap-tool-btn" onclick="abrirRecursoWhatsappPainel('ptv')">🎥 PTV</button>
+                      <div style="height:1px;background:var(--border);margin:8px 0"></div>
+                      <div style="font-size:11px;color:var(--text2);font-weight:700;margin:0 0 8px;text-transform:uppercase">Ações do chat</div>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('read')">✓ Marcar chat lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unread')">📩 Marcar não lido</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('pin')">📌 Fixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unpin')">↘ Desafixar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('mute')">🔕 Mutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unmute')">🔔 Desmutar chat</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('archive')">🗄️ Arquivar no WhatsApp</button>
+                      <button class="zap-tool-btn" onclick="acaoChatWhatsapp('unarchive')">📂 Desarquivar no WhatsApp</button>
+                    </div>
+                  </div>
+                  <div class="quick-menu-wrap" id="quick-menu-painel">
+                    <button type="button" class="quick-menu-trigger" onclick="toggleQuickMenuPainel(event)">⚡ Resposta rápida <span id="quick-menu-count" class="quick-menu-trigger-count"></span></button>
+                    <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
+                  </div>
+                  <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">🤖 IA</button>
+                </div>
+                <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="funil-status"></div>
+      </div>`;
+  }
+  restaurarLayoutFunil();
+  await carregarFunilAtendimento();
+  iniciarSocketFunil(id);
+}
 
 // ============================================================
-// Start
+// Menu de Atendimento — configuração (botão na linha do cliente)
 // ============================================================
-const PORT = process.env.MOVATAK_PORT || process.env.PORT || 3001;
-httpServer.listen(PORT, () => {
-  console.log(`[Movatak] Backend ${MOVATAK_VERSION} rodando na porta ${PORT}`);
-  garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
-  garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
-  garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
-});
+let menuAtendState = { clienteId: null, setores: [], colunas: [], templates: [], mapa: [] };
+
+async function abrirMenuAtendimento(id, nome) {
+  menuAtendState = { clienteId: id, setores: [], colunas: [], mapa: [] };
+  let modal = document.getElementById('modal-menu-atend');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'modal-menu-atend';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:620px;position:relative;max-height:90vh;overflow-y:auto">
+        <button class="modal-x" onclick="fecharMenuAtendimento()" title="Fechar">✕</button>
+        <h2 style="margin:0 0 4px;font-size:18px">Menu de Atendimento</h2>
+        <p class="fu-hint" id="menu-atend-cliente" style="margin:0 0 16px"></p>
+
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:16px;user-select:none">
+          <input type="checkbox" id="menu-atend-ativo" style="cursor:pointer">
+          <span style="font-size:14px;font-weight:500">Ativar menu de atendimento</span>
+        </label>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Texto do menu</div>
+        <textarea id="menu-atend-texto" placeholder="Ex: Escolha o setor que deseja atendimento:&#10;1 - Comercial&#10;2 - Suporte&#10;3 - Financeiro"
+          style="width:100%;min-height:90px;padding:10px 12px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px;margin-bottom:16px"></textarea>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Quando enviar o menu</div>
+        <select id="menu-atend-posicao" style="width:100%;padding:9px 12px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);margin-bottom:16px">
+          <option value="apos_boas_vindas">Depois das boas-vindas (na entrada)</option>
+          <option value="apos_questionario">Depois do questionário</option>
+        </select>
+
+        <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Mapeamento das respostas</div>
+        <p class="fu-hint" style="margin:0 0 10px">Para cada resposta que o lead pode digitar, escolha o setor (obrigatório) e a coluna do kanban (opcional).</p>
+        <div id="menu-atend-mapa-lista" style="margin-bottom:10px"></div>
+        <button class="btn-cancel" style="padding:8px 14px;font-size:12px" onclick="adicionarLinhaMapa()">+ Adicionar resposta</button>
+
+        <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Ação automática ao final do menu</div>
+          <p class="fu-hint" style="margin:0 0 10px">Executada no WhatsApp Business do cliente via Z-API após o lead escolher o setor.</p>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none">
+            <input type="checkbox" id="menu-atend-nao-lido" style="cursor:pointer">
+            <span style="font-size:14px">Marcar como não lido</span>
+          </label>
+        </div>
+
+        <div class="modal-btns" style="margin-top:20px">
+          <button class="btn-cancel" onclick="fecharMenuAtendimento()">Cancelar</button>
+          <button class="btn-save" id="menu-atend-salvar" onclick="salvarMenuAtendimento()">Salvar</button>
+        </div>
+        <div id="menu-atend-status" style="font-size:12px;margin-top:8px"></div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  document.getElementById('menu-atend-cliente').textContent = nome ? ('Cliente: ' + nome) : '';
+  modal.classList.add('open');
+
+  // Carrega setores, colunas, templates e config em paralelo
+  try {
+    const [funil, config, templates] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/funil'),
+      api('/movatak/admin/clientes/' + id + '/menu-atendimento'),
+      api('/movatak/admin/clientes/' + id + '/questionario-templates').catch(() => [])
+    ]);
+    menuAtendState.setores = funil.setores || [];
+    menuAtendState.colunas = funil.colunas || [];
+    menuAtendState.templates = Array.isArray(templates) ? templates : [];
+    menuAtendState.mapa = config.mapa || [];
+    document.getElementById('menu-atend-ativo').checked = !!config.ativo;
+    document.getElementById('menu-atend-texto').value = config.texto || '';
+    document.getElementById('menu-atend-posicao').value = config.posicao || 'apos_boas_vindas';
+    const chkNaoLido = document.getElementById('menu-atend-nao-lido');
+    if (chkNaoLido) chkNaoLido.checked = !!config.marcar_nao_lido;
+    if (!menuAtendState.mapa.length) menuAtendState.mapa = [{ resposta: '', setor_id: '', coluna_id: '' }];
+    renderMapaMenu();
+  } catch (e) {
+    document.getElementById('menu-atend-status').style.color = 'var(--red)';
+    document.getElementById('menu-atend-status').textContent = 'Erro ao carregar: ' + e.message;
+  }
+}
+
+function fecharMenuAtendimento() {
+  const modal = document.getElementById('modal-menu-atend');
+  if (modal) modal.classList.remove('open');
+}
+
+function renderMapaMenu() {
+  const lista = document.getElementById('menu-atend-mapa-lista');
+  if (!lista) return;
+  const setoresOpts = (idSel) => menuAtendState.setores.map(s =>
+    `<option value="${s.id}" ${Number(s.id) === Number(idSel) ? 'selected' : ''}>${escapeHtml(s.nome)}</option>`
+  ).join('');
+  const colunasOpts = (idSel) => menuAtendState.colunas.map(c =>
+    `<option value="${c.id}" ${Number(c.id) === Number(idSel) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`
+  ).join('');
+  const templatesOpts = (idSel) => (menuAtendState.templates || []).map(t =>
+    `<option value="${t.id}" ${Number(t.id) === Number(idSel) ? 'selected' : ''}>${escapeHtml(t.nome)}</option>`
+  ).join('');
+  lista.innerHTML = menuAtendState.mapa.map((m, i) => `
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+      <input type="text" value="${escapeHtml(m.resposta || '')}" placeholder="Resposta" title="O que o lead digita (ex: 1)"
+        style="width:80px;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--mono);font-size:13px"
+        onchange="atualizarLinhaMapa(${i}, 'resposta', this.value)">
+      <select style="flex:1;min-width:120px;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-size:13px"
+        onchange="atualizarLinhaMapa(${i}, 'setor_id', this.value)">
+        <option value="">Setor...</option>${setoresOpts(m.setor_id)}
+      </select>
+      <select style="flex:1;min-width:120px;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-size:13px"
+        onchange="atualizarLinhaMapa(${i}, 'coluna_id', this.value)">
+        <option value="">Coluna (opcional)</option>${colunasOpts(m.coluna_id)}
+      </select>
+      <select style="flex:1;min-width:130px;padding:8px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-size:13px" title="Autoatendimento que inicia após escolher esta opção (opcional)"
+        onchange="atualizarLinhaMapa(${i}, 'template_id', this.value)">
+        <option value="">Autoatendimento (opcional)</option>${templatesOpts(m.template_id)}
+      </select>
+      <button onclick="removerLinhaMapa(${i})" title="Remover"
+        style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--red);font-size:13px;padding:6px 9px;cursor:pointer;flex-shrink:0">🗑</button>
+    </div>`).join('');
+}
+
+function adicionarLinhaMapa() {
+  menuAtendState.mapa.push({ resposta: '', setor_id: '', coluna_id: '' });
+  renderMapaMenu();
+}
+
+function removerLinhaMapa(i) {
+  menuAtendState.mapa.splice(i, 1);
+  if (!menuAtendState.mapa.length) menuAtendState.mapa.push({ resposta: '', setor_id: '', coluna_id: '' });
+  renderMapaMenu();
+}
+
+function atualizarLinhaMapa(i, campo, valor) {
+  if (menuAtendState.mapa[i]) menuAtendState.mapa[i][campo] = valor;
+}
+
+async function salvarMenuAtendimento() {
+  const status = document.getElementById('menu-atend-status');
+  const btn = document.getElementById('menu-atend-salvar');
+  const mapaValido = menuAtendState.mapa.filter(m => String(m.resposta).trim() && m.setor_id);
+  const ativo = document.getElementById('menu-atend-ativo').checked;
+  if (ativo && !mapaValido.length) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Com o menu ativo, mapeie ao menos uma resposta a um setor.';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  try {
+    await api('/movatak/admin/clientes/' + menuAtendState.clienteId + '/menu-atendimento', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ativo,
+        texto: document.getElementById('menu-atend-texto').value,
+        posicao: document.getElementById('menu-atend-posicao').value,
+        mapa: mapaValido,
+        marcar_nao_lido: document.getElementById('menu-atend-nao-lido') ? document.getElementById('menu-atend-nao-lido').checked : false
+      })
+    });
+    status.style.color = 'var(--green)';
+    status.textContent = 'Menu de atendimento salvo.';
+  } catch (e) {
+    status.style.color = 'var(--red)';
+    status.textContent = 'Erro: ' + e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Salvar';
+  }
+}
+
+async function abrirFunilAtendimento(id, nome) {
+  const auth = (() => {
+    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    catch(e) { return secret || ''; }
+  })();
+
+  // Grava ANTES de abrir a nova aba. A versão anterior gravava depois do window.open,
+  // criando uma corrida: a aba podia carregar sem autenticação e não iniciava o funil.
+  if (auth) {
+    try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
+    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('funil', '1');
+  url.searchParams.set('clienteId', String(id));
+  url.searchParams.set('clienteNome', nome || '');
+
+  const win = window.open(url.toString(), '_blank');
+  if (win) {
+    try {
+      if (auth) {
+        win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
+        win.sessionStorage.setItem(SENHA_KEY, auth);
+        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
+      }
+    } catch(e) {}
+  } else {
+    window.location.href = url.toString();
+  }
+}
+
+function fecharFunilAtendimento() {
+  const modal = document.getElementById('modal-funil-atendimento');
+  if (modal) modal.classList.remove('open');
+}
+
+async function carregarFunilAtendimento() {
+  const board = document.getElementById('funil-board');
+  const status = document.getElementById('funil-status');
+  if (!funilState.clienteId || !board) return;
+  const primeiraCarga = !board.dataset.carregado;
+  if (primeiraCarga) {
+    board.innerHTML = '<div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>';
+  }
+  if (status) status.textContent = '';
+  try {
+    const qs = funilState.setorAtivo ? ('?setor=' + funilState.setorAtivo) : '';
+    const data = await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil' + qs);
+    funilState.colunas = data.colunas || [];
+    funilState.colunasVendedores = data.colunasVendedores || [];
+    funilState.setores = data.setores || [];
+    funilState.leads = data.leads || [];
+    funilState.totalGeral = data.totalGeral || 0;
+    funilState.totalNaoLidas = data.totalNaoLidas || 0;
+    funilState.nicho = data.nicho || '';
+    funilState.agendaAtiva = !!data.agenda_ativa;
+    renderBarraSetores();
+    renderFunilAtendimento();
+    renderInboxFunil();
+    carregarMetricasFunil();
+    board.dataset.carregado = '1';
+    if (primeiraCarga) iniciarLoopLembretes();
+    else verificarLembretesAgenda();
+    atualizarBadgePrioridades();
+    if (primeiraCarga) talvezIniciarTourAutomatico('funil');
+  } catch (e) {
+    if (primeiraCarga) {
+      board.innerHTML = '<div class="state-row" style="grid-column:1/-1;color:var(--red)">Erro ao carregar funil: ' + escapeHtml(e.message) + '</div>';
+    } else if (status) {
+      status.style.color = 'var(--red)';
+      status.textContent = 'Erro ao atualizar funil: ' + e.message;
+    }
+  }
+}
+
+// Barra de seleção de setor no topo do funil (Opção 2: "entrar" num setor)
+function renderBarraSetores() {
+  let barra = document.getElementById('funil-setores-barra');
+  if (!barra) {
+    const toolbar = document.querySelector('.funil-toolbar');
+    if (!toolbar) return;
+    barra = document.createElement('div');
+    barra.id = 'funil-setores-barra';
+    barra.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px;flex-shrink:0';
+    toolbar.parentNode.insertBefore(barra, toolbar);
+  }
+  const setores = funilState.setores || [];
+  const ativo = funilState.setorAtivo || null;
+  const badgeNaoLidas = (n) => n > 0
+    ? `<span style="color:#ff5a5a;font-weight:700;margin-left:4px">${n}</span>`
+    : `<span style="color:var(--green);margin-left:4px">${n}</span>`;
+  const btn = (id, nome, cor, count, naoLidas) => {
+    const on = (id === ativo) || (id === null && !ativo);
+    const corBorda = on ? (cor || 'var(--accent)') : 'var(--border2)';
+    const corTexto = on ? (cor || 'var(--accent)') : 'var(--text2)';
+    const badgeTotal = (count != null) ? ` <span style="opacity:.75">${count}</span>` : '';
+    return `<button onclick="selecionarSetorFunil(${id === null ? 'null' : id})"
+      style="background:transparent;border:${on ? '2px' : '1px'} solid ${corBorda};border-radius:8px;
+             color:${corTexto};font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);font-weight:${on ? '600' : '400'}">${escapeHtml(nome)}${badgeTotal}${badgeNaoLidas(naoLidas || 0)}</button>`;
+  };
+  barra.innerHTML =
+    '<span style="font-size:12px;color:var(--text2);margin-right:2px">Setor:</span>' +
+    btn(null, 'Todos', null, funilState.totalGeral, funilState.totalNaoLidas) +
+    setores.map(s => btn(s.id, s.nome, s.cor, s.leads_count, s.nao_lidas)).join('') +
+    (_vendedorToken ? '' : `<button onclick="abrirGerenciarSetores()" title="Criar, editar ou excluir setores"
+      style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">⚙ Gerenciar setores</button>`);
+}
+
+function selecionarSetorFunil(setorId) {
+  funilState.setorAtivo = setorId;
+  carregarFunilAtendimento();
+}
+
+// ── Caixa de entrada (coluna 1) ──────────────────────────────
+function filtrosInboxDefs() {
+  return [
+    { id: 'todos', label: 'Todos' },
+    { id: 'nao_lidos', label: 'Não lidos' },
+    { id: 'arquivados', label: 'Arquivados' },
+    { id: 'nao_atribuidos', label: 'Não atribuídos' }
+  ];
+}
+
+function contagemInbox(tipo) {
+  const base = funilState.leads || [];
+  if (tipo === 'todos') return base.filter(l => !l.arquivado).length;
+  if (tipo === 'arquivados') return base.filter(l => l.arquivado).length;
+  if (tipo === 'nao_lidos') return base.filter(l => !l.arquivado && l.nao_lida).length;
+  if (tipo === 'nao_atribuidos') return base.filter(l => !l.arquivado && !l.vendedor_id).length;
+  return 0;
+}
+
+// Atualiza o título da aba e o favicon com a quantidade de não lidas (estilo WhatsApp Web).
+function atualizarBadgeAba() {
+  let n = 0;
+  try { n = contagemInbox('nao_lidos') || 0; } catch (e) { n = 0; }
+  const base = 'Movatak — Painel';
+  document.title = n > 0 ? '(' + n + ') ' + base : base;
+
+  const fav = document.getElementById('app-favicon');
+  if (!fav) return;
+  // Logo base (M azul). Com não lidas, adiciona uma bolinha vermelha com o número.
+  let svg;
+  if (n > 0) {
+    const txt = n > 99 ? '99+' : String(n);
+    const fs = txt.length >= 3 ? 20 : (txt.length === 2 ? 24 : 28);
+    svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        + "<rect width='64' height='64' rx='14' fill='#5b7fff'/>"
+        + "<text x='50%' y='50%' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'>M</text>"
+        + "<circle cx='46' cy='18' r='17' fill='#ff3b3b' stroke='white' stroke-width='3'/>"
+        + "<text x='46' y='18' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='" + fs + "' font-weight='800' fill='white'>" + txt + "</text>"
+        + "</svg>";
+  } else {
+    svg = "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        + "<rect width='64' height='64' rx='14' fill='#5b7fff'/>"
+        + "<text x='50%' y='50%' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'>M</text>"
+        + "</svg>";
+  }
+  fav.href = 'data:image/svg+xml,' + encodeURIComponent(svg);
+}
+
+function leadsFiltradosInbox() {
+  const termo = (funilState.buscaInbox || '').toLowerCase().trim();
+  const tipo = funilState.filtroInbox || 'todos';
+  let lista = (funilState.leads || []).slice();
+  if (tipo === 'arquivados') {
+    lista = lista.filter(l => l.arquivado);
+  } else {
+    lista = lista.filter(l => !l.arquivado);
+    if (tipo === 'nao_lidos') lista = lista.filter(l => l.nao_lida);
+    if (tipo === 'nao_atribuidos') lista = lista.filter(l => !l.vendedor_id);
+  }
+  if (termo) {
+    lista = lista.filter(l =>
+      String(l.nome || '').toLowerCase().includes(termo) ||
+      String(l.telefone || '').toLowerCase().includes(termo)
+    );
+  }
+  lista.sort((a, b) => {
+    const ta = new Date(a.ultima_msg_em || a.atualizado_em || a.criado_em).getTime() || 0;
+    const tb = new Date(b.ultima_msg_em || b.atualizado_em || b.criado_em).getTime() || 0;
+    return tb - ta;
+  });
+  return lista;
+}
+
+function renderFiltrosInbox() {
+  const wrap = document.getElementById('funil-inbox-filtros');
+  if (!wrap) return;
+  const ativo = funilState.filtroInbox || 'todos';
+  wrap.innerHTML = filtrosInboxDefs().map(f => {
+    const on = f.id === ativo;
+    return `<button onclick="aplicarFiltroInbox('${f.id}')" class="inbox-filtro-btn${on ? ' active' : ''}">${f.label} <span>${contagemInbox(f.id)}</span></button>`;
+  }).join('');
+}
+
+function aplicarFiltroInbox(tipo) {
+  funilState.filtroInbox = tipo;
+  renderFiltrosInbox();
+  renderInboxFunil();
+}
+
+function filtrarInbox(termo) {
+  funilState.buscaInbox = termo;
+  renderInboxFunil();
+}
+
+const PALETA_AVATAR_INBOX = ['#5B7FFF', '#00D084', '#F5A623', '#E85D75', '#9B6BFF', '#22B8CF', '#FF7A59'];
+function corAvatarLead(nome) {
+  const s = String(nome || '?');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) % 997;
+  return PALETA_AVATAR_INBOX[Math.abs(h) % PALETA_AVATAR_INBOX.length];
+}
+
+function iniciaisAvatarLead(nome) {
+  const partes = String(nome || '?').trim().split(/\s+/);
+  const a = partes[0] ? partes[0][0] : '?';
+  const b = partes.length > 1 ? partes[partes.length - 1][0] : '';
+  return (a + b).toUpperCase();
+}
+
+// Monta o conteúdo interno do avatar: foto de perfil do WhatsApp quando existe,
+// senão as iniciais coloridas. Se a imagem falhar ao carregar (URL expirada do
+// WhatsApp ~48h), o onerror troca de volta pelas iniciais — sem quebrar o layout.
+function avatarConteudoLead(lead) {
+  const iniciais = iniciaisAvatarLead(lead.nome);
+  if (lead.foto_url) {
+    const fb = iniciais.replace(/'/g, '');
+    return `<img src="${escapeHtml(lead.foto_url)}" alt="" style="width:100%;height:100%;object-fit:cover;border-radius:50%"
+      onerror="this.style.display='none';this.parentNode.textContent='${fb}'">`;
+  }
+  return iniciais;
+}
+
+function horaCurtaInbox(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const hoje = new Date();
+  const mesmoDia = d.toDateString() === hoje.toDateString();
+  return mesmoDia
+    ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+}
+
+function etapaDoLead(lead) {
+  return (funilState.colunas || []).find(c => Number(c.id) === Number(lead.funil_coluna_id)) || null;
+}
+
+// Rótulo da prévia do inbox quando a mensagem é mídia (sem texto).
+// Ex: áudio → "🎤 Mensagem de voz". Retorna '' se não for mídia reconhecida.
+function rotuloMidiaInbox(midiaTipo, prefixo) {
+  if (!midiaTipo) return '';
+  const t = String(midiaTipo).toLowerCase();
+  let r = '';
+  if (t.includes('audio') || t.includes('ptt') || t.includes('voice')) r = '🎤 Mensagem de voz';
+  else if (t.includes('image') || t.includes('imagem') || t.includes('foto') || t.includes('sticker') || t.includes('figurinha')) r = '📷 Foto';
+  else if (t.includes('video')) r = '🎥 Vídeo';
+  else if (t.includes('document') || t.includes('documento') || t.includes('pdf') || t.includes('file') || t.includes('arquivo')) r = '📎 Documento';
+  else if (t.includes('location') || t.includes('localiza')) r = '📍 Localização';
+  else if (t.includes('contact') || t.includes('contato') || t.includes('vcard')) r = '👤 Contato';
+  else r = '📎 Anexo';
+  return (prefixo || '') + r;
+}
+
+function renderInboxFunil() {
+  renderFiltrosInbox();
+  atualizarBadgeAba();
+  const box = document.getElementById('funil-inbox-lista');
+  if (!box) return;
+  const lista = leadsFiltradosInbox();
+  if (!lista.length) {
+    box.innerHTML = '<div class="fu-hint" style="padding:18px;text-align:center">Nenhuma conversa aqui.</div>';
+    return;
+  }
+  box.innerHTML = lista.map(lead => {
+    const ativo = (window._painelLeadId != null && String(lead.id) === String(window._painelLeadId)) ? ' active' : '';
+    const naoLida = lead.arquivado ? false : !!lead.nao_lida;
+    const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
+    const preview = lead.ultima_msg
+      ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56)
+      : (rotuloMidiaInbox(lead.ultima_msg_midia, prefixoVoce) || 'Sem mensagens ainda');
+    const col = etapaDoLead(lead);
+    const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
+    return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
+              onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')">
+      <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)};overflow:hidden">${avatarConteudoLead(lead)}</div>
+      <div class="inbox-info">
+        <div class="inbox-top-row">
+          <strong>${escapeHtml(lead.nome || 'Sem nome')}</strong>
+          <span class="inbox-time">${horaCurtaInbox(lead.ultima_msg_em || lead.atualizado_em)}</span>
+        </div>
+        <div class="inbox-preview">${escapeHtml(preview)}</div>
+        <div class="inbox-tags">
+          <span class="tag-whatsapp">WhatsApp</span>
+          ${col ? `<span class="tag-etapa" style="color:${col.cor || '#9aa3b2'};border-color:${col.cor || '#6b7280'}66">${escapeHtml(col.nome)}</span>` : ''}
+          ${lead.arquivado ? '<span class="tag-arquivado">Arquivado</span>' : ''}
+        </div>
+      </div>
+      ${naoLida ? '<span class="inbox-dot" title="Não lida"></span>' : ''}
+    </div>`;
+  }).join('');
+}
+
+function marcarItemInboxAtivo(leadId) {
+  document.querySelectorAll('#funil-inbox-lista .inbox-item').forEach(el => {
+    el.classList.toggle('active', leadId != null && el.dataset.leadId === String(leadId));
+  });
+}
+
+function selecionarLeadInbox(id, nome) {
+  abrirPainelLead(id, nome);
+}
+
+// ── Métricas do rodapé ───────────────────────────────────────
+async function carregarMetricasFunil() {
+  const wrap = document.getElementById('funil-metricas-bar');
+  if (!wrap || !funilState.clienteId) return;
+  try {
+    const qs = funilState.setorAtivo ? ('?setor=' + funilState.setorAtivo) : '';
+    const m = await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/metricas' + qs);
+    wrap.innerHTML = `
+      <div class="funil-metrica-card"><div class="funil-metrica-valor">${m.totalLeads}</div><div class="funil-metrica-label">Total de leads</div></div>
+      <div class="funil-metrica-card"><div class="funil-metrica-valor" style="color:var(--accent)">${m.novasMensagens}</div><div class="funil-metrica-label">Novas mensagens</div></div>
+      <div class="funil-metrica-card"><div class="funil-metrica-valor" style="color:var(--amber)">${m.emNegociacao}</div><div class="funil-metrica-label">Em negociação</div></div>
+      <div class="funil-metrica-card"><div class="funil-metrica-valor" style="color:var(--green)">${m.conversaoMes}%</div><div class="funil-metrica-label">Conversão do mês</div></div>`;
+  } catch (e) {
+    wrap.innerHTML = '<div class="fu-hint">Erro ao carregar métricas.</div>';
+  }
+}
+
+// ── Gerenciar setores (criar / editar / excluir) ────────────
+function abrirGerenciarSetores() {
+  let modal = document.getElementById('modal-setores');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'modal-setores';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:480px;position:relative">
+        <button class="modal-x" onclick="fecharGerenciarSetores()" title="Fechar">✕</button>
+        <h2 style="margin:0 0 4px;font-size:18px">Setores de atendimento</h2>
+        <p class="fu-hint" style="margin:0 0 16px">Departamentos que atendem os leads (ex: Comercial, Suporte, Financeiro).</p>
+        <div id="setores-lista" style="margin-bottom:16px"></div>
+        <div style="border-top:1px solid var(--border);padding-top:14px">
+          <div style="font-size:12px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px">Novo setor</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <input type="color" id="novo-setor-cor" value="#3B82F6" title="Cor do setor"
+              style="width:38px;height:38px;border:none;background:none;cursor:pointer;padding:0;border-radius:6px;flex-shrink:0">
+            <input type="text" id="novo-setor-nome" placeholder="Nome do setor" onkeydown="if(event.key==='Enter')criarSetor()"
+              style="flex:1;padding:9px 12px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans)">
+            <button class="btn-save" style="padding:9px 16px;flex-shrink:0" onclick="criarSetor()">Criar</button>
+          </div>
+          <div id="setor-form-status" style="font-size:12px;margin-top:8px"></div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:14px;margin-top:14px">
+          <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Se algum lead foi movido antes da correção e está aparecendo no setor errado, use o botão abaixo para alinhar o setor de cada lead à coluna onde ele está.</div>
+          <button class="btn-add-small" onclick="reconciliarSetores()">🔄 Corrigir setores dos leads</button>
+          <span id="reconciliar-status" class="fu-hint" style="margin-left:8px"></span>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+  }
+  modal.classList.add('open');
+  renderListaSetoresModal();
+}
+
+function fecharGerenciarSetores() {
+  const modal = document.getElementById('modal-setores');
+  if (modal) modal.classList.remove('open');
+}
+
+// Aciona a reconciliação no backend: alinha o setor de cada lead à coluna onde está.
+async function reconciliarSetores() {
+  if (!funilState.clienteId) return;
+  const st = document.getElementById('reconciliar-status');
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Corrigindo...'; }
+  try {
+    const r = await api('/movatak/admin/clientes/' + funilState.clienteId + '/reconciliar-setores', { method: 'POST', body: JSON.stringify({}) });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = `✓ ${r.leads_corrigidos} lead(s) corrigido(s).`; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  }
+}
+
+function renderListaSetoresModal() {
+  const lista = document.getElementById('setores-lista');
+  if (!lista) return;
+  const setores = funilState.setores || [];
+  if (!setores.length) {
+    lista.innerHTML = '<div class="fu-hint">Nenhum setor criado ainda. Crie o primeiro abaixo.</div>';
+    return;
+  }
+  lista.innerHTML = setores.map(s => `
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+      <input type="color" value="${s.cor || '#3B82F6'}" title="Cor"
+        style="width:26px;height:26px;border:none;background:none;cursor:pointer;padding:0;border-radius:5px;flex-shrink:0"
+        onchange="editarSetorCampo(${s.id}, 'cor', this.value)">
+      <input type="text" value="${escapeHtml(s.nome)}" title="Nome do setor"
+        style="flex:1;padding:7px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--sans);font-size:13px"
+        onchange="editarSetorCampo(${s.id}, 'nome', this.value)">
+      <button onclick="excluirSetor(${s.id}, '${escapeHtml(s.nome).replace(/'/g, "\\'")}')" title="Excluir setor"
+        style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--red);font-size:13px;padding:5px 9px;cursor:pointer;flex-shrink:0">🗑</button>
+    </div>`).join('');
+}
+
+async function criarSetor() {
+  const nome = (document.getElementById('novo-setor-nome').value || '').trim();
+  const cor = document.getElementById('novo-setor-cor').value || '#3B82F6';
+  const status = document.getElementById('setor-form-status');
+  if (!nome) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Digite o nome do setor.'; } return; }
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/setores', {
+      method: 'POST',
+      body: JSON.stringify({ nome, cor })
+    });
+    document.getElementById('novo-setor-nome').value = '';
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Setor criado.'; }
+    await carregarFunilAtendimento();
+    renderListaSetoresModal();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro: ' + e.message; }
+  }
+}
+
+async function editarSetorCampo(setorId, campo, valor) {
+  try {
+    const body = {};
+    body[campo] = valor;
+    await api('/movatak/admin/setores/' + setorId, {
+      method: 'PATCH',
+      body: JSON.stringify(body)
+    });
+    await carregarFunilAtendimento();
+  } catch (e) {
+    alert('Erro ao salvar setor: ' + e.message);
+  }
+}
+
+async function excluirSetor(setorId, nome) {
+  if (!confirm('Excluir o setor "' + nome + '"? Os leads deste setor ficarão sem setor.')) return;
+  try {
+    await api('/movatak/admin/setores/' + setorId, { method: 'DELETE' });
+    if (funilState.setorAtivo === setorId) funilState.setorAtivo = null;
+    await carregarFunilAtendimento();
+    renderListaSetoresModal();
+  } catch (e) {
+    alert('Erro ao excluir setor: ' + e.message);
+  }
+}
+
+
+function destacarLeadKanban(leadId, rolar = true) {
+  if (!leadId) return;
+  const id = String(leadId);
+  document.querySelectorAll('.funil-page .funil-card.funil-card-selecionado').forEach(card => {
+    card.classList.remove('funil-card-selecionado');
+    card.removeAttribute('data-card-selecionado');
+  });
+  const cards = Array.from(document.querySelectorAll('.funil-page .funil-card[data-lead-id]'))
+    .filter(card => String(card.dataset.leadId) === id);
+  cards.forEach(card => {
+    card.classList.add('funil-card-selecionado');
+    card.setAttribute('data-card-selecionado', 'true');
+  });
+  if (rolar && cards[0]) {
+    cards[0].scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+  }
+}
+
+function limparDestaqueLeadKanban() {
+  document.querySelectorAll('.funil-page .funil-card.funil-card-selecionado').forEach(card => {
+    card.classList.remove('funil-card-selecionado');
+    card.removeAttribute('data-card-selecionado');
+  });
+}
+
+function renderFunilAtendimento() {
+  const board = document.getElementById('funil-board');
+  if (!board) return;
+  const _scrollPreservadoBoard = { left: board.scrollLeft, top: board.scrollTop };
+  const colunas = funilState.colunas || [];
+  if (!colunas.length) {
+    board.innerHTML = '<div class="state-row" style="grid-column:1/-1">Nenhuma etapa encontrada.</div>';
+    return;
+  }
+  const SLUGS_SISTEMA = ['lead','auto_atendimento','followup','negociacao','cliente','descartado'];
+  const htmlEtapas = colunas.map((col, __i) => {
+    col.__idx = __i;
+    const leads = col.leads || [];
+    const cor = col.cor || '#6b7280';
+    const sync = col.zapi_tag_id
+      ? '<span class="funil-sync ok" title="Sincronizado com o WhatsApp">✓ Zap</span>'
+      : '<span class="funil-sync pendente" title="Não sincronizado com o WhatsApp">Sem zap</span>';
+    // ^ trocado de "WhatsApp OK"/"Sem sync" pra caber dentro da coluna sem cortar
+    // Admin pode excluir qualquer coluna REAL do kanban (inclusive padrão). Colunas de
+    // vendedor são renderizadas em outro fluxo e não passam por aqui, então não ganham botão.
+    const btnExcluir = `<button onclick="abrirModalExcluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
+            style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--red);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;margin-left:6px">🗑</button>`;
+    return `<div class="funil-col" data-coluna="${col.id}" data-col-index="${col.__idx}"
+              style="border-top:3px solid ${cor}"
+              ondragover="funilColunaDragOver(event)" ondrop="funilColunaOuLeadDrop(event, ${col.id})" ondragleave="funilDragLeave(event)">
+      <div class="funil-col-head">
+        <div style="display:flex;align-items:center;gap:6px">
+          <span class="funil-col-handle" title="Arraste para reordenar" draggable="true"
+            ondragstart="funilColunaDragStart(event, ${col.id})" ondragend="funilColunaDragEnd(event)"
+            style="cursor:grab;color:var(--text3);font-size:14px;user-select:none;flex-shrink:0">⠿</span>
+          <input type="color" value="${cor}" title="Cor da coluna"
+            style="width:18px;height:18px;border:none;background:none;cursor:pointer;padding:0;border-radius:3px;flex-shrink:0"
+            onchange="atualizarCorColuna(${col.id}, this.value, this.closest('.funil-col'))">
+          <div>
+            <strong>${escapeHtml(col.nome)}</strong>
+            <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:4px">${sync}${btnExcluir}</div>
+      </div>
+      <div class="funil-col-setor" style="margin-bottom:8px">
+        <select title="Setor desta etapa — define em quais abas ela aparece" onchange="atribuirSetorColuna(${col.id}, this.value)"
+          style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--sans)">
+          <option value="">Sem setor (só em "Todos")</option>
+          ${(funilState.setores || []).map(s => `<option value="${s.id}" ${Number(s.id) === Number(col.setor_id) ? 'selected' : ''}>${escapeHtml(s.nome)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="funil-col-comando" style="margin-bottom:8px">
+        <input type="text" value="${escapeHtml(col.comando || '')}" placeholder="Comando p/ mover (ex: #pagamento)"
+          title="Digite este comando na conversa (você/vendedor) para mover o lead até esta coluna"
+          style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--mono)"
+          onchange="salvarComandoColuna(${col.id}, this.value)">
+      </div>
+      <div class="funil-col-ausencia" style="margin-bottom:8px;display:flex;gap:6px">
+        <label title="Quando ligado, leads que falam fora do horário definido (em Config. Inicial) recebem o aviso de ausência" style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
+          <input type="checkbox" ${col.ausencia_ativa ? 'checked' : ''} onchange="toggleAusenciaColuna(${col.id}, this.checked)" style="cursor:pointer">
+          🌙 Ausência
+        </label>
+        <button onclick="sincronizarColunaWhatsapp(${col.id})" title="Sincronizar mensagens desta coluna com o WhatsApp" style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px;white-space:nowrap;font-family:var(--sans)">🔄 Sync Zap</button>
+      </div>
+      <div class="funil-col-actions" style="display:flex;gap:6px">
+        <label style="flex:1;font-size:11px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;padding:6px 8px">
+          <input type="checkbox" data-select-col="${col.id}" onchange="selecionarTodosColuna(${col.id}, this.checked)" style="cursor:pointer"> Selecionar todos
+        </label>
+        <label title="Quando ligado, a IA interpreta a mensagem de tráfego do lead e encaixa na automação certa. Se não tiver certeza, passa para atendimento humano." style="flex:1;font-size:11px;color:var(--accent);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px;user-select:none;background:var(--bg4);border:1px solid var(--accent);border-radius:7px;padding:6px 8px;font-weight:600">
+          <input type="checkbox" ${col.ia_ativa ? 'checked' : ''} onchange="toggleIAColuna(${col.id}, this.checked)" style="cursor:pointer"> 🤖 AI
+        </label>
+      </div>
+      <div class="funil-cards">
+        ${leads.length ? leads.map(lead => renderFunilCard(lead, col.id)).join('') : '<div class="funil-empty">Sem leads nesta etapa.</div>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  const htmlVendedores = (funilState.colunasVendedores || []).map(col => {
+    const leads = col.leads || [];
+    return `<div class="funil-col funil-col-vendedor" style="border-color:rgba(91,127,255,.35)" data-vendedor-id="${col.vendedor_id}"
+              ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)"
+              ondrop="funilDropVendedor(event,${col.vendedor_id})">
+      <div class="funil-col-head">
+        <div>
+          <strong style="color:var(--accent)">${escapeHtml(col.nome)}</strong>
+          <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="funil-sync pendente" style="background:rgba(91,127,255,.12);color:var(--accent)">Vendedor</span>
+      </div>
+      <div class="funil-col-actions">
+        <span style="font-size:11px;color:var(--text3)">Arraste aqui para atribuir</span>
+      </div>
+      <div class="funil-cards">
+        ${leads.length ? leads.map(l => renderFunilCardVendedor(l, col.vendedor_id)).join('') : '<div class="funil-empty">Sem leads atribuídos.</div>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  board.innerHTML = htmlEtapas + htmlVendedores;
+  board.scrollLeft = _scrollPreservadoBoard.left;
+  board.scrollTop = _scrollPreservadoBoard.top;
+  enableDragScroll(board);
+  if (window._painelLeadId) destacarLeadKanban(window._painelLeadId, false);
+  const sec = document.getElementById('funil-vendedores-section');
+  if (sec) sec.style.display = 'none';
+}
+
+function renderFunilVendedores() {
+  const sec = document.getElementById('funil-vendedores-section');
+  const board = document.getElementById('funil-board-vendedores');
+  if (!sec || !board) return;
+  const cols = funilState.colunasVendedores || [];
+  if (!cols.length) { sec.style.display = 'none'; return; }
+  sec.style.display = '';
+  board.innerHTML = cols.map(col => {
+    const leads = col.leads || [];
+    return `<div class="funil-col" style="border-color:rgba(91,127,255,.35)" data-vendedor-id="${col.vendedor_id}"
+              ondragover="funilDragOver(event)" ondragleave="funilDragLeave(event)"
+              ondrop="funilDropVendedor(event,${col.vendedor_id})">
+      <div class="funil-col-head">
+        <div>
+          <strong style="color:var(--accent)">${escapeHtml(col.nome)}</strong>
+          <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
+        </div>
+        <span class="funil-sync pendente" style="background:rgba(91,127,255,.12);color:var(--accent)">Vendedor</span>
+      </div>
+      <div class="funil-cards">
+        ${leads.length
+          ? leads.map(l => renderFunilCardVendedor(l, col.vendedor_id)).join('')
+          : '<div class="funil-empty">Sem leads atribuídos.</div>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderFunilCardVendedor(lead, vendedorAtualId) {
+  const nome = lead.nome || 'Lead sem nome';
+  const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}</div>` : '';
+  const etapa = lead.etapa ? `<div class="funil-card-line" style="color:var(--text3)">${escapeHtml(lead.etapa)}</div>` : '';
+  const opts = (funilState.colunasVendedores || []).map(c =>
+    `<option value="${c.vendedor_id}" ${Number(c.vendedor_id) === Number(vendedorAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`
+  ).join('');
+  const selecionado = String(window._painelLeadId || '') === String(lead.id);
+  return `<div class="funil-card${selecionado ? ' funil-card-selecionado' : ''}" draggable="true" data-lead-id="${lead.id}"
+    ondragstart="funilDragStart(event,${lead.id})" ondragend="funilDragEnd(event)">
+    <div class="funil-card-top"><strong>${escapeHtml(nome)}</strong></div>
+    <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
+    ${plano}${etapa}
+    <div class="funil-card-actions">
+      <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
+      <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
+      <select onchange="reatribuirVendedor(${lead.id},this.value)">${opts}</select>
+    </div>
+  </div>`;
+}
+
+async function funilDropVendedor(ev, vendedorId) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.remove('drag-over');
+  const leadId = (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || funilLeadArrastando;
+  if (!leadId || !vendedorId) return;
+  await reatribuirVendedor(Number(leadId), Number(vendedorId));
+}
+
+async function reatribuirVendedor(leadId, vendedorId) {
+  const status = document.getElementById('funil-status');
+  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Atribuindo vendedor...'; }
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/vendedor', {
+      method: 'PATCH',
+      body: JSON.stringify({ vendedor_id: Number(vendedorId) })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Lead reatribuído.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao reatribuir: ' + e.message; }
+  }
+}
+
+async function atualizarCorColuna(colunaId, cor, colEl) {
+  if (colEl) colEl.style.borderTopColor = cor;
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId, {
+      method: 'PATCH',
+      body: JSON.stringify({ cor })
+    });
+    const idx = (funilState.colunas || []).findIndex(c => c.id === colunaId);
+    if (idx >= 0) funilState.colunas[idx].cor = cor;
+  } catch (e) {
+    const status = document.getElementById('funil-status');
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao salvar cor: ' + e.message; }
+  }
+}
+
+function enableDragScroll(el) {
+  if (!el || el._dragScrollEnabled) return;
+  el._dragScrollEnabled = true;
+  let isDown = false, startX = 0, scrollLeft = 0;
+  el.addEventListener('mousedown', e => {
+    if (e.target.closest('[draggable="true"]')) return;
+    // Não inicia o drag-scroll quando o clique é em um campo interativo,
+    // senão o preventDefault bloqueia foco/digitação (inputs, selects, botões).
+    if (e.target.closest('input, textarea, select, button, label, a, [contenteditable="true"]')) return;
+    isDown = true; startX = e.pageX - el.offsetLeft; scrollLeft = el.scrollLeft;
+    el.classList.add('drag-scrolling'); e.preventDefault();
+  });
+  el.addEventListener('mouseleave', () => { isDown = false; el.classList.remove('drag-scrolling'); });
+  el.addEventListener('mouseup',    () => { isDown = false; el.classList.remove('drag-scrolling'); });
+  el.addEventListener('mousemove', e => {
+    if (!isDown) return;
+    e.preventDefault();
+    el.scrollLeft = scrollLeft - (e.pageX - el.offsetLeft - startX);
+  });
+}
+
+// Cor do badge de follow-up conforme a sequência pendente (FU1, FU2, FU3...).
+// Esquema progressivo: começa frio (azul) e esquenta (âmbar → vermelho).
+function corFollowup(seq) {
+  const mapa = {
+    1: { bg: 'rgba(56,138,221,.15)',  fg: '#5aa9ef', label: 'FU1' },
+    2: { bg: 'rgba(245,166,35,.15)',  fg: '#f5a623', label: 'FU2' },
+    3: { bg: 'rgba(229,103,60,.15)',  fg: '#e5673c', label: 'FU3' }
+  };
+  return mapa[seq] || { bg: 'rgba(220,53,69,.15)', fg: '#e35d6a', label: 'FU' + seq };
+}
+
+function renderBadgeFollowup(lead) {
+  const seq = lead.fu_sequencia_ativa || 1;
+  const c = corFollowup(seq);
+  const qtd = lead.followups_pendentes || 0;
+  return `<span class="funil-badge" title="${qtd} mensagem(ns) de follow-up pendente(s) na sequência ${c.label}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.fg}55">${c.label}</span>`;
+}
+
+function renderFunilCard(lead, colunaAtualId) {
+  const nome = lead.nome || 'Lead sem nome';
+  const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}${lead.plano_valor != null ? ' — R$ ' + formatarValorPlanoBR(lead.plano_valor) : ''}</div>` : '';
+  const vendedor = lead.vendedor_nome ? `<div class="funil-card-line">Vendedor: ${escapeHtml(lead.vendedor_nome)}</div>` : '';
+  const pend = lead.followups_pendentes ? renderBadgeFollowup(lead) : '';
+  const options = (funilState.colunas || []).map(c => `<option value="${c.id}" ${Number(c.id) === Number(colunaAtualId) ? 'selected' : ''}>${escapeHtml(c.nome)}</option>`).join('');
+  // Selo do setor — só aparece na visão "Todos" (quando não há setor filtrado)
+  const seloSetor = (!funilState.setorAtivo && lead.setor_nome)
+    ? `<span style="background:${lead.setor_cor || '#6b7280'}22;color:${lead.setor_cor || '#9aa3b2'};font-size:10px;padding:2px 7px;border-radius:10px;margin-left:6px">${escapeHtml(lead.setor_nome)}</span>`
+    : '';
+  // Seletor de transferência de setor
+  const setoresOpts = (funilState.setores || []).map(s =>
+    `<option value="${s.id}" ${Number(s.id) === Number(lead.setor_id) ? 'selected' : ''}>${escapeHtml(s.nome)}</option>`
+  ).join('');
+  const seletorSetor = (funilState.setores && funilState.setores.length)
+    ? `<select title="Transferir para outro setor" onclick="event.stopPropagation()" onchange="transferirSetorLead(${lead.id}, this.value)" style="border-color:var(--accent)"><option value="">Setor...</option>${setoresOpts}</select>`
+    : '';
+  const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 30);
+  const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
+  const preview = lead.ultima_msg
+    ? `<div class="funil-card-preview">${escapeHtml((prefixoVoce + String(lead.ultima_msg)).slice(0, 60))}</div>`
+    : '';
+  const dotNaoLida = lead.nao_lida ? '<span class="funil-card-dot" title="Não lida"></span>' : '';
+  const selecionado = String(window._painelLeadId || '') === String(lead.id);
+  return `<div class="funil-card${selecionado ? ' funil-card-selecionado' : ''}" draggable="true" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
+            ondragstart="funilDragStart(event, ${lead.id})" ondragend="funilDragEnd(event)"
+            onclick="abrirPainelLead(${lead.id}, '${nomeSeguro}')">
+    <div class="funil-card-top">
+      <input type="checkbox" class="funil-lead-check" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
+        style="margin-right:6px;cursor:pointer;flex-shrink:0"
+        onclick="event.stopPropagation()" onchange="atualizarSelecaoLote()">
+      <span class="funil-card-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</span>
+      <strong>${escapeHtml(nome)}</strong>${pend}${seloSetor}
+      ${dotNaoLida}
+    </div>
+    <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
+    ${preview}
+    ${plano}${vendedor}
+    <div class="funil-card-line">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
+    <div class="funil-card-actions">
+      <button onclick="event.stopPropagation();abrirMensagemRapidaLead(${lead.id}, '${nomeSeguro}')">Mensagem</button>
+      <button onclick="event.stopPropagation();reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
+      <select onclick="event.stopPropagation()" onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
+      ${seletorSetor}
+    </div>
+  </div>`;
+}
+
+// Transfere o lead para outro setor usando o endpoint já existente
+// ── Notificação no topo da tela (toast) ─────────────────────────────────────
+function mostrarToast(mensagem, tipo) {
+  let host = document.getElementById('toast-host');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'toast-host';
+    host.style.cssText = 'position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none';
+    document.body.appendChild(host);
+  }
+  const cor = tipo === 'erro' ? 'var(--red)' : 'var(--green)';
+  const el = document.createElement('div');
+  el.style.cssText = `background:var(--bg2);border:1px solid ${cor};border-left:4px solid ${cor};border-radius:10px;padding:12px 18px;color:var(--text);font-size:14px;font-family:var(--sans);box-shadow:0 8px 28px rgba(0,0,0,.5);max-width:90vw;opacity:0;transform:translateY(-8px);transition:opacity .2s,transform .2s`;
+  el.textContent = mensagem;
+  host.appendChild(el);
+  requestAnimationFrame(() => { el.style.opacity = '1'; el.style.transform = 'translateY(0)'; });
+  setTimeout(() => {
+    el.style.opacity = '0'; el.style.transform = 'translateY(-8px)';
+    setTimeout(() => el.remove(), 250);
+  }, 3500);
+}
+
+// ── Transferir atendimento para outro setor ─────────────────────────────────
+function abrirTransferirSetor() {
+  if (!window._painelLeadId) return;
+  const setores = funilState.setores || [];
+  if (!setores.length) {
+    mostrarToast('Nenhum setor cadastrado. Crie setores primeiro.', 'erro');
+    return;
+  }
+  const opcoes = setores.map(s =>
+    `<button onclick="transferirSetorLead(window._painelLeadId, ${s.id})" style="display:block;width:100%;text-align:left;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:11px 14px;margin-bottom:8px;color:var(--text);font-size:14px;cursor:pointer;font-family:var(--sans)">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${s.cor || 'var(--accent)'};margin-right:8px"></span>${escapeHtml(s.nome)}
+    </button>`
+  ).join('');
+  let modal = document.getElementById('modal-transferir-setor');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-transferir-setor';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal" style="max-width:380px;padding:24px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <strong style="font-size:16px">Transferir atendimento</strong>
+        <button onclick="fecharTransferirSetor()" style="background:none;border:none;color:var(--text2);font-size:20px;cursor:pointer">✕</button>
+      </div>
+      <p class="fu-hint" style="margin-bottom:14px">O lead vai para a primeira coluna do kanban do setor escolhido.</p>
+      ${opcoes}
+    </div>`;
+  modal.classList.add('open');
+}
+
+function fecharTransferirSetor() {
+  const modal = document.getElementById('modal-transferir-setor');
+  if (modal) modal.classList.remove('open');
+}
+
+async function transferirSetorLead(leadId, setorId) {
+  if (!setorId) return;
+  try {
+    const resp = await api('/movatak/admin/leads/' + leadId + '/setor', {
+      method: 'PATCH',
+      body: JSON.stringify({ setor_id: parseInt(setorId) })
+    });
+    fecharTransferirSetor();
+    const setorNome = resp.setor_nome || 'outro setor';
+    const colInfo = resp.coluna_destino ? (' (coluna "' + resp.coluna_destino + '")') : '';
+    mostrarToast('✓ Atendimento transferido para o setor "' + setorNome + '"' + colInfo, 'sucesso');
+    // Se a conversa transferida está aberta no chat, fecha (saiu do setor atual em foco)
+    if (window._painelLeadId && String(window._painelLeadId) === String(leadId) && funilState.setorAtivo) {
+      fecharPainelLead();
+    }
+    carregarFunilAtendimento();
+  } catch (e) {
+    mostrarToast('Erro ao transferir: ' + e.message, 'erro');
+  }
+}
+
+let funilLeadArrastando = null;
+
+function funilDragStart(ev, leadId) {
+  funilLeadArrastando = leadId;
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', String(leadId));
+  }
+  if (ev.currentTarget) ev.currentTarget.classList.add('dragging');
+}
+
+function funilDragEnd(ev) {
+  funilLeadArrastando = null;
+  if (ev.currentTarget) ev.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.funil-col.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function funilDragOver(ev) {
+  ev.preventDefault();
+  const col = ev.currentTarget && ev.currentTarget.classList ? ev.currentTarget : null;
+  if (col) col.classList.add('drag-over');
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+}
+
+function funilDragLeave(ev) {
+  const col = ev.currentTarget;
+  if (!col || !ev.relatedTarget || !col.contains(ev.relatedTarget)) {
+    if (col && col.classList) col.classList.remove('drag-over');
+  }
+}
+
+async function moverLeadFunil(leadId, colunaId) {
+  const status = document.getElementById('funil-status');
+  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Movendo lead...'; }
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/funil', {
+      method: 'PATCH',
+      body: JSON.stringify({ coluna_id: Number(colunaId) })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Lead movido e lista do WhatsApp sincronizada, quando disponível.'; }
+    await carregarFunilAtendimento();
+    if (secret) carregarTudo();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao mover: ' + e.message; }
+    await carregarFunilAtendimento();
+  }
+}
+
+// ===== Reordenar colunas (drag pelo handle ⠿) =====
+let funilColunaArrastando = null;
+
+function funilColunaDragStart(ev, colunaId) {
+  funilColunaArrastando = Number(colunaId);
+  if (ev.dataTransfer) {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('application/x-coluna', String(colunaId));
+  }
+  ev.stopPropagation();
+}
+
+function funilColunaDragEnd(ev) {
+  funilColunaArrastando = null;
+  document.querySelectorAll('.funil-col.drag-over').forEach(el => el.classList.remove('drag-over'));
+}
+
+function funilColunaDragOver(ev) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.add('drag-over');
+  if (ev.dataTransfer) ev.dataTransfer.dropEffect = 'move';
+}
+
+// Drop unificado: se estiver arrastando uma coluna, reordena; senão trata como lead.
+async function funilColunaOuLeadDrop(ev, colunaAlvoId) {
+  ev.preventDefault();
+  const col = ev.currentTarget;
+  if (col && col.classList) col.classList.remove('drag-over');
+
+  if (funilColunaArrastando) {
+    const origem = funilColunaArrastando;
+    funilColunaArrastando = null;
+    if (origem === Number(colunaAlvoId)) return;
+    await reordenarColunas(origem, Number(colunaAlvoId));
+    return;
+  }
+  // senão, é um lead
+  const leadId = (ev.dataTransfer && ev.dataTransfer.getData('text/plain')) || funilLeadArrastando;
+  if (!leadId || !colunaAlvoId) return;
+  await moverLeadFunil(Number(leadId), Number(colunaAlvoId));
+}
+
+async function reordenarColunas(origemId, alvoId) {
+  const cols = (funilState.colunas || []).slice();
+  const iOrigem = cols.findIndex(c => Number(c.id) === origemId);
+  const iAlvo = cols.findIndex(c => Number(c.id) === alvoId);
+  if (iOrigem < 0 || iAlvo < 0) return;
+  const [movida] = cols.splice(iOrigem, 1);
+  cols.splice(iAlvo, 0, movida);
+  await aplicarNovaOrdemColunas(cols);
+}
+
+// Move a coluna uma posição para a esquerda (-1) ou direita (+1).
+async function moverColunaLado(colunaId, direcao) {
+  const cols = (funilState.colunas || []).slice();
+  const i = cols.findIndex(c => Number(c.id) === Number(colunaId));
+  if (i < 0) return;
+  const j = i + direcao;
+  if (j < 0 || j >= cols.length) return; // já está na ponta
+  const tmp = cols[i]; cols[i] = cols[j]; cols[j] = tmp;
+  await aplicarNovaOrdemColunas(cols);
+}
+
+async function aplicarNovaOrdemColunas(cols) {
+  funilState.colunas = cols;
+  renderFunilAtendimento();
+  const status = document.getElementById('funil-status');
+  if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Salvando nova ordem...'; }
+  try {
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/colunas/reordenar', {
+      method: 'POST',
+      body: JSON.stringify({ ordem: cols.map(c => Number(c.id)) })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Ordem das colunas atualizada.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao reordenar: ' + e.message; }
+    await carregarFunilAtendimento();
+  }
+}
+
+async function salvarComandoColuna(colunaId, valor) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId, {
+      method: 'PATCH',
+      body: JSON.stringify({ comando: String(valor || '').trim() })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.comando = String(valor || '').trim();
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Comando da coluna salvo.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao salvar comando: ' + e.message; }
+  }
+}
+
+// Liga/desliga o aviso de ausência nesta coluna do kanban. A config de horários/
+// mensagens fica em Config. Inicial; aqui é só o interruptor por etapa.
+async function toggleAusenciaColuna(colunaId, ativa) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/ausencia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ausencia_ativa: !!ativa })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.ausencia_ativa = !!ativa;
+    if (status) { status.style.color = 'var(--green)'; status.textContent = ativa ? 'Aviso de ausência ativado nesta etapa.' : 'Aviso de ausência desativado nesta etapa.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao alterar ausência: ' + e.message; }
+  }
+}
+
+// Liga/desliga a IA de automação nesta coluna. Quando ligada, a IA interpreta
+// a mensagem de tráfego do lead e encaixa na campanha/automação certa (fallback
+// do casamento por gatilho). Se não tiver certeza, passa para humano.
+async function toggleIAColuna(colunaId, ativa) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/ia', {
+      method: 'PATCH',
+      body: JSON.stringify({ ia_ativa: !!ativa })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.ia_ativa = !!ativa;
+    if (status) { status.style.color = 'var(--green)'; status.textContent = ativa ? '🤖 IA ativada nesta etapa.' : 'IA desativada nesta etapa.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao alterar IA: ' + e.message; }
+  }
+}
+
+// Define a qual setor esta etapa pertence. "Todos" sempre mostra todas as
+// etapas; os demais setores só mostram as etapas atribuídas a eles.
+async function atribuirSetorColuna(colunaId, setorId) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/setor', {
+      method: 'PATCH',
+      body: JSON.stringify({ setor_id: setorId ? parseInt(setorId, 10) : null })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Setor da etapa atualizado.'; }
+    carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao definir setor da etapa: ' + e.message; }
+  }
+}
+
+// Modal de risco para excluir uma coluna real do kanban. Mostra a quantidade de
+// leads, exige escolher coluna de destino (não pode ser a própria nem de vendedor)
+// e só então excluir. Soft delete no backend — leads e conversas são preservados.
+function abrirModalExcluirColuna(colunaId, nome) {
+  const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+  const qtdLeads = col && col.leads ? col.leads.length : 0;
+  // Destinos válidos: outras colunas reais ativas do funil (exclui a própria).
+  const destinos = (funilState.colunas || []).filter(c => Number(c.id) !== Number(colunaId));
+  const opcoesDestino = destinos.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+
+  let modal = document.getElementById('modal-excluir-coluna');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'modal-excluir-coluna';
+    modal.className = 'modal-overlay';
+    document.body.appendChild(modal);
+  }
+  modal.innerHTML = `
+    <div class="modal" style="max-width:460px">
+      <h3 style="color:var(--red)">Excluir coluna do kanban</h3>
+      <p style="font-size:13px;color:var(--text2);line-height:1.5;margin:10px 0 14px">
+        Você está prestes a excluir a coluna <strong>"${escapeHtml(nome)}"</strong>.
+        ${qtdLeads ? `Ela tem <strong>${qtdLeads} lead(s)</strong>, que serão movidos para a coluna escolhida abaixo.` : 'Ela não tem leads no momento.'}
+        A coluna será ocultada do funil, mas os leads e conversas serão preservados.
+        Colunas de vendedores não podem ser excluídas aqui — para isso, desative o vendedor no menu de vendedores.
+      </p>
+      <label class="fu-label">Mover os leads para:</label>
+      <select id="excluir-col-destino" class="fu-textarea" style="min-height:auto;padding:10px 12px">
+        ${opcoesDestino || '<option value="">Nenhuma outra coluna disponível</option>'}
+      </select>
+      <div id="excluir-col-erro" class="fu-hint" style="color:var(--red);margin-top:8px"></div>
+      <div class="modal-btns" style="margin-top:16px">
+        <button class="btn-cancel" onclick="fecharModalExcluirColuna()">Cancelar</button>
+        <button class="btn-save" style="background:var(--red)" onclick="confirmarExcluirColuna(${colunaId})">Entendo os riscos e desejo excluir</button>
+      </div>
+    </div>`;
+  modal.classList.add('open');
+}
+
+function fecharModalExcluirColuna() {
+  const modal = document.getElementById('modal-excluir-coluna');
+  if (modal) modal.classList.remove('open');
+}
+
+async function confirmarExcluirColuna(colunaId) {
+  const destinoSel = document.getElementById('excluir-col-destino');
+  const erro = document.getElementById('excluir-col-erro');
+  const destino = destinoSel ? destinoSel.value : '';
+  if (!destino) { if (erro) erro.textContent = 'Escolha uma coluna de destino.'; return; }
+  try {
+    const resp = await api('/movatak/admin/funil/colunas/' + colunaId, {
+      method: 'DELETE',
+      body: JSON.stringify({ confirmar: true, destino_coluna_id: parseInt(destino, 10) })
+    });
+    fecharModalExcluirColuna();
+    mostrarToast(`Coluna excluída. ${resp.leads_realocados ? resp.leads_realocados + ' lead(s) realocado(s).' : ''}`, 'sucesso');
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (erro) erro.textContent = 'Erro: ' + e.message;
+  }
+}
+
+function garantirModalMensagemKanban() {
+  let modal = document.getElementById('modal-msg-kanban');
+  if (modal) return modal;
+  modal = document.createElement('div');
+  modal.className = 'modal-overlay';
+  modal.id = 'modal-msg-kanban';
+  modal.innerHTML = `
+    <div class="modal" style="max-width:560px;position:relative">
+      <button class="modal-x" onclick="fecharMensagemKanban()" title="Fechar">✕</button>
+      <h3>Enviar mensagem</h3>
+      <p id="msg-kanban-destino" style="font-size:13px;color:var(--text2);margin:6px 0 14px"></p>
+      <input type="hidden" id="msg-kanban-lead-id" value="">
+      <label class="fu-label" style="margin-top:0">Mensagem para o cliente</label>
+      <textarea class="fu-textarea" id="msg-kanban-texto" rows="5" placeholder="Digite a mensagem que será enviada pelo WhatsApp..."></textarea>
+      <div class="fu-hint">A mensagem será enviada pela Z-API usando o WhatsApp Business configurado no cliente. Não expõe token da Z-API no navegador.</div>
+      <div id="msg-kanban-status" style="font-size:13px;margin-top:10px;min-height:18px"></div>
+      <div class="modal-btns">
+        <button class="btn-cancel" onclick="fecharMensagemKanban()">Cancelar</button>
+        <button class="btn-save" id="btn-msg-kanban-enviar" onclick="enviarMensagemKanban()">Enviar pelo WhatsApp</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  return modal;
+}
+
+function localizarLeadNoFunil(leadId) {
+  const id = Number(leadId);
+  const grupos = [...(funilState.colunas || []), ...(funilState.colunasVendedores || [])];
+  for (const col of grupos) {
+    const lead = (col.leads || []).find(l => Number(l.id) === id);
+    if (lead) return lead;
+  }
+  return null;
+}
+
+function abrirMensagemKanban(leadId) {
+  const modal = garantirModalMensagemKanban();
+  const lead = localizarLeadNoFunil(leadId) || { id: leadId, nome: 'Lead', telefone: '' };
+  const leadInput = document.getElementById('msg-kanban-lead-id');
+  const destino = document.getElementById('msg-kanban-destino');
+  const texto = document.getElementById('msg-kanban-texto');
+  const status = document.getElementById('msg-kanban-status');
+  if (leadInput) leadInput.value = String(leadId || '');
+  if (destino) destino.textContent = `${lead.nome || 'Lead'} · ${lead.telefone || 'sem telefone'}`;
+  if (texto) { texto.value = ''; setTimeout(() => texto.focus(), 50); }
+  if (status) status.textContent = '';
+  modal.classList.add('open');
+}
+
+function fecharMensagemKanban() {
+  const modal = document.getElementById('modal-msg-kanban');
+  if (modal) modal.classList.remove('open');
+}
+
+async function enviarMensagemKanban() {
+  const leadId = document.getElementById('msg-kanban-lead-id')?.value;
+  const texto = (document.getElementById('msg-kanban-texto')?.value || '').trim();
+  const status = document.getElementById('msg-kanban-status');
+  const btn = document.getElementById('btn-msg-kanban-enviar');
+  if (!leadId) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Lead não identificado.'; } return; }
+  if (!texto) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Digite uma mensagem antes de enviar.'; } return; }
+  if (texto.length > 2000) { if (status) { status.style.color = 'var(--red)'; status.textContent = 'Mensagem muito longa. Limite: 2000 caracteres.'; } return; }
+  try {
+    if (btn) btn.disabled = true;
+    if (status) { status.style.color = 'var(--text2)'; status.textContent = 'Enviando mensagem...'; }
+    await api('/movatak/admin/leads/' + leadId + '/mensagem-kanban', {
+      method: 'POST',
+      body: JSON.stringify({ mensagem: texto })
+    });
+    if (status) { status.style.color = 'var(--green)'; status.textContent = 'Mensagem enviada com sucesso.'; }
+    setTimeout(() => fecharMensagemKanban(), 700);
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao enviar: ' + e.message; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function toggleBuscaLead() {
+  const inp = document.getElementById('funil-busca-lead');
+  if (!inp) return;
+  if (inp.style.display === 'none') {
+    inp.style.display = '';
+    inp.focus();
+  } else {
+    inp.value = '';
+    inp.style.display = 'none';
+    filtrarLeadsKanban('');
+  }
+}
+
+function filtrarLeadsKanban(termo) {
+  const q = String(termo || '').toLowerCase().trim();
+  document.querySelectorAll('.funil-card').forEach(card => {
+    if (!q) {
+      card.style.display = '';
+      card.style.outline = '';
+      return;
+    }
+    const nome = String(card.querySelector('strong')?.textContent || '').toLowerCase();
+    const fone = String(card.querySelector('.funil-card-phone')?.textContent || '').toLowerCase();
+    const match = nome.includes(q) || fone.includes(q);
+    card.style.display = match ? '' : 'none';
+    card.style.outline = match ? '2px solid var(--accent)' : '';
+  });
+  // Scroll para o primeiro resultado
+  if (q) {
+    const primeiro = document.querySelector('.funil-card[style*="outline"]');
+    if (primeiro) primeiro.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+async function adicionarColunaFunil() {
+  const input = document.getElementById('funil-nova-coluna');
+  const status = document.getElementById('funil-status');
+  const nome = (input && input.value || '').trim();
+  if (!nome) { if (status) { status.style.color='var(--red)'; status.textContent='Informe o nome da nova etapa.'; } return; }
+  try {
+    if (status) { status.style.color='var(--text2)'; status.textContent='Criando etapa e tentando sincronizar com WhatsApp...'; }
+    await api('/movatak/admin/clientes/' + funilState.clienteId + '/funil/colunas', {
+      method: 'POST',
+      body: JSON.stringify({ nome, sincronizar_whatsapp: true })
+    });
+    input.value = '';
+    if (status) { status.style.color='var(--green)'; status.textContent='Etapa criada.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color='var(--red)'; status.textContent='Erro ao criar etapa: ' + e.message; }
+  }
+}
+
+async function sincronizarColunaWhatsapp(colunaId) {
+  const status = document.getElementById('funil-status');
+  try {
+    if (status) { status.style.color='var(--text2)'; status.textContent='Sincronizando lista no WhatsApp...'; }
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/sincronizar-whatsapp', { method: 'POST' });
+    if (status) { status.style.color='var(--green)'; status.textContent='Lista criada/sincronizada no WhatsApp.'; }
+    await carregarFunilAtendimento();
+  } catch (e) {
+    if (status) { status.style.color='var(--red)'; status.textContent='Erro na sincronização: ' + e.message; }
+  }
+}
+
+
+
+// (Funil em janela dedicada via document.write removido — usa a versão ?funil=1, mais robusta)
+
+</script>
+
+<div class="modal-overlay" id="modal-fu">
+  <div class="modal modal-fu">
+    <button class="modal-x" onclick="fecharFU()" title="Fechar">✕</button>
+    <h3 id="fu-titulo">Configuração de Follow Up</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:20px">Use <strong>{nome}</strong> para inserir o nome do lead.</p>
+
+    <!-- BLOCO 1: TEMPLATE DE CAMPANHA/FOLLOW-UP -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Template de campanha/follow-up</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Escolha primeiro um modelo pronto. Ao aplicar, ele preenche automaticamente FU1, FU2 e comandos. Depois você ajusta cada campo abaixo.</div>
+      <label class="fu-label">Template pronto</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="fu-template-select" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1" onchange="previewTemplateFollowup()"></select>
+        <button class="btn-add-small" onclick="aplicarTemplateFollowup()">Aplicar template</button>
+        <button class="btn-add-small" onclick="criarTemplateFollowup()">+ Criar template</button>
+        <button class="btn-cancel" style="padding:8px 14px" onclick="excluirTemplateFollowupSelecionado()">Excluir template</button>
+      </div>
+      <div id="fu-template-create-box" style="display:none;margin-top:12px;background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:12px">
+        <label class="fu-label" style="margin-top:0">Nome do novo template</label>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="text" class="fu-textarea" id="fu-template-nome" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Ex: DTF UV - Black Friday, Provedor - Reativação">
+          <button class="btn-add-small" onclick="salvarTemplateFollowupAtual()">Salvar modelo</button>
+          <button class="btn-cancel" style="padding:8px 14px" onclick="cancelarCriarTemplateFollowup()">Cancelar</button>
+        </div>
+        <div class="fu-hint">O template será criado com os textos atuais deste cliente. Preencha ou ajuste os campos antes de salvar.</div>
+      </div>
+      <div class="fu-hint">Selecionar um template já mostra as mensagens dele abaixo (pré-visualização). Aplicar salva essas mensagens como follow-up do cliente. Criar template salva os campos atuais como modelo reutilizável.</div>
+      <div id="fu-template-status" class="fu-hint" style="margin-top:8px"></div>
+    </div>
+
+    <!-- Campo legado oculto: a atribuição principal agora vem dos gatilhos cadastrados em Campanhas e Origens. -->
+    <input type="hidden" id="fu-trigger" value="">
+
+    <!-- BLOCO 2: FOLLOW UP 1 -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Follow up 1</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Enviadas imediatamente quando o lead chega. Se não responder em 1 hora, vai para o Follow up 2.</div>
+      <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
+      <textarea class="fu-textarea" id="fu1-msg1" rows="3" placeholder="Ex: Olá {nome}! Bem-vindo(a). Você está disponível para prosseguirmos?"></textarea>
+      <label class="fu-label">Mensagem 2 <span class="fu-tag">imediata</span></label>
+      <textarea class="fu-textarea" id="fu1-msg2" rows="3" placeholder="Deixe em branco se não quiser enviar uma segunda mensagem"></textarea>
+    </div>
+
+    <!-- BLOCO 3: FOLLOW UP 2 -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Follow up 2 — Reativação</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Ativado automaticamente se o lead não responder em 1 hora. Mensagens: imediata, D+1, D+3. Campos em branco não são enviados.</div>
+      <label class="fu-label">Mensagem 1 <span class="fu-tag">imediata</span></label>
+      <textarea class="fu-textarea" id="fu2-msg1" rows="3" placeholder="Deixe em branco se não quiser usar este follow up"></textarea>
+      <label class="fu-label">Mensagem 2 <span class="fu-tag">D+1</span></label>
+      <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
+      <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
+      <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:-8px 0 20px">
+      <span id="fu-salvo-status" style="font-size:13px;font-weight:600"></span>
+      <button class="btn-save" onclick="salvarFollowupComFeedback()" title="Salvar as mensagens de follow-up deste cliente">💾 Salvar follow-up</button>
+    </div>
+
+    <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">5. Investimento consolidado</div>
+      <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
+      <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
+      <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
+      <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
+      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
+      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
+    </div>
+
+    <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Campanhas e origens</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
+      <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
+      <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
+        <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
+        <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
+        <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
+        <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
+        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado</option></select>
+        <button class="btn-add-small" id="btn-camp-add" onclick="adicionarCampanha(this)">Adicionar</button>
+        <button class="btn-cancel" id="btn-camp-cancel" style="display:none;padding:8px 14px" onclick="cancelarEdicaoCampanha()">Cancelar edição</button>
+      </div>
+      <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text2);cursor:pointer;user-select:none">
+        <input type="checkbox" id="fu-campanha-questionario" checked style="cursor:pointer">
+        Ativar autoatendimento (questionário) para esta campanha
+        <span class="fu-hint" style="margin:0">— desmarque para a campanha ir direto ao follow-up, sem questionário (ex: DTF Têxtil).</span>
+      </label>
+      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label class="fu-label" style="margin:0;font-size:13px">Modelo de autoatendimento:</label>
+        <select id="fu-campanha-quest-template" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;max-width:280px"><option value="">Questionário do cliente (padrão)</option></select>
+        <span class="fu-hint" style="margin:0">Escolha um modelo específico para esta campanha, ou deixe no padrão do cliente.</span>
+      </div>
+      <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
+      <div id="fu-campanhas-box"></div>
+    </div>
+
+    <!-- BLOCO 8: STATUS OPERACIONAL -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Status operacional</div>
+      <div id="fu-operacao-box"></div>
+      <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" class="fu-textarea" id="fu-trigger-teste" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Cole aqui a mensagem recebida do anúncio">
+        <button class="btn-add-small" onclick="testarGatilhoAtual()">Testar</button>
+      </div>
+      <div class="fu-hint" id="fu-trigger-resultado"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
+        <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
+        <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
+      </div>
+      <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
+    </div>
+
+    <!-- BLOCO 8: FILA DE FOLLOW-UP -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Fila de follow-up</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Mostra mensagens pendentes, enviadas e pausadas. Use para auditar se o fluxo realmente entrou na fila.</div>
+      <div id="fu-fila-box"></div>
+      <div id="fu-historico-box"></div>
+    </div>
+
+    <!-- BLOCO 9: COMANDOS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">9. Comandos de automação</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px">Texto embutido numa mensagem enviada pela equipe que dispara a ação. Separe múltiplos comandos por vírgula.</div>
+      <label class="fu-label">Comando — Convertido <span class="fu-tag">marca venda fechada</span></label>
+      <input type="text" class="fu-textarea" id="fu-cmd-convertido" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#vendido, #fechou">
+      <label class="fu-label">Comando — Descartar <span class="fu-tag">remove o lead</span></label>
+      <input type="text" class="fu-textarea" id="fu-cmd-descartar" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#descartar, #morto">
+      <label class="fu-label">Comando — Desfazer venda <span class="fu-tag">reverte conversão</span></label>
+      <input type="text" class="fu-textarea" id="fu-cmd-desfazer" style="min-height:auto;padding:10px 14px;resize:none;font-family:var(--mono)" placeholder="#estornar, #desfazer">
+      <div class="fu-hint">Só funciona em leads já convertidos. O lead volta para o estado inicial.</div>
+    </div>
+
+    <!-- BLOCO 10: VENDEDORES -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">10. Vendedores</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:12px">Cada vendedor tem um comando próprio. Ao usá-lo numa mensagem, o lead é marcado como convertido e atribuído a ele.</div>
+      <div class="vendedor-list" id="fu-vendedores-list"></div>
+      <div class="add-vendedor-row">
+        <input type="text" class="fu-textarea" id="fu-novo-vendedor" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome do vendedor">
+        <input type="email" class="fu-textarea" id="fu-novo-vendedor-email" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Email de acesso">
+        <input type="password" class="fu-textarea" id="fu-novo-vendedor-senha" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Senha">
+        <button class="btn-add-small" onclick="adicionarVendedor()">+ Adicionar</button>
+      </div>
+    </div>
+
+    <!-- BLOCO 11: PERFORMANCE -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">11. Performance dos vendedores</div>
+      <div id="fu-ranking-chart" style="margin-top:10px"></div>
+    </div>
+
+    <div class="login-err" id="fu-err" style="margin-bottom:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharFU()">Cancelar</button>
+      <button class="btn-save" id="btn-fu-save" onclick="salvarFU()">Salvar alterações</button>
+    </div>
+  </div>
+</div>
+<style>
+#modal-quest .quest-card{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:12px;margin-bottom:10px}
+#modal-quest .quest-card-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+#modal-quest .quest-num{font-size:12px;font-weight:700;color:var(--accent);font-family:var(--mono)}
+#modal-quest .quest-mini{min-height:auto!important;padding:9px 12px!important;resize:none;font-size:13px;margin:4px 0}
+#modal-quest select.quest-mini{background:var(--bg2);color:var(--text);border:1px solid var(--border2);border-radius:8px;max-width:200px}
+#modal-quest .quest-row2{display:flex;gap:8px}
+#modal-quest .quest-row2 .quest-mini{flex:1}
+#modal-quest .quest-delay-row{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+#modal-quest .quest-delay-row label{font-size:12px;color:var(--text2)}
+#modal-quest .quest-delay-row input{width:90px;flex:0 0 90px!important}
+#modal-quest .quest-delay-row span{font-size:12px;color:var(--text3)}
+#modal-quest .quest-cond{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+#modal-quest .quest-cond .quest-mini{flex:1}
+#modal-quest .quest-iconbtn{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;color:var(--text2);width:28px;height:28px;cursor:pointer;font-size:13px}
+#modal-quest .quest-iconbtn:disabled{opacity:.3;cursor:default}
+#modal-quest .quest-del{color:var(--red)}
+
+
+#modal-funil-atendimento .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 16px}
+#modal-funil-atendimento .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:240px;outline:none}
+#modal-funil-atendimento .funil-board{display:grid;grid-template-columns:repeat(6,minmax(230px,1fr));gap:12px;overflow-x:auto;padding-bottom:10px;align-items:start}
+#modal-funil-atendimento .funil-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:12px;min-height:260px}
+#modal-funil-atendimento .funil-col-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}
+#modal-funil-atendimento .funil-col-head strong{font-size:13px;display:block}
+#modal-funil-atendimento .funil-col-head span{font-size:11px;color:var(--text3);font-family:var(--mono)}
+#modal-funil-atendimento .funil-sync{font-size:10px;border-radius:20px;padding:3px 7px;white-space:nowrap;font-family:var(--mono)}
+#modal-funil-atendimento .funil-sync.ok{background:rgba(0,208,132,.12);color:var(--green)}
+#modal-funil-atendimento .funil-sync.erro{background:rgba(255,90,90,.12);color:var(--red)}
+#modal-funil-atendimento .funil-sync.pendente{background:var(--bg4);color:var(--text2)}
+#modal-funil-atendimento .funil-col-actions{margin-bottom:10px}
+#modal-funil-atendimento .funil-col-actions button,#modal-funil-atendimento .funil-card-actions button{background:transparent;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:11px;padding:6px 8px;cursor:pointer;font-family:var(--sans)}
+#modal-funil-atendimento .funil-col-actions button:hover,#modal-funil-atendimento .funil-card-actions button:hover{color:var(--text);border-color:var(--accent)}
+#modal-funil-atendimento .funil-cards{display:flex;flex-direction:column;gap:8px}
+#modal-funil-atendimento .funil-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px}
+#modal-funil-atendimento .funil-card-top{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:3px}
+#modal-funil-atendimento .funil-card-top strong{font-size:13px}
+#modal-funil-atendimento .funil-badge{font-size:10px;color:var(--amber);border:1px solid rgba(245,166,35,.35);border-radius:20px;padding:2px 6px}
+#modal-funil-atendimento .funil-card-phone{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:6px}
+#modal-funil-atendimento .funil-card-line{font-size:11px;color:var(--text2);margin-top:3px}
+#modal-funil-atendimento .funil-card-actions{display:flex;gap:6px;margin-top:10px;align-items:center}
+#modal-funil-atendimento .funil-card-actions select{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:7px;padding:6px;font-size:11px;min-width:0}
+#modal-funil-atendimento .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
+#funil-status{min-height:18px;font-size:12px;color:var(--text2);margin-top:10px}
+
+main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
+.funil-main-3col .funil-page{height:100%;min-height:0}
+.funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px);display:flex;flex-direction:column}
+.funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
+.funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:200px;flex:1;outline:none}
+
+/* Grid de 3 colunas: inbox | kanban | chat — tudo travado à altura visível */
+.funil-3col-grid{display:grid;grid-template-columns:280px 1fr 380px;gap:16px;flex:1;min-height:0;overflow:hidden}
+.funil-layout-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
+.funil-layout-controls .layout-label{font-size:11px;color:var(--text2);margin-right:2px}
+.funil-layout-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:11px;padding:7px 10px;cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px}
+.funil-layout-btn:hover{border-color:var(--accent);color:var(--text)}
+.funil-layout-btn.is-hidden{border-color:rgba(255,90,90,.35);color:var(--red);background:rgba(255,90,90,.08)}
+.funil-layout-btn.is-active{border-color:rgba(0,208,132,.35);color:var(--green);background:rgba(0,208,132,.08)}
+.funil-3col-grid.hide-inbox{grid-template-columns:minmax(520px,1fr) 420px}
+.funil-3col-grid.hide-inbox .funil-inbox-col{display:none}
+.funil-3col-grid.hide-kanban{grid-template-columns:300px minmax(420px,1fr)}
+.funil-3col-grid.hide-kanban .funil-kanban-col{display:none}
+.funil-3col-grid.hide-chat{grid-template-columns:300px minmax(520px,1fr)}
+.funil-3col-grid.hide-chat .funil-chat-col{display:none}
+.funil-3col-grid.hide-inbox.hide-chat{grid-template-columns:1fr}
+.funil-3col-grid.hide-inbox.hide-chat .funil-kanban-col{display:flex}
+.funil-3col-grid.hide-kanban.hide-chat{grid-template-columns:320px}
+.funil-3col-grid.hide-kanban.hide-chat .funil-inbox-col{display:flex}
+.funil-3col-grid.hide-inbox.hide-kanban{grid-template-columns:minmax(420px,1fr)}
+.funil-3col-grid.hide-inbox.hide-kanban .funil-chat-col{display:flex}
+/* Sem o kanban, a caixa de digitação ganha mais altura para escrever confortável */
+.funil-3col-grid.hide-kanban #painel-msg-texto{min-height:200px}
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat{grid-template-columns:1fr}
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-chat-col{display:flex}
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-kanban-col,
+.funil-3col-grid.hide-inbox.hide-kanban.hide-chat .funil-inbox-col{display:none}
+.funil-inbox-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.funil-inbox-head{padding:12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.funil-inbox-head input{width:100%;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;padding:9px 10px;color:var(--text);font-family:var(--sans);font-size:13px;outline:none;box-sizing:border-box}
+.funil-inbox-filtros{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--border);flex-shrink:0}
+.inbox-filtro-btn{background:transparent;border:1px solid var(--border2);border-radius:20px;color:var(--text2);font-size:11px;padding:5px 10px;cursor:pointer;font-family:var(--sans)}
+.inbox-filtro-btn span{opacity:.7;margin-left:2px}
+.inbox-filtro-btn.active{border-color:var(--accent);color:var(--accent);font-weight:600}
+.funil-inbox-lista{flex:1;overflow-y:auto;padding:6px}
+.inbox-item{display:flex;gap:10px;align-items:flex-start;padding:10px;border-radius:10px;cursor:pointer;position:relative;margin-bottom:2px}
+.inbox-item:hover{background:var(--bg4)}
+.inbox-item.active{background:rgba(91,127,255,.14);border:1px solid rgba(91,127,255,.35)}
+.inbox-item.unread .inbox-info strong{color:var(--text)}
+.inbox-avatar{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;flex-shrink:0}
+.inbox-info{flex:1;min-width:0}
+.inbox-top-row{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
+.inbox-top-row strong{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.inbox-time{font-size:10px;color:var(--text);flex-shrink:0}
+.inbox-preview{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.inbox-item.unread .inbox-preview{font-weight:700}
+.inbox-tags{display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap}
+.tag-whatsapp{font-size:9px;color:var(--green);border:1px solid rgba(0,208,132,.35);border-radius:8px;padding:1px 6px}
+.tag-etapa{font-size:9px;border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
+.tag-arquivado{font-size:9px;color:var(--text3);border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
+.inbox-dot{position:absolute;top:12px;right:10px;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--bg3)}
+
+.funil-kanban-col{overflow:hidden;display:flex;flex-direction:column;min-width:0;min-height:0}
+.funil-page .funil-board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(220px,260px);gap:12px;overflow-x:auto;overflow-y:auto;padding-bottom:14px;align-items:start;flex:1;min-height:0;cursor:grab}
+.funil-page .funil-board.drag-scrolling{cursor:grabbing;user-select:none}
+.funil-page .funil-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:12px;min-height:300px}
+.funil-page .funil-col-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px}
+.funil-page .funil-col-head strong{font-size:13px;display:block}
+.funil-page .funil-col-head span{font-size:11px;color:var(--text3);font-family:var(--mono)}
+.funil-page .funil-sync{font-size:10px;border-radius:20px;padding:3px 7px;white-space:nowrap;font-family:var(--mono)}
+.funil-page .funil-sync.ok{background:rgba(0,208,132,.12);color:var(--green)}
+.funil-page .funil-sync.erro{background:rgba(255,90,90,.12);color:var(--red)}
+.funil-page .funil-sync.pendente{background:var(--bg4);color:var(--text2)}
+.funil-page .funil-col-actions{margin-bottom:10px}
+.funil-page .funil-col-actions button,.funil-page .funil-card-actions button{background:transparent;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:11px;padding:6px 8px;cursor:pointer;font-family:var(--sans)}
+.funil-page .funil-col-actions button:hover,.funil-page .funil-card-actions button:hover{color:var(--text);border-color:var(--accent)}
+.funil-page .funil-cards{display:flex;flex-direction:column;gap:8px}
+.funil-page .funil-card{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;cursor:pointer;position:relative}
+.funil-page .funil-card:hover{border-color:var(--accent)}
+.funil-page .funil-card.funil-card-selecionado{border-color:var(--amber)!important;background:linear-gradient(135deg, rgba(245,166,35,.18), rgba(91,127,255,.12)), var(--bg2);box-shadow:0 0 0 1px rgba(245,166,35,.45),0 0 22px rgba(245,166,35,.22);transform:translateY(-1px)}
+/* destaque do lead aberto no chat: mantém o card aceso, sem rótulo de selecionado */
+.funil-page .funil-card-top{display:flex;justify-content:flex-start;gap:6px;align-items:center;margin-bottom:3px;flex-wrap:wrap}
+.funil-page .funil-card-top strong{font-size:13px}
+.funil-card-avatar{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
+.funil-card-preview{font-size:11px;color:var(--text3);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.funil-card-dot{width:8px;height:8px;border-radius:50%;background:var(--accent);margin-left:auto;flex-shrink:0}
+.funil-page .funil-badge{font-size:10px;color:var(--amber);border:1px solid rgba(245,166,35,.35);border-radius:20px;padding:2px 6px}
+.funil-page .funil-card-phone{font-family:var(--mono);font-size:12px;color:var(--accent);margin-bottom:6px}
+.funil-page .funil-card-line{font-size:11px;color:var(--text2);margin-top:3px}
+.funil-page .funil-card-actions{display:flex;gap:6px;margin-top:10px;align-items:center;flex-wrap:wrap}
+.funil-page .funil-card-actions select{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);border-radius:7px;padding:6px;font-size:11px;min-width:110px}
+.funil-page .funil-col-vendedor{background:linear-gradient(180deg,rgba(91,127,255,.10),rgba(22,22,42,.92))}
+.funil-page .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
+.funil-card[draggable="true"]{cursor:grab}
+.funil-card.dragging{opacity:.55;cursor:grabbing;border-color:var(--accent)}
+.funil-col.drag-over{border-color:var(--accent)!important;box-shadow:0 0 0 1px rgba(91,127,255,.35) inset}
+
+/* Coluna 3: chat fixo */
+.funil-toolbar-select{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);padding:9px 12px;font-family:var(--sans);font-size:12px;min-width:190px}
+.funil-toolbar-select:focus{outline:none;border-color:var(--accent)}
+.agenda-item-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
+.funil-chat-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
+.funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
+
+/* Métricas do rodapé */
+.funil-metricas-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;flex-shrink:0}
+.funil-metrica-card{background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:6px 4px;text-align:center;min-width:0}
+.funil-metrica-valor{font-size:15px;font-weight:800;color:var(--text);line-height:1.1}
+.funil-metrica-label{font-size:8px;color:var(--text2);margin-top:1px;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#modal-quest .quest-switch{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+#modal-quest .quest-switch input{width:18px;height:18px}
+#modal-quest .quest-img{display:flex;align-items:center;gap:10px;margin-top:6px}
+#modal-quest .quest-img img{height:46px;border-radius:8px;border:1px solid var(--border2);object-fit:cover}
+#modal-quest .quest-imglink{background:none;border:none;color:var(--red);cursor:pointer;font-size:12px}
+#modal-quest .quest-imgbtn{display:inline-block;margin-top:6px;font-size:12px;color:var(--text2);border:1px dashed var(--border2);border-radius:8px;padding:7px 12px;cursor:pointer}
+#modal-quest .quest-imgbtn:hover{color:var(--text);border-color:var(--accent)}
+#modal-quest .quest-aguardar{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);margin-top:10px;cursor:pointer;flex-wrap:wrap}
+#modal-quest .quest-aguardar input{width:16px;height:16px}
+#modal-quest .quest-aguardar-hint{color:var(--text3);font-size:11px}
+</style>
+
+<div class="modal-overlay" id="modal-funil-atendimento">
+  <div class="modal modal-fu">
+    <button class="modal-x" onclick="fecharFunilAtendimento()" title="Fechar">✕</button>
+    <h3 id="funil-atendimento-titulo">Funil de Atendimento</h3>
+    <p id="funil-atendimento-subtitulo" style="font-size:13px;color:var(--text2);margin-bottom:8px">Organize os leads por etapas e sincronize com as listas do WhatsApp.</p>
+
+    <div class="funil-toolbar">
+      <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
+      <button class="btn-add-small" onclick="adicionarColunaFunil()">+ Criar etapa</button>
+      <button class="btn-cancel" style="padding:9px 14px" onclick="carregarFunilAtendimento()">Atualizar</button>
+    </div>
+
+    <div id="funil-board" class="funil-board">
+      <div class="state-row" style="grid-column:1/-1"><div class="spinner"></div>Carregando funil...</div>
+    </div>
+    <div id="funil-status"></div>
+
+    <div class="fu-hint" style="margin-top:12px">
+      Ao mover um lead de etapa, o CRM atualiza a etapa interna e tenta aplicar a lista correspondente no WhatsApp via Z-API. Se a Z-API não retornar o ID da lista, o funil continua funcionando no CRM e mostra o erro de sincronização.
+    </div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharFunilAtendimento()">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-diagnostico">
+  <div class="modal" style="max-width:680px">
+    <button class="modal-close" onclick="document.getElementById('modal-diagnostico').classList.remove('open')">×</button>
+    <h3>🔍 Diagnóstico de Lead</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:14px">Digite o telefone para ver o estado completo do lead: qual template/questionário ele usa, eventos recentes e follow-ups. A busca ignora a diferença do 9º dígito.</p>
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <input type="text" id="diag-telefone" class="fu-textarea" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Ex: 5581976041948" onkeydown="if(event.key==='Enter')rodarDiagnostico()">
+      <button class="btn-save" onclick="rodarDiagnostico()">Buscar</button>
+    </div>
+    <div id="diag-resultado"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-quest">
+  <div class="modal modal-fu">
+    <button class="modal-x" onclick="fecharQuestionario()" title="Fechar">✕</button>
+    <h3>Auto Atendimento</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Use <strong>{nome}</strong> nas mensagens e <strong>{plano}</strong> na mensagem final.</p>
+
+    <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:12px;margin-bottom:16px">
+      <label class="fu-label" style="margin-top:0">Modelo de autoatendimento em edição</label>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="quest-template-select" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;flex:1;min-width:200px" onchange="trocarTemplateQuest()"></select>
+        <button class="btn-add-small" onclick="novoTemplateQuest()">+ Novo modelo</button>
+        <button class="btn-remove" id="btn-quest-tpl-del" title="Excluir modelo" onclick="excluirTemplateQuest()" style="display:none">×</button>
+      </div>
+      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:8px">"Questionário do cliente" é o padrão (usado por campanhas sem modelo). Crie modelos diferentes para vincular a campanhas específicas (ex: um para Provedor, outro para DTF Têxtil). O vínculo é feito na seção de Campanhas.</div>
+      <div id="quest-tpl-status" class="fu-hint" style="margin-top:6px"></div>
+    </div>
+
+    <div class="quest-switch">
+      <input type="checkbox" id="quest-ativo">
+      <label for="quest-ativo" style="font-size:14px;color:var(--text)">Ativar Auto Atendimento para este cliente</label>
+    </div>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:-8px;margin-bottom:16px">Desligado, o lead segue no fluxo normal (boas-vindas + follow-up), sem perguntas.</div>
+
+    <label class="fu-label" style="margin-top:0">Introdução (enviada após as boas-vindas)</label>
+    <textarea class="fu-textarea" id="quest-intro" rows="2" placeholder="Pra te indicar o plano ideal, vou te fazer algumas perguntas rápidas."></textarea>
+    <div id="quest-intro-img"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Perguntas</label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">A ordem aqui é a ordem enviada. O <strong>ID</strong> é o nome do campo usado nas regras de recomendação.</div>
+    <div id="quest-passos"></div>
+    <button class="btn-add-small" style="margin-top:4px" onclick="questAddPasso()">+ Adicionar pergunta</button>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Recomendação de plano</label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Automática por pontuação das perguntas de "opções numeradas". Os planos e suas notas mínimas são cadastrados na edição do cliente.</div>
+    <div id="quest-regras"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">⏰ Lembrete de inatividade <span class="fu-tag">questionário parado</span></label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Se o lead começar o questionário e parar de responder, o sistema envia esta mensagem como lembrete depois do tempo definido. Deixe o texto em branco para não enviar lembrete.</div>
+    <textarea class="fu-textarea" id="quest-lembrete-msg" rows="2" placeholder="Ex: E aí, conseguiu escolher a estampa que mais atende sua necessidade?"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+      <span style="font-size:13px;color:var(--text2)">Enviar após</span>
+      <input type="number" min="1" id="quest-lembrete-tempo" class="fu-textarea" style="width:90px;padding:8px 10px" placeholder="6">
+      <select id="quest-lembrete-unidade" class="fu-textarea" style="width:auto;padding:8px 12px">
+        <option value="minutos">minutos</option>
+        <option value="horas" selected>horas</option>
+      </select>
+      <span style="font-size:13px;color:var(--text2)">de inatividade</span>
+    </div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
+    <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você."></textarea>
+    <div id="quest-final-img"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comando para parar atendimento <span class="fu-tag">encaminha p/ humano</span></label>
+    <input type="text" class="fu-textarea" id="quest-comando-parar" placeholder="Ex: #atendente">
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:6px">Quando o cliente (ou você) enviar esse comando na conversa, a automação do lead é encerrada e ele vai para atendimento humano. Após 2 respostas inválidas, o bot avisa o cliente que pode usar este comando.</div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comando para ativar autoatendimento <span class="fu-tag">reinicia do zero</span></label>
+    <input type="text" class="fu-textarea" id="quest-comando-ativar" placeholder="Ex: #iniciar">
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:6px">Enviado por você/vendedor em qualquer lugar da mensagem (na conversa do lead), reinicia o questionário do zero para esse lead e religa a automação.</div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Cobertura por CEP</label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:8px"><span id="quest-cob-total" style="color:var(--accent);font-weight:700">0 CEPs cadastrados</span>. Cole os CEPs atendidos (um por linha ou separados por vírgula). Aceita CEP completo ou prefixo (ex: 50000 cobre toda a faixa).</div>
+    <textarea class="fu-textarea" id="quest-ceps" rows="4" style="font-family:var(--mono)" placeholder="50000000&#10;50010000&#10;52000"></textarea>
+    <div style="display:flex;align-items:center;gap:16px;margin:8px 0 4px;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="substituir" checked> Substituir lista</label>
+      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="adicionar"> Adicionar à lista</label>
+      <span style="flex:1"></span>
+      <button class="btn-add-small" id="btn-cob-save" onclick="salvarCobertura()">Salvar CEPs</button>
+      <button class="btn-add-small" style="background:transparent;border:1px solid var(--red);color:var(--red)" onclick="limparCobertura()">Limpar tudo</button>
+    </div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Ações automáticas ao final do fluxo</label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Executadas no WhatsApp Business do cliente via Z-API após o lead concluir o questionário.</div>
+    <div class="perm-grid">
+      <label class="perm-item"><input type="checkbox" id="quest-acao-arquivar"> Arquivar chat do lead</label>
+      <label class="perm-item"><input type="checkbox" id="quest-acao-nao-lido"> Marcar como não lido</label>
+    </div>
+
+    <div class="login-err" id="quest-err" style="margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
+      <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar Auto Atendimento</button>
+    </div>
+  </div>
+</div>
+<style>
+.modal-x{position:absolute;top:14px;right:16px;background:transparent;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1;padding:4px;z-index:2}
+.modal-x:hover{color:var(--text)}
+</style>
+
+<div id="tour-overlay">
+  <div id="tour-backdrop"></div>
+  <div id="tour-spot"></div>
+  <div id="tour-balao">
+    <h4 id="tour-titulo"></h4>
+    <p id="tour-texto"></p>
+    <div class="tour-actions">
+      <button class="tour-skip" onclick="pularTour()">Pular tour</button>
+      <span class="tour-step" id="tour-contador"></span>
+      <div class="tour-btns">
+        <button class="tour-prev" id="tour-btn-prev" onclick="tourAnterior()">Voltar</button>
+        <button class="tour-next" id="tour-btn-next" onclick="tourProximo()">Avançar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-credenciais">
+  <div class="modal" style="max-width:460px">
+    <button class="modal-x" onclick="fecharCredenciais()" title="Fechar">✕</button>
+    <h3>🔑 Credenciais de acesso ao portal</h3>
+    <p style="font-size:13px;color:var(--text2);margin:8px 0 16px">Defina o email e a senha que o cliente <strong id="cred-cliente-nome"></strong> usará para acessar o portal dele. Envie essas credenciais para ele.</p>
+    <label class="fu-label" style="margin-top:0">Email de acesso</label>
+    <input type="email" class="fu-textarea" id="cred-email" style="min-height:auto;padding:11px 14px;resize:none" placeholder="cliente@empresa.com.br">
+    <label class="fu-label" style="margin-top:12px">Senha de acesso</label>
+    <input type="text" class="fu-textarea" id="cred-senha" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Deixe em branco para manter a atual">
+    <div id="cred-hint" class="fu-hint" style="margin-top:8px"></div>
+    <div id="cred-msg" style="font-size:13px;margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharCredenciais()">Cancelar</button>
+      <button class="btn-save" id="btn-cred-save" onclick="salvarCredenciais()">Salvar credenciais</button>
+    </div>
+  </div>
+</div>
+
+<div id="lightbox-img" onclick="fecharLightbox()" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);align-items:center;justify-content:center;cursor:zoom-out">
+  <button onclick="fecharLightbox()" title="Fechar" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:22px;width:42px;height:42px;border-radius:50%;cursor:pointer;line-height:1">✕</button>
+  <a id="lightbox-baixar" href="#" download onclick="event.stopPropagation()" title="Baixar imagem" style="position:absolute;top:18px;right:74px;background:rgba(255,255,255,.15);color:#fff;font-size:18px;width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
+  <img id="lightbox-img-el" src="" onclick="event.stopPropagation()" style="max-width:92vw;max-height:88vh;border-radius:8px;box-shadow:0 10px 50px rgba(0,0,0,.6);object-fit:contain">
+</div>
+
+<div class="modal-overlay" id="modal-reset">
+  <div class="modal" style="max-width:440px">
+    <button class="modal-x" onclick="fecharReset()" title="Fechar">✕</button>
+    <h3>Reset de lead (teste)</h3>
+    <p style="font-size:13px;color:var(--text2);margin:8px 0 16px">Apaga o lead e todo o histórico desse número (follow-up, mensagens, questionário). Use no seu número de teste pra ele voltar a entrar como lead novo.</p>
+    <label class="fu-label" style="margin-top:0">Telefone (com DDD)</label>
+    <input type="text" class="fu-textarea" id="reset-tel" style="min-height:auto;padding:11px 14px;resize:none" placeholder="5581999999999">
+    <div id="reset-msg" style="font-size:13px;margin-top:12px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharReset()">Cancelar</button>
+      <button class="btn-save" id="btn-reset-go" onclick="executarReset()" style="background:var(--amber)">Resetar lead</button>
+    </div>
+  </div>
+</div>
+<style>
+.msgs-rapidas-grid{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+.msgs-rapidas-grid button{padding:7px 12px;border:1px solid var(--border2);border-radius:8px;background:var(--bg3);color:var(--text);font-size:12px;cursor:pointer;text-align:left;flex-shrink:0;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.msgs-rapidas-grid button:hover{border-color:var(--accent);color:var(--accent)}
+.quick-menu-wrap{position:relative;display:flex;align-items:center;justify-content:flex-end;min-width:0}
+.quick-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 12px;border:1px solid var(--accent);border-radius:8px;background:transparent;color:var(--accent);font-size:12px;font-weight:600;font-family:var(--sans);cursor:pointer;white-space:nowrap}
+.quick-menu-trigger:hover{background:rgba(91,127,255,.10)}
+.quick-menu-trigger-count{font-size:10px;color:var(--text2);font-family:var(--mono)}
+.quick-menu-dropdown{position:fixed;left:auto;right:auto;top:auto;bottom:auto;width:360px;max-width:calc(100vw - 24px);max-height:420px;overflow-y:auto;overflow-x:hidden;background:var(--bg3);border:1px solid var(--border2);border-radius:12px;padding:10px;display:none;z-index:9999;box-shadow:0 18px 42px rgba(0,0,0,.55);margin-bottom:0}
+.quick-menu-wrap.open .quick-menu-dropdown{display:flex;flex-direction:column;gap:7px;flex-wrap:nowrap}
+.quick-menu-wrap.open .quick-menu-dropdown button{width:100%;max-width:none;white-space:nowrap;text-overflow:ellipsis;overflow:hidden;text-align:left;background:var(--bg4);padding-left:12px;padding-right:12px}
+.quick-menu-empty{font-size:12px;color:var(--text3);padding:8px;text-align:center}
+.modal-msgs-rapidas-admin{max-width:980px!important;width:calc(100vw - 44px);max-height:92vh;overflow-y:auto}
+#msgs-rapidas-lista{max-height:48vh;overflow-y:auto;padding-right:4px;margin-bottom:10px}
+.msg-admin-card{display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:12px;align-items:start;margin-bottom:10px;padding:12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.025)}
+.msg-admin-card.editing{display:block;border-color:var(--accent);background:rgba(91,127,255,.08)}
+.msg-admin-title-row{display:flex;align-items:center;gap:8px;min-width:0;margin-bottom:5px}
+.msg-admin-title-row strong{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg-admin-icon{font-size:14px;flex-shrink:0}
+.msg-admin-type{font-size:10px;color:var(--text2);border:1px solid var(--border);border-radius:999px;padding:2px 7px;white-space:nowrap}
+.msg-admin-preview{font-size:12px;color:var(--text2);line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
+.msg-admin-actions{display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.msg-admin-edit-btn{padding:7px 12px;border:1px solid var(--accent);border-radius:8px;background:transparent;color:var(--accent);font-size:12px;font-weight:700;cursor:pointer;font-family:var(--sans)}
+.msg-admin-edit-btn:hover{background:rgba(91,127,255,.12)}
+.msg-admin-remove-btn{border:1px solid var(--border2);border-radius:8px;width:34px;height:32px;display:flex;align-items:center;justify-content:center;background:transparent}
+.msg-admin-badge{font-size:11px;color:var(--accent);font-weight:800;text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px}
+.msg-admin-field-label{font-size:11px;color:var(--text2);font-weight:700;text-transform:uppercase;letter-spacing:.35px;margin:8px 0 5px;display:block}
+.msg-admin-title-input{min-height:auto!important;padding:9px 11px!important;resize:none;margin-bottom:8px}
+.msg-admin-textarea{min-height:88px!important;resize:vertical;margin-bottom:8px}
+.msg-admin-note{font-size:12px;color:var(--text2);background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:10px;padding:9px 10px;line-height:1.35;margin-bottom:8px}
+.msg-admin-edit-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:8px}
+.msg-admin-thumb{max-width:120px;max-height:64px;border-radius:8px;display:block;margin-top:8px;object-fit:cover;border:1px solid var(--border)}
+.msg-admin-midia{max-width:180px;max-height:90px;border-radius:8px;display:block;margin-top:6px;object-fit:cover;border:1px solid var(--border)}
+.msg-admin-media-box{margin-top:6px}.msg-admin-link,.msg-admin-link-danger{font-size:12px;background:none;border:none;cursor:pointer;padding:4px 0;display:inline-block}.msg-admin-link{color:var(--text2)}.msg-admin-link-danger{color:var(--red)}
+@media(max-width:720px){.modal-msgs-rapidas-admin{width:calc(100vw - 20px);padding:24px 18px}.msg-admin-card{grid-template-columns:1fr}.msg-admin-actions{justify-content:flex-start}.msg-admin-preview{white-space:normal}}
+.zap-tool-btn{display:block;width:100%;text-align:left;background:var(--bg4);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:8px 10px;margin-bottom:6px;font-size:12px;font-family:var(--sans);cursor:pointer}
+.zap-tool-btn:hover{border-color:var(--border2);background:#22243a}
+.zap-msg-status{font-size:10px;opacity:.85}
+#painel-reply-preview{animation:fadeUp .15s ease both}
+#painel-conversa [data-conversa-id] button:hover{opacity:.85}
+</style>
+
+<!-- Modal: enviar mensagem rápida a um lead -->
+<div class="modal-overlay" id="modal-msg-lead">
+  <div class="modal" style="max-width:500px">
+    <button class="modal-x" onclick="fecharMensagemRapidaLead()" title="Fechar">✕</button>
+    <h3 id="modal-msg-lead-titulo">Enviar mensagem</h3>
+    <div class="fu-hint" style="margin-bottom:10px">Clique numa mensagem rápida ou escreva uma personalizada.</div>
+    <div id="msgs-rapidas-lead-lista" class="msgs-rapidas-grid"></div>
+    <div id="msg-lead-midia-preview" style="display:none;margin:8px 0 10px">
+      <div style="font-size:12px;color:var(--accent);margin-bottom:4px">📎 Mídia incluída:</div>
+      <div id="msg-lead-midia-el"></div>
+    </div>
+    <label class="fu-label">Mensagem personalizada</label>
+    <textarea id="msg-lead-texto" class="fu-textarea" style="min-height:90px" placeholder="Digite a mensagem..."></textarea>
+    <div id="msg-lead-status" style="font-size:13px;margin-top:8px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharMensagemRapidaLead()">Fechar</button>
+      <button class="btn-save" onclick="enviarMensagemRapidaLead()">Enviar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: gerenciar cadastro de mensagens rápidas -->
+<div class="modal-overlay" id="modal-gerenciar-msgs">
+  <div class="modal modal-msgs-rapidas-admin">
+    <button class="modal-x" onclick="fecharGerenciarMsgsRapidas()" title="Fechar">✕</button>
+    <h3>Mensagens Rápidas</h3>
+    <div class="fu-hint" style="margin-bottom:12px">Mensagens para disparar do kanban com um clique.</div>
+    <div id="msgs-rapidas-lista"></div>
+
+    <div style="margin:14px 0 4px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn-add-small" type="button" onclick="toggleImportarAutoAtendimento()">📥 Importar do Auto Atendimento</button>
+      <div id="importar-auto-box" style="display:none;margin-top:10px;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:10px">
+        <p class="fu-hint" style="margin:0 0 8px">Escolha um template e clique numa mensagem para usá-la como mensagem rápida.</p>
+        <select id="importar-auto-template" onchange="carregarMensagensAutoAtendimento(this.value)"
+          style="width:100%;padding:8px 10px;background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);margin-bottom:8px">
+          <option value="">Carregando templates...</option>
+        </select>
+        <div id="importar-auto-lista"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px">
+      <input type="text" id="msg-nova-titulo" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none;width:100%;margin-bottom:8px" placeholder="Título/atalho (ex: Proposta)">
+
+      <div id="msg-nova-modo-simples">
+        <textarea id="msg-nova-texto" class="fu-textarea" style="min-height:70px;width:100%" placeholder="Texto da mensagem..."></textarea>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <label class="btn-add-small" style="cursor:pointer;padding:7px 12px;font-size:12px">
+            📎 Imagem/Vídeo
+            <input type="file" accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime" style="display:none" onchange="uploadMidiaNovaMsg(this)">
+          </label>
+          <span id="msg-nova-midia-preview" style="font-size:12px;color:var(--text2)"></span>
+          <input type="hidden" id="msg-nova-midia-url">
+        </div>
+      </div>
+
+      <div id="msg-nova-modo-sequencia" style="display:none;background:var(--bg4);border:1px solid var(--accent);border-radius:10px;padding:10px">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:8px">🔁 Sequência de <strong id="msg-nova-seq-contagem">0</strong> mensagens — serão disparadas em ordem, uma por uma, com 1 clique.</div>
+        <div id="msg-nova-seq-preview"></div>
+        <button class="btn-cancel" style="margin-top:6px;padding:6px 12px;font-size:12px" onclick="cancelarSequenciaPendente()">✕ Cancelar sequência</button>
+      </div>
+    </div>
+    <button class="btn-add-small" style="margin-top:10px" onclick="adicionarMsgRapida()">Adicionar</button>
+    <div id="msgs-gerenciar-status" class="fu-hint" style="margin-top:8px"></div>
+  </div>
+</div>
+<!-- Modal: envio em lote -->
+<div class="modal-overlay" id="modal-lote">
+  <div class="modal" style="max-width:540px">
+    <button class="modal-x" onclick="fecharModalLote()" title="Fechar">✕</button>
+    <h3 id="modal-lote-titulo">Envio em lote</h3>
+    <div class="fu-hint" style="margin-bottom:10px">Selecione uma mensagem rápida ou escreva abaixo. As mensagens serão enviadas com intervalo entre elas para evitar bloqueio.</div>
+    <div id="msgs-rapidas-lote-grid" class="msgs-rapidas-grid" style="margin-bottom:12px"></div>
+    <label class="fu-label">Mensagem</label>
+    <textarea id="lote-msg-texto" class="fu-textarea" style="min-height:90px" placeholder="Digite a mensagem..."></textarea>
+
+    <div style="display:flex;gap:16px;margin-top:14px;flex-wrap:wrap;align-items:center">
+      <div>
+        <label class="fu-label" style="margin-bottom:4px">Intervalo entre mensagens</label>
+        <select id="lote-intervalo" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;width:auto">
+          <option value="10">10 segundos (menor risco, volume baixo)</option>
+          <option value="16" selected>16 segundos (recomendado)</option>
+          <option value="30">30 segundos (mais seguro)</option>
+          <option value="60">60 segundos (máxima segurança)</option>
+        </select>
+      </div>
+      <div style="flex:1;min-width:180px">
+        <label class="fu-label" style="margin-bottom:4px">Após enviar, mover para</label>
+        <select id="lote-mover-coluna" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;width:100%">
+          <option value="">— não mover —</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="lote-progresso" style="display:none;margin-top:14px">
+      <div style="height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-bottom:6px">
+        <div id="lote-progresso-bar" style="height:100%;background:var(--accent);width:0%;transition:width .3s"></div>
+      </div>
+      <div id="lote-progresso-txt" style="font-size:12px;color:var(--text2)"></div>
+    </div>
+
+    <div id="lote-status" style="font-size:13px;margin-top:10px"></div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharModalLote()">Fechar</button>
+      <button class="btn-save" id="btn-lote-enviar" onclick="iniciarEnvioLote()">Enviar para <span id="lote-btn-count">0</span> leads</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>
