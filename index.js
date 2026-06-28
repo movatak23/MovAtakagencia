@@ -742,9 +742,23 @@ async function leadRespondeuRecentemente(leadId, horas) {
 // Regra: toggle da coluna LIGADO → dispara sempre (override de horário).
 // Sem toggle → usa avaliarAusencia (horário). Lead sem coluna → usa coluna de entrada.
 // Dedup garante no máximo uma vez por período (dia, no caso do toggle).
+// Detecta se uma chave/telefone é de grupo ou canal do WhatsApp.
+// Grupos terminam em @g.us, canais em @newsletter, e ids de grupo são longos demais
+// para ser um número de telefone comum (acima de 15 dígitos).
+function ehGrupoOuCanal(chave) {
+  const s = String(chave || '').toLowerCase();
+  if (!s) return false;
+  if (s.includes('@g.us') || s.includes('@newsletter') || s.includes('@broadcast')) return true;
+  const soDigitos = s.replace(/\D/g, '');
+  if (soDigitos.length > 15) return true; // ids de grupo são bem mais longos que telefones
+  return false;
+}
+
 async function dispararAusenciaSeAplicavel(cliente, lead, telefone) {
   try {
     if (!lead) return;
+    // Trava de segurança: NUNCA envia ausência para grupos ou canais do WhatsApp.
+    if (ehGrupoOuCanal(telefone) || ehGrupoOuCanal(lead.telefone)) return;
     let colunaAvaliar = lead.funil_coluna_id;
     if (!colunaAvaliar) {
       const ent = await query(
@@ -1054,6 +1068,11 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
 
   for (const row of r.rows) {
     try {
+      // Trava de segurança: nunca envia follow-up para grupos ou canais.
+      if (ehGrupoOuCanal(row.telefone)) {
+        await query(`UPDATE movatak_followup SET status='cancelado' WHERE id=$1`, [row.id]).catch(() => null);
+        continue;
+      }
       if (row.etapa !== 'followup') {
         console.log(`[followup][imediato] lead ${leadId} ignorado porque etapa=${row.etapa}`);
         continue;
@@ -3393,13 +3412,16 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // (@g.us) como "telefone"/chave. Fluxo isolado e curto: NÃO dispara gatilho,
     // follow-up, questionário nem comando — só garante que a conversa apareça na
     // inbox. Não cria coluna nova nem altera a query do funil (que quebrou antes).
-    if (body.isGroup) {
+    // Detecção de grupo robusta: confia no flag isGroup da Z-API, mas também
+    // checa a chave (@g.us / id longo) caso o flag não venha em algum payload.
+    const _chaveGrupo = String(body.phone || body.chatId || body.remoteJid || '').trim();
+    if (body.isGroup || ehGrupoOuCanal(_chaveGrupo)) {
       try {
         if (!instanceId) return;
         const rcg = await query('SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
         if (!rcg.rows.length) return;
         const clienteG = rcg.rows[0];
-        const grupoChave = String(body.phone || body.chatId || body.remoteJid || '').trim();
+        const grupoChave = _chaveGrupo;
         if (!grupoChave) return;
         const nomeGrupo = body.chatName || body.notifyName || ('Grupo ' + grupoChave.slice(0, 10));
         const ehSaidaG = !!body.fromMe;
@@ -6200,6 +6222,8 @@ function tipoMidia(url, hint) {
   return 'imagem';
 }
 async function enviarMsgQuestionario(cliente, telefone, texto, midia) {
+  // Trava de segurança: nunca envia automação de questionário para grupos ou canais.
+  if (ehGrupoOuCanal(telefone)) return null;
   // Encontra o lead_id pelo telefone para gravar na conversa
   const lr = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 ORDER BY criado_em DESC LIMIT 1', [cliente.id, telefone]).catch(() => ({ rows: [] }));
   const leadId = lr.rows[0] ? lr.rows[0].id : null;
@@ -6510,6 +6534,8 @@ async function resolverQuestionarioDoLead(cliente, lead) {
 // Não interfere na mecânica de follow-up, que segue normalmente depois.
 async function enviarBoasVindasLead(cliente, telefone) {
   try {
+    // Trava de segurança: nunca envia boas-vindas para grupos ou canais.
+    if (ehGrupoOuCanal(telefone)) return;
     const msg1 = (cliente.boas_vindas_lead_msg1 || '').trim();
     const msg2 = (cliente.boas_vindas_lead_msg2 || '').trim();
     if (!msg1 && !msg2) return; // nada preenchido → não envia nada (comportamento idêntico ao de hoje)
