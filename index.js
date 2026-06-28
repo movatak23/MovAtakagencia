@@ -1719,8 +1719,11 @@ app.get('/movatak/app/dashboard', authCliente, async (req, res) => {
 // ============================================================
 
 // Listar todos os clientes com resumo
-app.get('/movatak/admin/clientes', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes', authMovatakOuApp, async (req, res) => {
   try {
+    // Modo cliente (portal): retorna SOMENTE a própria operação.
+    const filtroCliente = req.ehCliente ? ' WHERE c.id = $1' : '';
+    const params = req.ehCliente ? [req.clienteId] : [];
     const r = await query(
       `SELECT c.id, c.nome, c.whatsapp, c.ativo, c.criado_em,
               COUNT(l.id) AS total_leads,
@@ -1729,10 +1732,10 @@ app.get('/movatak/admin/clientes', authMovatak, async (req, res) => {
               COUNT(l.id) FILTER (WHERE DATE(l.criado_em) = CURRENT_DATE) AS leads_hoje,
               COUNT(l.id) FILTER (WHERE l.etapa = 'cliente' AND DATE(COALESCE(l.convertido_em, l.atualizado_em)) = CURRENT_DATE) AS vendas_hoje
        FROM movatak_clientes c
-       LEFT JOIN movatak_leads l ON l.cliente_id = c.id
+       LEFT JOIN movatak_leads l ON l.cliente_id = c.id${filtroCliente}
        GROUP BY c.id
        ORDER BY c.criado_em DESC`,
-      []
+      params
     );
     res.json(r.rows);
   } catch (e) {
@@ -1790,7 +1793,7 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
 });
 
 // Buscar dados de um cliente para edição (sem expor token/client-token)
-app.get('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
+app.get('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
     const r = await query(
@@ -1838,10 +1841,32 @@ app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (
   }
 });
 
-app.patch('/movatak/admin/clientes/:id/dados', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    const { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha } = req.body;
+    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha } = req.body;
+
+    // Modo cliente (portal): NUNCA altera dados sensíveis (WhatsApp, Z-API, CPL,
+    // permissões, credenciais do portal). Preserva os valores atuais do banco e
+    // ignora qualquer tentativa de mudá-los, mesmo que venham forjados no corpo.
+    if (req.ehCliente) {
+      const atual = await query(
+        'SELECT nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, teto_cpl FROM movatak_clientes WHERE id = $1',
+        [req.params.id]
+      );
+      if (!atual.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+      const a = atual.rows[0];
+      whatsapp = a.whatsapp;
+      zapi_instance = a.zapi_instance;
+      zapi_token = undefined;          // não troca
+      zapi_client_token = undefined;   // não troca
+      teto_cpl = a.teto_cpl;
+      if (nome === undefined || nome === null || !String(nome).trim()) nome = a.nome;
+      // Bloqueia campos administrativos vindos do cliente.
+      permissoes_portal = undefined;
+      portal_email = undefined;
+      portal_senha = undefined;
+    }
 
     if (!nome || !whatsapp || !zapi_instance) {
       return res.status(400).json({ error: 'Nome, WhatsApp e Instance ID sao obrigatorios.' });
