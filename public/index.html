@@ -192,6 +192,11 @@ main{padding:32px}
 
 /* Tabela de clientes */
 .clientes-section{margin-bottom:28px}
+/* Modo portal do cliente: esconde itens exclusivos do admin/gestor. */
+body.modo-portal-cliente .so-admin{display:none !important}
+body.modo-portal-cliente .so-portal{display:inline !important}
+/* Esconde o botão "Credenciais" no header do app (não há gestão de acesso aqui). */
+body.modo-portal-cliente #btn-credenciais-header{display:none !important}
 .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
 .section-title{font-size:16px;font-weight:700}
 .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
@@ -435,10 +440,10 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
     <!-- Tabela de clientes -->
     <div class="clientes-section">
       <div class="section-header">
-        <div class="section-title">Clientes ativos</div>
+        <div class="section-title"><span class="so-admin">Clientes ativos</span><span class="so-portal" style="display:none">Minha Operação</span></div>
         <div style="display:flex;gap:8px;align-items:center">
           <button class="btn-cancel" style="width:auto;margin:0;padding:10px 16px;font-size:13px" onclick="abrirReset()" title="Apagar um lead de teste pelo número, para ele voltar a entrar como novo">♻️ Resetar lead</button>
-          <button class="btn-primary" style="width:auto;margin:0;padding:10px 20px;font-size:14px" onclick="abrirModal()">+ Novo cliente</button>
+          <button class="btn-primary so-admin" style="width:auto;margin:0;padding:10px 20px;font-size:14px" onclick="abrirModal()">+ Novo cliente</button>
         </div>
       </div>
       <div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;overflow:hidden">
@@ -488,24 +493,24 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
           <option value="generico">Comercial genérico</option>
         </select>
       </div>
-      <div class="form-field">
+      <div class="form-field so-admin">
         <label>WHATSAPP BUSINESS</label>
         <input type="text" id="f-whatsapp" placeholder="5581999990000">
       </div>
       <input type="hidden" id="f-trigger" value="">
-      <div class="form-field">
+      <div class="form-field so-admin">
         <label>Z-API INSTANCE ID</label>
         <input type="text" id="f-instance" placeholder="ID da instância">
       </div>
-      <div class="form-field">
+      <div class="form-field so-admin">
         <label id="lbl-token">Z-API TOKEN</label>
         <input type="text" id="f-token" placeholder="token da instância">
       </div>
-      <div class="form-field">
+      <div class="form-field so-admin">
         <label id="lbl-client-token">Z-API CLIENT TOKEN</label>
         <input type="text" id="f-client-token" placeholder="client-token">
       </div>
-      <div class="form-field">
+      <div class="form-field so-admin">
         <label>TETO DE CPL (R$)</label>
         <input type="number" id="f-cpl" placeholder="25.00">
       </div>
@@ -568,7 +573,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
 
       <!-- ACESSO AO PORTAL DO CLIENTE -->
-      <div class="form-field full" id="portal-section" style="display:none">
+      <div class="form-field full so-admin" id="portal-section" style="display:none">
         <label>🔑 ACESSO DO CLIENTE AO PORTAL</label>
         <div class="fu-hint" style="margin-bottom:10px">Defina o email e a senha que o cliente usará para acessar o portal dele (onde ele vê e edita as próprias configurações). Envie essas credenciais para ele.</div>
         <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Email de acesso</label>
@@ -729,6 +734,15 @@ document.getElementById('login-email').addEventListener('keydown', e => {
 });
 
 function sair() {
+  // Modo portal do cliente: limpa o token e volta para o login do portal.
+  if (_appTokenPortal) {
+    try {
+      localStorage.removeItem('movatak-portal-token');
+      localStorage.removeItem('movatak-portal-nome');
+    } catch (e) {}
+    window.location.href = 'portal.html';
+    return;
+  }
   sessionStorage.removeItem(SENHA_KEY);
   localStorage.removeItem(SENHA_LOCAL_KEY);
   sessionStorage.removeItem('mvtk_vend_token');
@@ -1345,27 +1359,29 @@ if (_vendTokenSalvo) {
 }
 }
 
-// Abre o funil no modo cliente (portal). Descobre o cliente do token e carrega o funil dele.
+// Abre a TELA INICIAL completa no modo cliente (portal). O cliente vê o dashboard
+// e os botões de recurso só da operação dele. O backend isola tudo pelo token.
 async function iniciarFunilPortalCliente() {
   try {
+    document.body.classList.add('modo-portal-cliente'); // ativa o CSS que esconde itens do admin
     document.getElementById('login-screen').classList.add('hidden');
     document.getElementById('app').classList.add('visible');
-    // Descobre quem é o cliente pelo token (o backend resolve pelo x-app-token).
+    // Descobre quem é o cliente pelo token.
     const me = await api('/movatak/app/me');
     if (!me || !me.id) throw new Error('Sessão inválida. Faça login novamente no portal.');
-    // Injeta o clienteId/nome na URL para a função padrão do funil usar.
-    const u = new URLSearchParams(window.location.search);
-    u.set('funil', '1');
-    u.set('clienteId', String(me.id));
-    u.set('clienteNome', me.nome || 'Minha empresa');
-    try { history.replaceState(null, '', window.location.pathname + '?' + u.toString()); } catch (e) {}
-    funilState.clienteId = me.id;
-    // Esconde botões que o cliente não deve ter (credenciais é só do admin; aqui não há lista de clientes).
-    iniciarPaginaFunilAtendimento();
+    _portalClienteId = me.id;
+    _portalClienteNome = me.nome || 'Minha empresa';
+    // Limpa o token da URL.
+    try { history.replaceState(null, '', window.location.pathname); } catch (e) {}
+    verificarVersao();
+    // Abre a tela inicial (igual à do admin), mas só com a operação do cliente.
+    carregarTudo();
   } catch (e) {
-    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#fff;font-family:sans-serif">Erro ao abrir o funil: ' + (e.message || e) + '<br><br><a href="portal.html" style="color:#5b7fff">Voltar ao login</a></div>';
+    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#fff;font-family:sans-serif">Erro ao abrir o portal: ' + (e.message || e) + '<br><br><a href="portal.html" style="color:#5b7fff">Voltar ao login</a></div>';
   }
 }
+let _portalClienteId = null;
+let _portalClienteNome = '';
 
 // ── API ────────────────────────────────────────────────────
 // ── Rotas do vendedor: reaproveita a mesma tela do admin, mas redireciona
@@ -1725,7 +1741,7 @@ function renderClientes(clientes) {
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
       <td class="td-mono" style="font-size:13px">—</td>
       <td>
-        <button onclick="event.stopPropagation();abrirCredenciais(${c.id})" style="background:transparent;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">🔑 Credenciais</button>
+        <button onclick="event.stopPropagation();abrirCredenciais(${c.id})" class="so-admin" style="background:transparent;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">🔑 Credenciais</button>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
