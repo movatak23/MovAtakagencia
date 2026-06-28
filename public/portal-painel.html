@@ -97,6 +97,7 @@ body { font-family: var(--sans); background: var(--bg); color: var(--text); min-
     <div class="tabs">
       <button class="tab ativo" id="tab-dashboard" onclick="trocarAba('dashboard')">📊 Dashboard</button>
       <button class="tab" id="tab-config" onclick="trocarAba('config')">⚙️ Configurações</button>
+      <button class="tab" id="tab-funil" onclick="abrirFunilCliente()">🗂️ Funil de Atendimento</button>
     </div>
 
     <!-- ABA DASHBOARD -->
@@ -321,6 +322,12 @@ function sair() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(NOME_KEY);
   window.location.href = 'portal.html';
+}
+
+// Abre o funil de atendimento (a mesma tela do admin, em modo cliente isolado).
+// Passa o app_token na URL; o index.html detecta e carrega só a operação do cliente.
+function abrirFunilCliente() {
+  window.location.href = 'index.html?funil=1&portal_token=' + encodeURIComponent(token);
 }
 </script>
 </body>

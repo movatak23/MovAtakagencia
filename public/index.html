@@ -682,6 +682,18 @@ function setPermissoesPortal(p = {}) {
 let _vendedorToken = '';
 let _vendedorInfo = null;
 
+// Token do cliente quando o funil é aberto pelo portal (index.html?funil=1&portal_token=...).
+// Quando presente, a função api() usa x-app-token e o backend isola tudo ao cliente dele.
+let _appTokenPortal = '';
+try {
+  const _pt = new URLSearchParams(window.location.search).get('portal_token');
+  if (_pt) {
+    _appTokenPortal = _pt;
+    // Remove o token da barra de endereço por segurança (não fica visível/no histórico).
+    try { history.replaceState(null, '', window.location.pathname + '?funil=1'); } catch (e) {}
+  }
+} catch (e) {}
+
 async function fazerLogin() {
   const email = (document.getElementById('login-email').value || '').trim();
   const val = document.getElementById('login-input').value.trim();
@@ -1312,6 +1324,11 @@ function recuperarSecretFunilJanela() {
 }
 
 let funilState = { clienteId: null, clienteNome: '', colunas: [], setores: [], setorAtivo: null };
+// Entrada pelo PORTAL DO CLIENTE: se há app_token do portal, o funil abre direto
+// no modo cliente (sem tela de login). O backend isola tudo ao cliente do token.
+if (_appTokenPortal) {
+  iniciarFunilPortalCliente();
+} else {
 // Restaura sessão de vendedor, se houver (tem prioridade sobre a de gestor).
 let _vendTokenSalvo = '';
 try { _vendTokenSalvo = sessionStorage.getItem('mvtk_vend_token') || ''; } catch(e) {}
@@ -1324,6 +1341,29 @@ if (_vendTokenSalvo) {
   if (savedSecret) {
     secret = savedSecret;
     iniciar();
+  }
+}
+}
+
+// Abre o funil no modo cliente (portal). Descobre o cliente do token e carrega o funil dele.
+async function iniciarFunilPortalCliente() {
+  try {
+    document.getElementById('login-screen').classList.add('hidden');
+    document.getElementById('app').classList.add('visible');
+    // Descobre quem é o cliente pelo token (o backend resolve pelo x-app-token).
+    const me = await api('/movatak/app/me');
+    if (!me || !me.id) throw new Error('Sessão inválida. Faça login novamente no portal.');
+    // Injeta o clienteId/nome na URL para a função padrão do funil usar.
+    const u = new URLSearchParams(window.location.search);
+    u.set('funil', '1');
+    u.set('clienteId', String(me.id));
+    u.set('clienteNome', me.nome || 'Minha empresa');
+    try { history.replaceState(null, '', window.location.pathname + '?' + u.toString()); } catch (e) {}
+    funilState.clienteId = me.id;
+    // Esconde botões que o cliente não deve ter (credenciais é só do admin; aqui não há lista de clientes).
+    iniciarPaginaFunilAtendimento();
+  } catch (e) {
+    document.body.innerHTML = '<div style="padding:40px;text-align:center;color:#fff;font-family:sans-serif">Erro ao abrir o funil: ' + (e.message || e) + '<br><br><a href="portal.html" style="color:#5b7fff">Voltar ao login</a></div>';
   }
 }
 
@@ -1370,11 +1410,15 @@ function adaptarPathVendedor(path) {
 }
 
 async function api(path, opts = {}, raw = false) {
-  // Headers de auth: se estamos logados como vendedor, manda o token do vendedor;
-  // senão, a secret do gestor. (raw=true evita o auto-logout em 401, usado no login.)
-  const authHeaders = _vendedorToken
-    ? { 'x-vendedor-token': _vendedorToken }
-    : { 'x-movatak-secret': secret };
+  // Headers de auth, em ordem de prioridade:
+  // 1) app_token do cliente (portal) — quando o funil é aberto pelo portal do cliente;
+  // 2) token do vendedor; 3) secret do gestor (admin).
+  const appTokenCliente = (typeof _appTokenPortal !== 'undefined' && _appTokenPortal) ? _appTokenPortal : null;
+  const authHeaders = appTokenCliente
+    ? { 'x-app-token': appTokenCliente }
+    : (_vendedorToken
+        ? { 'x-vendedor-token': _vendedorToken }
+        : { 'x-movatak-secret': secret });
   const pathFinal = adaptarPathVendedor(path);
   const controller = new AbortController();
   const metodo = String((opts && opts.method) || 'GET').toUpperCase();
