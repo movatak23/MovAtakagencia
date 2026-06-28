@@ -4691,6 +4691,17 @@ async function carregarQuestNoEditor() {
     document.getElementById('quest-final').value = r.final || '';
     document.getElementById('quest-comando-parar').value = r.comando_parar || '';
     document.getElementById('quest-comando-ativar').value = r.comando_ativar || '';
+    // Lembrete de inatividade: converte minutos salvos para tempo+unidade amigável.
+    const lmEl = document.getElementById('quest-lembrete-msg');
+    const ltEl = document.getElementById('quest-lembrete-tempo');
+    const luEl = document.getElementById('quest-lembrete-unidade');
+    if (lmEl) lmEl.value = r.quest_lembrete_msg || '';
+    const min = r.quest_lembrete_minutos || 0;
+    if (ltEl && luEl) {
+      if (min > 0 && min % 60 === 0) { ltEl.value = min / 60; luEl.value = 'horas'; }
+      else if (min > 0) { ltEl.value = min; luEl.value = 'minutos'; }
+      else { ltEl.value = ''; luEl.value = 'horas'; }
+    }
     document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
     renderQuestPassos();
     renderQuestRegras();
@@ -4921,6 +4932,13 @@ async function salvarQuestionario() {
   btn.disabled = true; btn.textContent = 'Salvando...';
   document.getElementById('quest-err').textContent = '';
   try {
+    // Lembrete de inatividade: converte tempo+unidade para minutos.
+    const lembreteMsg = (document.getElementById('quest-lembrete-msg')?.value || '').trim();
+    const lembreteTempo = parseInt(document.getElementById('quest-lembrete-tempo')?.value, 10) || 0;
+    const lembreteUnidade = document.getElementById('quest-lembrete-unidade')?.value || 'horas';
+    const lembreteMinutos = lembreteTempo > 0
+      ? (lembreteUnidade === 'horas' ? lembreteTempo * 60 : lembreteTempo)
+      : null;
     const passos = questState.passos
       .filter(p => (p.pergunta || '').trim())
       .map(p => ({
@@ -4965,7 +4983,9 @@ async function salvarQuestionario() {
           passos,
           recomendacao: [],
           acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
-          acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked
+          acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked,
+          quest_lembrete_msg: lembreteMsg,
+          quest_lembrete_minutos: lembreteMinutos
         })
       });
     }
@@ -8147,6 +8167,19 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Recomendação de plano</label>
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Automática por pontuação das perguntas de "opções numeradas". Os planos e suas notas mínimas são cadastrados na edição do cliente.</div>
     <div id="quest-regras"></div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">⏰ Lembrete de inatividade <span class="fu-tag">questionário parado</span></label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Se o lead começar o questionário e parar de responder, o sistema envia esta mensagem como lembrete depois do tempo definido. Deixe o texto em branco para não enviar lembrete.</div>
+    <textarea class="fu-textarea" id="quest-lembrete-msg" rows="2" placeholder="Ex: E aí, conseguiu escolher a estampa que mais atende sua necessidade?"></textarea>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap">
+      <span style="font-size:13px;color:var(--text2)">Enviar após</span>
+      <input type="number" min="1" id="quest-lembrete-tempo" class="fu-textarea" style="width:90px;padding:8px 10px" placeholder="6">
+      <select id="quest-lembrete-unidade" class="fu-textarea" style="width:auto;padding:8px 12px">
+        <option value="minutos">minutos</option>
+        <option value="horas" selected>horas</option>
+      </select>
+      <span style="font-size:13px;color:var(--text2)">de inatividade</span>
+    </div>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
     <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você."></textarea>
