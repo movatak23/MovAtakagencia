@@ -6784,8 +6784,8 @@ async function processarQuestionariosParados() {
           if (passo) {
             await enviarMsgQuestionario(
               cliente, lead.telefone,
-              '⏰ Ficou faltando só isso:\n\n' + montarTextoPergunta(passo),
-              passo.imagem
+              'E aí, conseguiu escolher a estampa que mais atende sua necessidade?',
+              null
             );
           }
           await query(`UPDATE movatak_questionario_estado SET lembretes = COALESCE(lembretes,0) + 1, atualizado_em = NOW() WHERE id = $1`, [est.id]);
