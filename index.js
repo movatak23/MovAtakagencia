@@ -277,6 +277,18 @@ const exigeMsgRapida = [authMovatakOuApp, async (req, res, next) => {
   }
   next();
 }];
+const exigeVendedor = [authMovatakOuApp, async (req, res, next) => {
+  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_vendedores', req.params.id))) {
+    return res.status(403).json({ error: 'Acesso negado a este vendedor.' });
+  }
+  next();
+}];
+const exigeCampanha = [authMovatakOuApp, async (req, res, next) => {
+  if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_campanhas', req.params.id))) {
+    return res.status(403).json({ error: 'Acesso negado a esta campanha.' });
+  }
+  next();
+}];
 const exigePlano = [authMovatakOuApp, async (req, res, next) => {
   if (req.ehCliente && !(await recursoPertenceAoCliente(req, 'movatak_planos', req.params.id))) {
     return res.status(403).json({ error: 'Acesso negado a este plano.' });
@@ -2200,7 +2212,7 @@ app.post('/movatak/admin/clientes/:id/vendedores', ...forcaClienteIdNaUrl, async
 });
 
 // Remover vendedor
-app.delete('/movatak/admin/clientes/:clienteId/vendedores/:id', authMovatak, async (req, res) => {
+app.delete('/movatak/admin/clientes/:clienteId/vendedores/:id', ...exigeVendedor, async (req, res) => {
   try {
     await query('UPDATE movatak_vendedores SET ativo = false WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -4111,7 +4123,7 @@ app.patch('/movatak/admin/clientes/:id/menu-atendimento', ...forcaClienteIdNaUrl
 });
 
 // Atualizar comando de um vendedor
-app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/vendedores/:id/comando', ...exigeVendedor, async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
     const comando = req.body.comando ? String(req.body.comando).trim().toLowerCase() : null;
@@ -4154,7 +4166,7 @@ app.patch('/movatak/admin/vendedores/:id/comando', authMovatak, async (req, res)
 
 
 // Atualizar acesso do vendedor ao portal individual
-app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/vendedores/:id/acesso', ...exigeVendedor, async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
     const { email_acesso, senha_acesso, nome, comando } = req.body || {};
@@ -4174,7 +4186,7 @@ app.patch('/movatak/admin/vendedores/:id/acesso', authMovatak, async (req, res) 
 });
 
 // Define os setores que um vendedor acessa (substitui o conjunto atual).
-app.patch('/movatak/admin/vendedores/:id/setores', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/vendedores/:id/setores', ...exigeVendedor, async (req, res) => {
   try {
     const vendedorId = parseInt(req.params.id, 10);
     const setorIds = Array.isArray(req.body && req.body.setor_ids) ? req.body.setor_ids.map(n => parseInt(n, 10)).filter(Boolean) : [];
@@ -6975,7 +6987,7 @@ app.post('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async 
   }
 });
 
-app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
+app.patch('/movatak/admin/campanhas/:id', ...exigeCampanha, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo, questionario_template_id } = req.body || {};
@@ -7005,7 +7017,7 @@ app.patch('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
 });
 
 
-app.delete('/movatak/admin/campanhas/:id', authMovatak, async (req, res) => {
+app.delete('/movatak/admin/campanhas/:id', ...exigeCampanha, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
     const r = await query(
