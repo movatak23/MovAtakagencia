@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.3-layout-ajustes</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-layout-altura-fix</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -625,7 +625,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.3-layout-ajustes';
+const PAINEL_VERSION = 'v2.7.3-layout-altura-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -858,7 +858,7 @@ async function iniciarAppVendedor() {
               <div style="font-size:32px;margin-bottom:8px">💬</div>
               <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
             </div>
-            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
+            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;flex:1;min-height:0">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
                 <div>
                   <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
@@ -6411,7 +6411,7 @@ async function iniciarPaginaFunilAtendimento() {
               <div style="font-size:32px;margin-bottom:8px">💬</div>
               <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
             </div>
-            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;height:100%">
+            <div id="funil-chat-conteudo" style="display:none;flex-direction:column;flex:1;min-height:0">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
                 <div>
                   <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
@@ -8243,7 +8243,7 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-toolbar-select{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text);padding:9px 12px;font-family:var(--sans);font-size:12px;min-width:190px}
 .funil-toolbar-select:focus{outline:none;border-color:var(--accent)}
 .agenda-item-card{background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px}
-.funil-chat-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0}
+.funil-chat-col{background:var(--bg3);border:1px solid var(--border);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;min-width:0;min-height:0;height:100%;max-height:100%}
 .funil-chat-vazio{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;color:var(--text3);font-size:13px;padding:24px;line-height:1.5}
 
 /* Métricas do rodapé */
