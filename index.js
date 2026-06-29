@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-grupos-inbox';
+const MOVATAK_VERSION = 'v2.7.3-lembrete-nome';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -6875,7 +6875,9 @@ async function processarQuestionariosParados() {
           // (mas ainda marca como processado para seguir o fluxo de abandono depois).
           const msgLembrete = (est.quest_lembrete_msg || '').trim();
           if (msgLembrete) {
-            await enviarMsgQuestionario(cliente, lead.telefone, msgLembrete, null);
+            // Substitui {nome} pelo nome do lead (mesmo padrão dos demais textos).
+            const msgFinal = msgLembrete.replace(/{nome}/g, lead.nome || 'Lead');
+            await enviarMsgQuestionario(cliente, lead.telefone, msgFinal, null);
           }
           await query(`UPDATE movatak_questionario_estado SET lembretes = COALESCE(lembretes,0) + 1, atualizado_em = NOW() WHERE id = $1`, [est.id]);
           await registrarEventoLead(lead.id, est.cliente_id, 'questionario_lembrete', 'Lembrete enviado por inatividade no questionário', { passo_idx: est.passo_idx });
