@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.3-avatar</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-avatar-reorder-links</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -625,7 +625,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.3-avatar';
+const PAINEL_VERSION = 'v2.7.3-avatar-reorder-links';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 try { document.getElementById('versao-painel').textContent = PAINEL_VERSION; } catch(e) {}
@@ -815,7 +815,7 @@ async function iniciarAppVendedor() {
         </div>
         <div class="funil-3col-grid" id="funil-layout-grid">
           <!-- Coluna 1: Caixa de entrada (conversas) -->
-          <div class="funil-inbox-col">
+          <div class="funil-inbox-col" data-painel="inbox">
             <div class="funil-inbox-head">
               <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
             </div>
@@ -826,7 +826,7 @@ async function iniciarAppVendedor() {
           </div>
 
           <!-- Coluna 2: Kanban (métricas + toolbar + abas de setor ficam aqui dentro) -->
-          <div class="funil-kanban-col">
+          <div class="funil-kanban-col" data-painel="kanban">
             <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
             <div class="funil-toolbar">
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
@@ -849,7 +849,7 @@ async function iniciarAppVendedor() {
           </div>
 
           <!-- Coluna 3: Conversa do lead selecionado (sempre visível) -->
-          <div class="funil-chat-col" id="funil-painel">
+          <div class="funil-chat-col" id="funil-painel" data-painel="chat">
             <div id="funil-chat-vazio" class="funil-chat-vazio">
               <div style="font-size:32px;margin-bottom:8px">💬</div>
               <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
@@ -1071,7 +1071,7 @@ function renderConversaVendedor(msgs) {
     const saida = m.direcao === 'saida';
     const hora = new Date(m.criado_em).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
     const midia = m.midia_url ? renderMidiaMensagem(m) : '';
-    const txt = m.conteudo ? escapeHtml(m.conteudo) : '';
+    const txt = m.conteudo ? textoComLinks(m.conteudo) : '';
     return `<div style="display:flex;justify-content:${saida?'flex-end':'flex-start'};margin-bottom:8px">
       <div style="max-width:85%;background:${saida?'var(--msg-out)':'var(--msg-in)'};border-radius:12px;padding:8px 12px">
         ${midia}${txt?`<div style="font-size:13px;color:${saida?'var(--msg-text-out)':'var(--msg-text-in)'};white-space:pre-wrap">${txt}</div>`:''}
@@ -1502,6 +1502,21 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
+}
+
+// Converte URLs no texto em links clicáveis. Primeiro escapa (segurança contra XSS),
+// depois transforma os links em <a>. Detecta http(s)://, www. e domínios soltos comuns.
+function textoComLinks(value) {
+  const escapado = escapeHtml(value);
+  // Regex sobre o texto JÁ escapado. Captura http(s)://... e www....
+  // Para o www, prefixa https:// no href mantendo o texto exibido original.
+  return escapado.replace(
+    /\b((?:https?:\/\/|www\.)[^\s<]+[^\s<.,;:!?)\]}"'])/gi,
+    (url) => {
+      const href = url.toLowerCase().startsWith('www.') ? 'https://' + url : url;
+      return '<a href="' + href + '" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:underline">' + url + '</a>';
+    }
+  );
 }
 // ── Período ────────────────────────────────────────────────
 function setPeriodo(d) {
@@ -2378,7 +2393,7 @@ function renderBolhaMensagemPainel(m) {
   const saida = m.direcao === 'saida';
   const hora = m.criado_em ? new Date(m.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' }) : '';
   const midiaHtml = renderMidiaMensagem(m);
-  const texto = m.conteudo ? escapeHtml(m.conteudo) : '';
+  const texto = m.conteudo ? textoComLinks(m.conteudo) : '';
   const podeApagar = m.id && m.fonte !== 'zapi';
   const btnResponder = m.id
     ? `<button onclick="selecionarRespostaPainel(${Number(m.id)})" title="Responder esta mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">↩</button>`
@@ -5380,6 +5395,7 @@ function restaurarLayoutFunil() {
     }
   } catch(e) {}
   atualizarBotoesLayoutFunil();
+  aplicarOrdemPaineis();
 }
 
 function atualizarBotoesLayoutFunil() {
@@ -5416,6 +5432,66 @@ function mostrarTodasColunasFunil() {
   if (!grid) return;
   grid.classList.remove('hide-inbox', 'hide-kanban', 'hide-chat');
   salvarLayoutFunil();
+}
+
+// ===== Reordenação dos painéis (inbox / kanban / chat) por setas =====
+const PAINEL_ORDEM_KEY = 'mvtk_painel_ordem';
+const PAINEL_ORDEM_PADRAO = ['inbox', 'kanban', 'chat'];
+
+function obterOrdemPaineis() {
+  try {
+    const salvo = JSON.parse(localStorage.getItem(PAINEL_ORDEM_KEY) || 'null');
+    if (Array.isArray(salvo) && salvo.length === 3 && PAINEL_ORDEM_PADRAO.every(p => salvo.includes(p))) {
+      return salvo;
+    }
+  } catch (e) {}
+  return [...PAINEL_ORDEM_PADRAO];
+}
+
+function aplicarOrdemPaineis() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  grid.classList.add('reordenavel');
+  const ordem = obterOrdemPaineis();
+  ordem.forEach((nome, i) => {
+    const painel = grid.querySelector('[data-painel="' + nome + '"]');
+    if (painel) painel.style.order = i;
+  });
+  renderSetasPaineis();
+}
+
+function moverPainel(nome, direcao) {
+  const ordem = obterOrdemPaineis();
+  const idx = ordem.indexOf(nome);
+  const alvo = idx + direcao;
+  if (idx < 0 || alvo < 0 || alvo > ordem.length - 1) return;
+  // troca de posição com o vizinho
+  [ordem[idx], ordem[alvo]] = [ordem[alvo], ordem[idx]];
+  try { localStorage.setItem(PAINEL_ORDEM_KEY, JSON.stringify(ordem)); } catch (e) {}
+  aplicarOrdemPaineis();
+}
+
+// Injeta o cabeçalho com as setas ← → no topo de cada painel.
+function renderSetasPaineis() {
+  const grid = getFunilLayoutGrid();
+  if (!grid) return;
+  const ordem = obterOrdemPaineis();
+  PAINEL_ORDEM_PADRAO.forEach(nome => {
+    const painel = grid.querySelector('[data-painel="' + nome + '"]');
+    if (!painel) return;
+    let head = painel.querySelector(':scope > .painel-reorder-head');
+    if (!head) {
+      head = document.createElement('div');
+      head.className = 'painel-reorder-head';
+      painel.insertBefore(head, painel.firstChild);
+    }
+    const pos = ordem.indexOf(nome);
+    head.innerHTML =
+      '<button class="pr-seta" title="Mover para a esquerda" ' + (pos === 0 ? 'disabled' : '') +
+      ' onclick="moverPainel(\'' + nome + '\',-1)">←</button>' +
+      '<button class="pr-seta" title="Mover para a direita" ' + (pos === ordem.length - 1 ? 'disabled' : '') +
+      ' onclick="moverPainel(\'' + nome + '\',1)">→</button>';
+  });
 }
 
 function garantirColunaFunilVisivel(coluna) {
@@ -6295,7 +6371,7 @@ async function iniciarPaginaFunilAtendimento() {
         </div>
         <div class="funil-3col-grid" id="funil-layout-grid">
           <!-- Coluna 1: Caixa de entrada (conversas) -->
-          <div class="funil-inbox-col">
+          <div class="funil-inbox-col" data-painel="inbox">
             <div class="funil-inbox-head">
               <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
             </div>
@@ -6306,7 +6382,7 @@ async function iniciarPaginaFunilAtendimento() {
           </div>
 
           <!-- Coluna 2: Kanban (métricas + toolbar + abas de setor ficam aqui dentro) -->
-          <div class="funil-kanban-col">
+          <div class="funil-kanban-col" data-painel="kanban">
             <div id="funil-metricas-bar" class="funil-metricas-bar"></div>
             <div class="funil-toolbar">
               <input id="funil-nova-coluna" type="text" placeholder="Nova etapa/lista. Ex: Aguardando pagamento" onkeydown="if(event.key==='Enter') adicionarColunaFunil()">
@@ -6329,7 +6405,7 @@ async function iniciarPaginaFunilAtendimento() {
           </div>
 
           <!-- Coluna 3: Conversa do lead selecionado (sempre visível) -->
-          <div class="funil-chat-col" id="funil-painel">
+          <div class="funil-chat-col" id="funil-painel" data-painel="chat">
             <div id="funil-chat-vazio" class="funil-chat-vazio">
               <div style="font-size:32px;margin-bottom:8px">💬</div>
               <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
@@ -8057,6 +8133,16 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 
 /* Grid de 3 colunas: inbox | kanban | chat — tudo travado à altura visível */
 .funil-3col-grid{display:grid;grid-template-columns:280px 1fr 380px;gap:16px;flex:1;min-height:0;overflow:hidden}
+/* Modo reordenável: vira flex; cada painel tem largura própria e posição via order,
+   então a largura acompanha o painel, não a coluna fixa. */
+.funil-3col-grid.reordenavel{display:flex}
+.funil-3col-grid.reordenavel .funil-inbox-col{flex:0 0 280px;min-width:0}
+.funil-3col-grid.reordenavel .funil-kanban-col{flex:1 1 auto;min-width:0}
+.funil-3col-grid.reordenavel .funil-chat-col{flex:0 0 380px;min-width:0}
+.painel-reorder-head{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:6px;flex-shrink:0}
+.painel-reorder-head .pr-seta{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;line-height:1;padding:2px 7px;cursor:pointer;font-family:var(--sans)}
+.painel-reorder-head .pr-seta:hover{border-color:var(--accent);color:var(--text)}
+.painel-reorder-head .pr-seta:disabled{opacity:.25;cursor:default}
 .funil-layout-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
 .funil-layout-controls .layout-label{font-size:11px;color:var(--text2);margin-right:2px}
 .funil-layout-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:11px;padding:7px 10px;cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px}
