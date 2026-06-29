@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.3-fix-carregamento</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-layout-ajustes</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -625,7 +625,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.3-fix-carregamento';
+const PAINEL_VERSION = 'v2.7.3-layout-ajustes';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -8126,9 +8126,9 @@ async function sincronizarColunaWhatsapp(colunaId) {
 #modal-funil-atendimento .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
 #funil-status{min-height:18px;font-size:12px;color:var(--text2);margin-top:10px}
 
-main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
+main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-main-3col .funil-page{height:100%;min-height:0}
-.funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:24px;min-height:calc(100vh - 130px);display:flex;flex-direction:column}
+.funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:20px 24px 4px;display:flex;flex-direction:column}
 .funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
 .funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:200px;flex:1;outline:none}
 
@@ -8140,6 +8140,17 @@ main.funil-main-3col{height:calc(100vh - 50px);overflow:hidden}
 .funil-3col-grid.reordenavel .funil-inbox-col{flex:0 0 280px;min-width:0}
 .funil-3col-grid.reordenavel .funil-kanban-col{flex:1 1 auto;min-width:0}
 .funil-3col-grid.reordenavel .funil-chat-col{flex:0 0 380px;min-width:0}
+/* Quando o kanban some, o chat passa a ser o painel elástico (cresce e ocupa o espaço). */
+.funil-3col-grid.reordenavel.hide-kanban .funil-chat-col{flex:1 1 auto}
+.funil-3col-grid.reordenavel.hide-kanban .funil-inbox-col{flex:0 0 280px}
+/* Quando o chat some, o kanban ocupa o espaço (já é elástico). */
+.funil-3col-grid.reordenavel.hide-chat .funil-kanban-col{flex:1 1 auto}
+/* Quando o inbox some, o kanban ocupa o espaço. */
+.funil-3col-grid.reordenavel.hide-inbox .funil-kanban-col{flex:1 1 auto}
+/* Só um painel visível → ele ocupa tudo. */
+.funil-3col-grid.reordenavel.hide-kanban.hide-inbox .funil-chat-col{flex:1 1 auto}
+.funil-3col-grid.reordenavel.hide-kanban.hide-chat .funil-inbox-col{flex:1 1 auto}
+.funil-3col-grid.reordenavel.hide-inbox.hide-chat .funil-kanban-col{flex:1 1 auto}
 .painel-reorder-head{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-bottom:6px;flex-shrink:0}
 .painel-reorder-head .pr-seta{background:var(--bg3);border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;line-height:1;padding:2px 7px;cursor:pointer;font-family:var(--sans)}
 .painel-reorder-head .pr-seta:hover{border-color:var(--accent);color:var(--text)}
