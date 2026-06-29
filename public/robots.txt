@@ -1,0 +1,8 @@
+# robots.txt — Movatak
+# Libera todos os robôs de busca a indexar o site inteiro
+
+User-agent: *
+Allow: /
+
+# Localização do sitemap (ajuda o Google a encontrar todas as páginas)
+Sitemap: https://movatak.com.br/sitemap.xml
