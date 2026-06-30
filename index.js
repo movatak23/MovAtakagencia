@@ -5973,6 +5973,14 @@ app.get('/movatak/admin/teste-r2', authMovatak, async (req, res) => {
     if (!r2Client) {
       return res.json({ ok: false, motivo: 'R2 não configurado', diag });
     }
+    // Lista os buckets que o token enxerga — revela se 'movetak' está acessível.
+    try {
+      const { ListBucketsCommand } = require('@aws-sdk/client-s3');
+      const lista = await r2Client.send(new ListBucketsCommand({}));
+      diag.buckets_visiveis = (lista.Buckets || []).map(b => b.Name);
+    } catch (eList) {
+      diag.buckets_visiveis = 'erro ao listar: ' + eList.message;
+    }
     const chave = 'teste/movatak-' + Date.now() + '.txt';
     const conteudo = Buffer.from('teste movatak r2 ' + new Date().toISOString(), 'utf8');
     await r2Upload(chave, conteudo, 'text/plain');
