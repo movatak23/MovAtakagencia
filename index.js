@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-anexos';
+const MOVATAK_VERSION = 'v2.7.4-anexos-preview';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -6056,16 +6056,20 @@ app.post('/movatak/admin/leads/:id/anexos', ...exigeLead, async (req, res) => {
     if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     const clienteId = lead.rows[0].cliente_id;
     // Chave no R2: organiza por cliente/lead e evita colisão com timestamp.
-    const nomeSeguro = String(nome_arquivo).replace(/[^\w.\- ]/g, '_').slice(0, 120);
-    const chave = `anexos/cliente_${clienteId}/lead_${leadId}/${Date.now()}_${nomeSeguro}`;
+    // Nome ORIGINAL preservado para exibição/download (só remove separadores de caminho e controle).
+    // Não usa \w (que descarta acentos) — assim "Comprovação.pdf" continua "Comprovação.pdf".
+    const nomeOriginal = (String(nome_arquivo).replace(/[\/\\\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 200)) || 'arquivo';
+    // Versão ASCII-segura usada SOMENTE na chave do R2 (evita problemas de encoding na chave).
+    const nomeChaveSafe = nomeOriginal.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\- ]/g, '_').slice(0, 120);
+    const chave = `anexos/cliente_${clienteId}/lead_${leadId}/${Date.now()}_${nomeChaveSafe}`;
     await r2Upload(chave, buffer, tipo || 'application/octet-stream');
     const autor = (req.vendedor && req.vendedor.nome) ? req.vendedor.nome : 'Gestor';
     const ins = await query(
       `INSERT INTO movatak_lead_anexos (lead_id, cliente_id, nome_arquivo, tipo, tamanho, r2_chave, autor)
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, nome_arquivo, tipo, tamanho, autor, criado_em`,
-      [leadId, clienteId, nomeSeguro, tipo || null, buffer.length, chave, autor]
+      [leadId, clienteId, nomeOriginal, tipo || null, buffer.length, chave, autor]
     );
-    await registrarEventoLead(leadId, clienteId, 'anexo_adicionado', 'Documento anexado: ' + nomeSeguro, { autor }).catch(() => null);
+    await registrarEventoLead(leadId, clienteId, 'anexo_adicionado', 'Documento anexado: ' + nomeOriginal, { autor }).catch(() => null);
     res.json({ ok: true, anexo: ins.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
