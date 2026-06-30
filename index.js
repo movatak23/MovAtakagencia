@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-r2-fundacao';
+const MOVATAK_VERSION = 'v2.7.3-anexos';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -6016,6 +6016,91 @@ app.get('/movatak/admin/teste-r2', authMovatak, async (req, res) => {
 });
 
 
+// ===== ANEXOS DO LEAD (documentos no R2) =====
+const ANEXO_MAX_BYTES = 10 * 1024 * 1024; // 10MB
+const ANEXO_TIPOS_OK = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/gif',
+  'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'text/plain', 'text/csv'];
+
+// Lista os anexos de um lead.
+app.get('/movatak/admin/leads/:id/anexos', ...exigeLead, async (req, res) => {
+  try {
+    const r = await query(
+      `SELECT id, nome_arquivo, tipo, tamanho, autor, criado_em
+         FROM movatak_lead_anexos WHERE lead_id = $1 ORDER BY criado_em DESC`,
+      [req.params.id]
+    );
+    res.json({ anexos: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Upload de anexo (recebe base64 no corpo JSON). O backend manda pro R2 e salva o registro.
+app.post('/movatak/admin/leads/:id/anexos', ...exigeLead, async (req, res) => {
+  try {
+    if (!r2Client) return res.status(503).json({ error: 'Armazenamento de anexos indisponível.' });
+    const leadId = req.params.id;
+    const { nome_arquivo, tipo, base64 } = req.body || {};
+    if (!nome_arquivo || !base64) return res.status(400).json({ error: 'Arquivo inválido.' });
+    if (tipo && !ANEXO_TIPOS_OK.includes(tipo)) {
+      return res.status(400).json({ error: 'Tipo de arquivo não permitido.' });
+    }
+    // Decodifica o base64 (aceita com ou sem prefixo data:).
+    const limpo = String(base64).replace(/^data:[^;]+;base64,/, '');
+    const buffer = Buffer.from(limpo, 'base64');
+    if (!buffer.length) return res.status(400).json({ error: 'Arquivo vazio.' });
+    if (buffer.length > ANEXO_MAX_BYTES) {
+      return res.status(400).json({ error: 'Arquivo muito grande (máx. 10MB).' });
+    }
+    const lead = await query('SELECT cliente_id FROM movatak_leads WHERE id = $1', [leadId]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const clienteId = lead.rows[0].cliente_id;
+    // Chave no R2: organiza por cliente/lead e evita colisão com timestamp.
+    const nomeSeguro = String(nome_arquivo).replace(/[^\w.\- ]/g, '_').slice(0, 120);
+    const chave = `anexos/cliente_${clienteId}/lead_${leadId}/${Date.now()}_${nomeSeguro}`;
+    await r2Upload(chave, buffer, tipo || 'application/octet-stream');
+    const autor = (req.vendedor && req.vendedor.nome) ? req.vendedor.nome : 'Gestor';
+    const ins = await query(
+      `INSERT INTO movatak_lead_anexos (lead_id, cliente_id, nome_arquivo, tipo, tamanho, r2_chave, autor)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, nome_arquivo, tipo, tamanho, autor, criado_em`,
+      [leadId, clienteId, nomeSeguro, tipo || null, buffer.length, chave, autor]
+    );
+    await registrarEventoLead(leadId, clienteId, 'anexo_adicionado', 'Documento anexado: ' + nomeSeguro, { autor }).catch(() => null);
+    res.json({ ok: true, anexo: ins.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Download de um anexo (busca do R2 e envia o arquivo).
+app.get('/movatak/admin/leads/:id/anexos/:anexoId/download', ...exigeLead, async (req, res) => {
+  try {
+    if (!r2Client) return res.status(503).json({ error: 'Armazenamento indisponível.' });
+    const r = await query(
+      'SELECT nome_arquivo, tipo, r2_chave FROM movatak_lead_anexos WHERE id = $1 AND lead_id = $2',
+      [req.params.anexoId, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Anexo não encontrado.' });
+    const anexo = r.rows[0];
+    const baixado = await r2Download(anexo.r2_chave);
+    res.setHeader('Content-Type', anexo.tipo || baixado.contentType || 'application/octet-stream');
+    res.setHeader('Content-Disposition', 'attachment; filename="' + encodeURIComponent(anexo.nome_arquivo) + '"');
+    res.send(baixado.buffer);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Remove um anexo (apaga do R2 e do banco).
+app.delete('/movatak/admin/leads/:id/anexos/:anexoId', ...exigeLead, async (req, res) => {
+  try {
+    const r = await query(
+      'SELECT r2_chave FROM movatak_lead_anexos WHERE id = $1 AND lead_id = $2',
+      [req.params.anexoId, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Anexo não encontrado.' });
+    if (r2Client) { await r2Delete(r.rows[0].r2_chave).catch(() => null); }
+    await query('DELETE FROM movatak_lead_anexos WHERE id = $1', [req.params.anexoId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/movatak/admin/leads/:id/anotacao', ...exigeLead, async (req, res) => {
   try {
     const leadId = req.params.id;
@@ -7776,6 +7861,21 @@ app.delete('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, 
 // API — Mensagens Rápidas (enviadas manualmente do Kanban)
 // ============================================================
 async function garantirEstruturaConversas() {
+  // Anexos do lead (documentos no R2). A coluna r2_chave guarda o caminho do
+  // arquivo no bucket; o conteúdo em si fica no R2, não no banco.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_lead_anexos (
+    id SERIAL PRIMARY KEY,
+    lead_id INTEGER NOT NULL,
+    cliente_id INTEGER NOT NULL,
+    nome_arquivo TEXT NOT NULL,
+    tipo TEXT,
+    tamanho INTEGER,
+    r2_chave TEXT NOT NULL,
+    autor TEXT,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_lead_anexos_lead ON movatak_lead_anexos(lead_id)`).catch(() => null);
+
   await query(`CREATE TABLE IF NOT EXISTS movatak_conversas (
     id SERIAL PRIMARY KEY,
     lead_id INTEGER NOT NULL,
