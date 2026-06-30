@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.4-anexos-preview';
+const MOVATAK_VERSION = 'v2.7.5-followup-ausencia';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1134,6 +1134,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
   const r = await query(
     `SELECT f.*, l.telefone, l.nome, l.etapa,
             c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
+            c.ausencia_horarios, c.ausencia_datas, c.ausencia_msg_padrao,
             camp.id AS campanha_id, camp.nome AS campanha_nome,
             t.followup_v2 AS template_followup_v2, t.nome AS template_nome_debug
        FROM movatak_followup f
@@ -1181,6 +1182,14 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       }
 
       const msg = String(msgText).replace(/{nome}/g, row.nome || 'Lead');
+
+      // Pausa de ausência: não dispara follow-up enquanto o cliente está fora do
+      // horário de atendimento. A linha continua 'pendente' e o cron reavalia depois;
+      // assim o FU só sai quando o expediente volta (humano qualifica o lead antes).
+      if (clienteRowEmAusencia(row)) {
+        console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} adiado: cliente em ausência -> lead ${leadId}`);
+        continue;
+      }
 
       if (!(await podeEnviarMensagemAutomatica(leadId))) {
         await query(`UPDATE movatak_followup SET status = 'pausado', erro_envio = 'limite anti-spam diario atingido' WHERE id = $1`, [row.id]);
@@ -1235,7 +1244,23 @@ async function migrarFU1ParaFU2() {
      JOIN movatak_followup f ON f.lead_id = l.id
      WHERE l.etapa = 'followup'
        AND COALESCE(f.sequencia_fu, 1) = 1
-       AND COALESCE(f.data_entrada, l.atualizado_em, l.criado_em) <= NOW() - INTERVAL '1 hour'
+       -- FU1 totalmente processado: nenhuma mensagem do FU1 ainda pendente.
+       -- (durante a ausência o FU1 fica pendente, então a migração não avança e o lead não pula o FU1)
+       AND NOT EXISTS (
+         SELECT 1 FROM movatak_followup fp
+         WHERE fp.lead_id = l.id
+           AND COALESCE(fp.sequencia_fu, 1) = 1
+           AND fp.status = 'pendente'
+       )
+       -- Conta 1h a partir do ÚLTIMO FU1 realmente enviado (não da entrada do lead),
+       -- pra respeitar o intervalo mesmo quando o FU1 foi adiado por ausência.
+       AND (
+         SELECT MAX(fe.enviado_em)
+         FROM movatak_followup fe
+         WHERE fe.lead_id = l.id
+           AND COALESCE(fe.sequencia_fu, 1) = 1
+           AND fe.status = 'enviado'
+       ) <= NOW() - INTERVAL '1 hour'
        AND NOT EXISTS (
          SELECT 1 FROM movatak_followup f2
          WHERE f2.lead_id = l.id
@@ -1435,6 +1460,7 @@ cron.schedule('*/10 * * * *', async () => {
 
     const r = await query(
     `SELECT f.*, l.telefone, l.nome, l.etapa, c.zapi_instance, c.zapi_token, c.zapi_client_token, c.followup_msgs_v2,
+            c.ausencia_horarios, c.ausencia_datas, c.ausencia_msg_padrao,
             camp.id AS campanha_id, camp.nome AS campanha_nome,
             t.followup_v2 AS template_followup_v2, t.nome AS template_nome_debug
      FROM movatak_followup f
@@ -1465,6 +1491,14 @@ cron.schedule('*/10 * * * *', async () => {
         }
 
         const msg = msg_text.replace(/{nome}/g, row.nome || 'Lead');
+
+        // Pausa de ausência: segura o follow-up fora do horário de atendimento.
+        // Mantém 'pendente' para o próprio cron reenviar quando o expediente voltar.
+        if (clienteRowEmAusencia(row)) {
+          console.log(`[cron] FU${row.sequencia_fu || 1} msg${row.etapa_seq} adiado: cliente em ausência → lead ${row.lead_id}`);
+          continue;
+        }
+
         await zapiEnviar(
           row.zapi_instance,
           row.zapi_token,
@@ -6457,6 +6491,22 @@ function avaliarAusencia(cliente) {
   } catch (e) {
     console.error('[ausencia] erro ao avaliar:', e.message);
     return vazio;
+  }
+}
+
+// Recebe uma linha de follow-up que já trouxe as colunas de ausência do cliente
+// (ausencia_horarios / ausencia_datas) e diz se o cliente está, AGORA, fora do
+// horário de atendimento. Usado para NÃO disparar follow-up durante a ausência.
+function clienteRowEmAusencia(row) {
+  if (!row) return false;
+  try {
+    return avaliarAusencia({
+      ausencia_horarios: row.ausencia_horarios,
+      ausencia_datas: row.ausencia_datas,
+      ausencia_msg_padrao: row.ausencia_msg_padrao || ''
+    }).ausente === true;
+  } catch (e) {
+    return false;
   }
 }
 
