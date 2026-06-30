@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-anotacoes';
+const MOVATAK_VERSION = 'v2.7.3-r2-fundacao';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -14,6 +14,62 @@ const http = require('http');
 const { Server: SocketIOServer } = require('socket.io');
 
 const path = require('path');
+
+// ============================================================
+// Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib
+// @aws-sdk/client-s3 ainda não estiver instalada, ou faltarem variáveis de ambiente,
+// o sistema continua funcionando normalmente — só os anexos ficam indisponíveis.
+// Credenciais vêm SEMPRE do ambiente (Railway), nunca hardcoded.
+// ============================================================
+let r2Client = null;
+let R2_PutObjectCommand = null, R2_GetObjectCommand = null, R2_DeleteObjectCommand = null;
+const R2_BUCKET = process.env.R2_BUCKET || '';
+const R2_PRONTO = !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT && R2_BUCKET);
+try {
+  if (R2_PRONTO) {
+    const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+    R2_PutObjectCommand = PutObjectCommand;
+    R2_GetObjectCommand = GetObjectCommand;
+    R2_DeleteObjectCommand = DeleteObjectCommand;
+    r2Client = new S3Client({
+      region: 'auto',
+      endpoint: process.env.R2_ENDPOINT,
+      credentials: {
+        accessKeyId: process.env.R2_ACCESS_KEY_ID,
+        secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
+      }
+    });
+    console.log('[R2] cliente inicializado, bucket:', R2_BUCKET);
+  } else {
+    console.log('[R2] variáveis de ambiente ausentes — anexos desabilitados');
+  }
+} catch (e) {
+  console.error('[R2] falha ao inicializar (lib @aws-sdk/client-s3 instalada?):', e.message);
+  r2Client = null;
+}
+
+// Faz upload de um Buffer para o R2 e retorna a chave (caminho) do objeto.
+async function r2Upload(chave, buffer, contentType) {
+  if (!r2Client) throw new Error('R2 não configurado.');
+  await r2Client.send(new R2_PutObjectCommand({
+    Bucket: R2_BUCKET, Key: chave, Body: buffer, ContentType: contentType || 'application/octet-stream'
+  }));
+  return chave;
+}
+
+// Baixa um objeto do R2 e retorna { buffer, contentType }.
+async function r2Download(chave) {
+  if (!r2Client) throw new Error('R2 não configurado.');
+  const resp = await r2Client.send(new R2_GetObjectCommand({ Bucket: R2_BUCKET, Key: chave }));
+  const chunks = [];
+  for await (const c of resp.Body) chunks.push(c);
+  return { buffer: Buffer.concat(chunks), contentType: resp.ContentType || 'application/octet-stream' };
+}
+
+async function r2Delete(chave) {
+  if (!r2Client) throw new Error('R2 não configurado.');
+  await r2Client.send(new R2_DeleteObjectCommand({ Bucket: R2_BUCKET, Key: chave }));
+}
 const app = express();
 app.use(express.json({ limit: '30mb' }));
 app.use((req, res, next) => {
@@ -5901,8 +5957,31 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
   }
 });
 
-// Adiciona uma anotação manual ao histórico do lead. Reusa a tabela de eventos
-// (tipo 'anotacao'), então aparece naturalmente na listagem do histórico.
+// Rota de teste do R2 (temporária). Faz upload de um texto, baixa de volta e
+// confirma que a integração funciona ponta a ponta. Remover após validar.
+app.get('/movatak/admin/teste-r2', authMovatak, async (req, res) => {
+  try {
+    if (!r2Client) {
+      return res.json({ ok: false, motivo: 'R2 não configurado', r2_pronto: R2_PRONTO, bucket: R2_BUCKET || '(vazio)' });
+    }
+    const chave = 'teste/movatak-' + Date.now() + '.txt';
+    const conteudo = Buffer.from('teste movatak r2 ' + new Date().toISOString(), 'utf8');
+    await r2Upload(chave, conteudo, 'text/plain');
+    const baixado = await r2Download(chave);
+    const textoBaixado = baixado.buffer.toString('utf8');
+    await r2Delete(chave); // limpa o arquivo de teste
+    res.json({
+      ok: true,
+      mensagem: 'R2 funcionando: upload, download e delete OK',
+      bucket: R2_BUCKET,
+      conteudo_baixado: textoBaixado
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, erro: e.message });
+  }
+});
+
+
 app.post('/movatak/admin/leads/:id/anotacao', ...exigeLead, async (req, res) => {
   try {
     const leadId = req.params.id;
