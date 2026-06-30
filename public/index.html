@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.3-anotacoes</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-anexos</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -625,7 +625,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.3-anotacoes';
+const PAINEL_VERSION = 'v2.7.3-anexos';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -3218,6 +3218,19 @@ function renderHistoricoPainel(data) {
       </div>
     </div>`;
 
+  const blocoAnexos = `
+    <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <span style="font-size:11px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.5px">Documentos</span>
+        <label class="btn-add-small" style="cursor:pointer;margin:0">
+          📎 Anexar
+          <input type="file" style="display:none" onchange="enviarAnexoLead(${leadId}, this)"
+            accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.doc,.docx,.xls,.xlsx,.txt,.csv">
+        </label>
+      </div>
+      <div id="lista-anexos-lead"><div class="fu-hint" style="font-size:11px">Carregando documentos...</div></div>
+    </div>`;
+
   const linhasEventos = eventos.map(e => {
     const icone = ICONES[e.tipo] || ICONES.default;
     const hora = new Date(e.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
@@ -3261,7 +3274,8 @@ function renderHistoricoPainel(data) {
   });
 
   const tudo = [...linhasEventos, ...linhasFU];
-  box.innerHTML = formAnotacao + (tudo.length ? tudo.join('') : '<div class="fu-hint">Nenhum evento registrado.</div>');
+  box.innerHTML = formAnotacao + blocoAnexos + (tudo.length ? tudo.join('') : '<div class="fu-hint">Nenhum evento registrado.</div>');
+  if (leadId) carregarAnexosLead(leadId);
 }
 
 async function salvarAnotacaoLead(leadId) {
@@ -3288,6 +3302,108 @@ async function removerAnotacaoLead(leadId, eventoId) {
     await api('/movatak/admin/leads/' + leadId + '/anotacao/' + eventoId, { method: 'DELETE' });
     const data = await api('/movatak/admin/leads/' + leadId + '/historico');
     renderHistoricoPainel(data);
+  } catch (e) {
+    mostrarToast('Erro ao remover: ' + e.message, 'erro');
+  }
+}
+
+// ===== Anexos do lead =====
+function formatarTamanho(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function iconeAnexo(tipo) {
+  if (!tipo) return '📄';
+  if (tipo.startsWith('image/')) return '🖼️';
+  if (tipo === 'application/pdf') return '📕';
+  if (tipo.includes('sheet') || tipo.includes('excel')) return '📊';
+  if (tipo.includes('word') || tipo.includes('document')) return '📝';
+  return '📄';
+}
+
+async function carregarAnexosLead(leadId) {
+  const box = document.getElementById('lista-anexos-lead');
+  if (!box) return;
+  try {
+    const r = await api('/movatak/admin/leads/' + leadId + '/anexos');
+    const anexos = r.anexos || [];
+    if (!anexos.length) {
+      box.innerHTML = '<div class="fu-hint" style="font-size:11px">Nenhum documento anexado.</div>';
+      return;
+    }
+    box.innerHTML = anexos.map(a => `
+      <div style="display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px 10px;margin-bottom:6px">
+        <span style="font-size:16px;flex-shrink:0">${iconeAnexo(a.tipo)}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(a.nome_arquivo)}</div>
+          <div style="font-size:10px;color:var(--text3)">${formatarTamanho(a.tamanho)}${a.autor ? ' · ' + escapeHtml(a.autor) : ''}</div>
+        </div>
+        <button onclick="baixarAnexoLead(${leadId}, ${a.id}, '${escapeHtml(a.nome_arquivo).replace(/'/g, "\\'")}')" title="Baixar"
+          style="background:transparent;border:none;color:var(--accent);cursor:pointer;font-size:14px;padding:2px">⬇️</button>
+        <button onclick="removerAnexoLead(${leadId}, ${a.id})" title="Remover"
+          style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:2px">🗑</button>
+      </div>`).join('');
+  } catch (e) {
+    box.innerHTML = '<div class="fu-hint" style="font-size:11px;color:var(--red)">Erro ao carregar documentos.</div>';
+  }
+}
+
+async function enviarAnexoLead(leadId, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) {
+    mostrarToast('Arquivo muito grande (máx. 10MB).', 'erro');
+    input.value = '';
+    return;
+  }
+  const box = document.getElementById('lista-anexos-lead');
+  if (box) box.innerHTML = '<div class="fu-hint" style="font-size:11px">Enviando documento...</div>';
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result);
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+    await api('/movatak/admin/leads/' + leadId + '/anexos', {
+      method: 'POST',
+      body: JSON.stringify({ nome_arquivo: file.name, tipo: file.type, base64 })
+    });
+    input.value = '';
+    carregarAnexosLead(leadId);
+    mostrarToast('Documento anexado!', 'sucesso');
+  } catch (e) {
+    mostrarToast('Erro ao anexar: ' + e.message, 'erro');
+    carregarAnexosLead(leadId);
+  }
+}
+
+async function baixarAnexoLead(leadId, anexoId, nomeArquivo) {
+  try {
+    const authHeaders = (typeof _vendedorToken !== 'undefined' && _vendedorToken)
+      ? { 'x-vendedor-token': _vendedorToken }
+      : { 'x-movatak-secret': secret };
+    const resp = await fetch(API_BASE + '/movatak/admin/leads/' + leadId + '/anexos/' + anexoId + '/download', { headers: authHeaders });
+    if (!resp.ok) throw new Error('Falha no download');
+    const blob = await resp.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nomeArquivo || 'documento';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    mostrarToast('Erro ao baixar: ' + e.message, 'erro');
+  }
+}
+
+async function removerAnexoLead(leadId, anexoId) {
+  if (!confirm('Remover este documento?')) return;
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/anexos/' + anexoId, { method: 'DELETE' });
+    carregarAnexosLead(leadId);
   } catch (e) {
     mostrarToast('Erro ao remover: ' + e.message, 'erro');
   }
