@@ -23,23 +23,44 @@ const path = require('path');
 // ============================================================
 let r2Client = null;
 let R2_PutObjectCommand = null, R2_GetObjectCommand = null, R2_DeleteObjectCommand = null;
+let R2_ListBucketsCommand = null;
 const R2_BUCKET = (process.env.R2_BUCKET || '').trim();
+let R2_BUCKET_REAL = R2_BUCKET; // resolvido na inicialização via auto-descoberta
 const R2_PRONTO = !!(process.env.R2_ACCESS_KEY_ID && process.env.R2_SECRET_ACCESS_KEY && process.env.R2_ENDPOINT && R2_BUCKET);
 try {
   if (R2_PRONTO) {
-    const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+    const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListBucketsCommand } = require('@aws-sdk/client-s3');
     R2_PutObjectCommand = PutObjectCommand;
     R2_GetObjectCommand = GetObjectCommand;
     R2_DeleteObjectCommand = DeleteObjectCommand;
+    R2_ListBucketsCommand = ListBucketsCommand;
     r2Client = new S3Client({
       region: 'auto',
-      endpoint: process.env.R2_ENDPOINT,
+      endpoint: (process.env.R2_ENDPOINT || '').trim(),
       credentials: {
         accessKeyId: process.env.R2_ACCESS_KEY_ID,
         secretAccessKey: process.env.R2_SECRET_ACCESS_KEY
       }
     });
-    console.log('[R2] cliente inicializado, bucket:', R2_BUCKET);
+    console.log('[R2] cliente inicializado, bucket (variável):', R2_BUCKET);
+    // Auto-descoberta: lista os buckets reais e usa o nome exato. Resolve qualquer
+    // diferença invisível (espaço, caixa, nome digitado errado) entre a variável e
+    // o bucket de verdade. Roda em background para não atrasar o boot.
+    (async () => {
+      try {
+        const lista = await r2Client.send(new R2_ListBucketsCommand({}));
+        const nomes = (lista.Buckets || []).map(b => b.Name);
+        if (nomes.length) {
+          const match = nomes.find(n => n.toLowerCase() === R2_BUCKET.toLowerCase());
+          R2_BUCKET_REAL = match || nomes[0];
+          console.log('[R2] auto-descoberta — buckets reais:', JSON.stringify(nomes), '| usando:', R2_BUCKET_REAL);
+        } else {
+          console.log('[R2] auto-descoberta — nenhum bucket retornado pela conta');
+        }
+      } catch (e) {
+        console.error('[R2] auto-descoberta falhou (mantendo nome da variável):', e.message);
+      }
+    })();
   } else {
     console.log('[R2] variáveis de ambiente ausentes — anexos desabilitados');
   }
@@ -52,7 +73,7 @@ try {
 async function r2Upload(chave, buffer, contentType) {
   if (!r2Client) throw new Error('R2 não configurado.');
   await r2Client.send(new R2_PutObjectCommand({
-    Bucket: R2_BUCKET, Key: chave, Body: buffer, ContentType: contentType || 'application/octet-stream'
+    Bucket: R2_BUCKET_REAL, Key: chave, Body: buffer, ContentType: contentType || 'application/octet-stream'
   }));
   return chave;
 }
@@ -60,7 +81,7 @@ async function r2Upload(chave, buffer, contentType) {
 // Baixa um objeto do R2 e retorna { buffer, contentType }.
 async function r2Download(chave) {
   if (!r2Client) throw new Error('R2 não configurado.');
-  const resp = await r2Client.send(new R2_GetObjectCommand({ Bucket: R2_BUCKET, Key: chave }));
+  const resp = await r2Client.send(new R2_GetObjectCommand({ Bucket: R2_BUCKET_REAL, Key: chave }));
   const chunks = [];
   for await (const c of resp.Body) chunks.push(c);
   return { buffer: Buffer.concat(chunks), contentType: resp.ContentType || 'application/octet-stream' };
@@ -68,7 +89,7 @@ async function r2Download(chave) {
 
 async function r2Delete(chave) {
   if (!r2Client) throw new Error('R2 não configurado.');
-  await r2Client.send(new R2_DeleteObjectCommand({ Bucket: R2_BUCKET, Key: chave }));
+  await r2Client.send(new R2_DeleteObjectCommand({ Bucket: R2_BUCKET_REAL, Key: chave }));
 }
 const app = express();
 app.use(express.json({ limit: '30mb' }));
@@ -5962,8 +5983,9 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
 app.get('/movatak/admin/teste-r2', authMovatak, async (req, res) => {
   // Diagnóstico: mostra exatamente o que o processo carregou do ambiente.
   const diag = {
-    bucket_carregado: R2_BUCKET || '(vazio)',
-    endpoint_carregado: process.env.R2_ENDPOINT || '(vazio)',
+    bucket_variavel: R2_BUCKET || '(vazio)',
+    bucket_real_descoberto: R2_BUCKET_REAL || '(vazio)',
+    endpoint_carregado: (process.env.R2_ENDPOINT || '(vazio)').trim(),
     tem_access_key: !!process.env.R2_ACCESS_KEY_ID,
     tem_secret: !!process.env.R2_SECRET_ACCESS_KEY,
     r2_pronto: R2_PRONTO,
@@ -5973,28 +5995,20 @@ app.get('/movatak/admin/teste-r2', authMovatak, async (req, res) => {
     if (!r2Client) {
       return res.json({ ok: false, motivo: 'R2 não configurado', diag });
     }
-    // Lista os buckets que o token enxerga — revela se 'movetak' está acessível.
-    let bucketParaUsar = R2_BUCKET;
+    // Lista os buckets reais (confirma o que o token enxerga).
     try {
-      const { ListBucketsCommand } = require('@aws-sdk/client-s3');
-      const lista = await r2Client.send(new ListBucketsCommand({}));
-      const nomes = (lista.Buckets || []).map(b => b.Name);
-      diag.buckets_visiveis = nomes;
-      // Usa o nome EXATO retornado pelo R2 (case-insensitive match), eliminando
-      // qualquer diferença invisível entre a variável e o nome real do bucket.
-      const match = nomes.find(n => n.toLowerCase() === R2_BUCKET.toLowerCase());
-      if (match) { bucketParaUsar = match; diag.bucket_usado_no_teste = match; }
+      const lista = await r2Client.send(new R2_ListBucketsCommand({}));
+      diag.buckets_visiveis = (lista.Buckets || []).map(b => b.Name);
     } catch (eList) {
       diag.buckets_visiveis = 'erro ao listar: ' + eList.message;
     }
+    // Usa as funções r2* que já operam no bucket REAL auto-descoberto.
     const chave = 'teste/movatak-' + Date.now() + '.txt';
     const conteudo = Buffer.from('teste movatak r2 ' + new Date().toISOString(), 'utf8');
-    const { PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
-    await r2Client.send(new PutObjectCommand({ Bucket: bucketParaUsar, Key: chave, Body: conteudo, ContentType: 'text/plain' }));
-    const obj = await r2Client.send(new GetObjectCommand({ Bucket: bucketParaUsar, Key: chave }));
-    const chunks = []; for await (const c of obj.Body) chunks.push(c);
-    const textoBaixado = Buffer.concat(chunks).toString('utf8');
-    await r2Client.send(new DeleteObjectCommand({ Bucket: bucketParaUsar, Key: chave }));
+    await r2Upload(chave, conteudo, 'text/plain');
+    const baixado = await r2Download(chave);
+    const textoBaixado = baixado.buffer.toString('utf8');
+    await r2Delete(chave);
     res.json({ ok: true, mensagem: 'R2 funcionando: upload, download e delete OK', diag, conteudo_baixado: textoBaixado });
   } catch (e) {
     res.status(500).json({ ok: false, erro: e.message, diag });
