@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.3-lembrete-nome';
+const MOVATAK_VERSION = 'v2.7.3-anotacoes';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -5896,6 +5896,38 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
     );
 
     res.json({ lead: lead.rows[0], eventos: eventos.rows, fila: fila.rows });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Adiciona uma anotação manual ao histórico do lead. Reusa a tabela de eventos
+// (tipo 'anotacao'), então aparece naturalmente na listagem do histórico.
+app.post('/movatak/admin/leads/:id/anotacao', ...exigeLead, async (req, res) => {
+  try {
+    const leadId = req.params.id;
+    const texto = String((req.body && req.body.texto) || '').trim();
+    if (!texto) return res.status(400).json({ error: 'Texto da anotação vazio.' });
+    if (texto.length > 4000) return res.status(400).json({ error: 'Anotação muito longa (máx. 4000 caracteres).' });
+    const lead = await query('SELECT cliente_id FROM movatak_leads WHERE id = $1', [leadId]);
+    if (!lead.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const autor = (req.vendedor && req.vendedor.nome) ? req.vendedor.nome : 'Gestor';
+    await registrarEventoLead(leadId, lead.rows[0].cliente_id, 'anotacao', texto, { autor });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Remove uma anotação manual (só eventos do tipo 'anotacao' podem ser apagados).
+app.delete('/movatak/admin/leads/:id/anotacao/:eventoId', ...exigeLead, async (req, res) => {
+  try {
+    const { id: leadId, eventoId } = req.params;
+    const r = await query(
+      `DELETE FROM movatak_lead_eventos WHERE id = $1 AND lead_id = $2 AND tipo = 'anotacao'`,
+      [eventoId, leadId]
+    );
+    res.json({ ok: true, removidos: r.rowCount });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
