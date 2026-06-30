@@ -5960,24 +5960,28 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
 // Rota de teste do R2 (temporária). Faz upload de um texto, baixa de volta e
 // confirma que a integração funciona ponta a ponta. Remover após validar.
 app.get('/movatak/admin/teste-r2', authMovatak, async (req, res) => {
+  // Diagnóstico: mostra exatamente o que o processo carregou do ambiente.
+  const diag = {
+    bucket_carregado: R2_BUCKET || '(vazio)',
+    endpoint_carregado: process.env.R2_ENDPOINT || '(vazio)',
+    tem_access_key: !!process.env.R2_ACCESS_KEY_ID,
+    tem_secret: !!process.env.R2_SECRET_ACCESS_KEY,
+    r2_pronto: R2_PRONTO,
+    cliente_inicializado: !!r2Client
+  };
   try {
     if (!r2Client) {
-      return res.json({ ok: false, motivo: 'R2 não configurado', r2_pronto: R2_PRONTO, bucket: R2_BUCKET || '(vazio)' });
+      return res.json({ ok: false, motivo: 'R2 não configurado', diag });
     }
     const chave = 'teste/movatak-' + Date.now() + '.txt';
     const conteudo = Buffer.from('teste movatak r2 ' + new Date().toISOString(), 'utf8');
     await r2Upload(chave, conteudo, 'text/plain');
     const baixado = await r2Download(chave);
     const textoBaixado = baixado.buffer.toString('utf8');
-    await r2Delete(chave); // limpa o arquivo de teste
-    res.json({
-      ok: true,
-      mensagem: 'R2 funcionando: upload, download e delete OK',
-      bucket: R2_BUCKET,
-      conteudo_baixado: textoBaixado
-    });
+    await r2Delete(chave);
+    res.json({ ok: true, mensagem: 'R2 funcionando: upload, download e delete OK', diag, conteudo_baixado: textoBaixado });
   } catch (e) {
-    res.status(500).json({ ok: false, erro: e.message });
+    res.status(500).json({ ok: false, erro: e.message, diag });
   }
 });
 
