@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.3-layout-altura-fix</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.3-anotacoes</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -625,7 +625,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <script>
 const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.3-layout-altura-fix';
+const PAINEL_VERSION = 'v2.7.3-anotacoes';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -3199,17 +3199,43 @@ function renderHistoricoPainel(data) {
   const box = document.getElementById('painel-historico');
   const eventos = data.eventos || [];
   const fila = data.fila || [];
+  const leadId = (data.lead && data.lead.id) || window._painelLeadId || null;
 
   const ICONES = {
     lead_criado: '🆕', questionario_iniciado: '📋', questionario_lembrete: '⏰',
     questionario_concluido: '✅', questionario_abandonado: '🚪', questionario_transferido: '🤝',
     followup_reativado: '🔄', mensagem_manual: '💬', venda_marcada: '💰',
-    followup_reativado: '🔄', lead_convertido: '🎉', default: '📌'
+    anotacao: '📝', lead_convertido: '🎉', default: '📌'
   };
+
+  // Campo para adicionar anotação manual (topo da aba).
+  const formAnotacao = `
+    <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <textarea id="nova-anotacao-txt" placeholder="Escreva uma anotação sobre este lead..."
+        style="width:100%;min-height:54px;resize:vertical;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px;font-size:12px;font-family:var(--sans);color:var(--text)"></textarea>
+      <div style="display:flex;justify-content:flex-end;margin-top:6px">
+        <button class="btn-add-small" onclick="salvarAnotacaoLead(${leadId})">+ Adicionar anotação</button>
+      </div>
+    </div>`;
 
   const linhasEventos = eventos.map(e => {
     const icone = ICONES[e.tipo] || ICONES.default;
     const hora = new Date(e.criado_em).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
+    // Anotação manual: mostra o texto completo e um botão de remover.
+    if (e.tipo === 'anotacao') {
+      const autor = e.dados && e.dados.autor ? e.dados.autor : '';
+      return `<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start">
+        <span style="font-size:16px;flex-shrink:0;margin-top:1px">${icone}</span>
+        <div style="flex:1;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:8px 10px">
+          <div style="font-size:12px;white-space:pre-wrap;color:var(--text)">${escapeHtml(e.descricao || '')}</div>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px">
+            <div style="font-size:11px;color:var(--text3)">${autor ? escapeHtml(autor) + ' · ' : ''}${hora}</div>
+            <button onclick="removerAnotacaoLead(${leadId}, ${e.id})" title="Remover anotação"
+              style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:13px;padding:2px">🗑</button>
+          </div>
+        </div>
+      </div>`;
+    }
     const extra = e.tipo === 'mensagem_manual' && e.dados && e.dados.texto
       ? `<div style="font-size:11px;color:var(--text2);margin-top:2px;white-space:pre-wrap">"${escapeHtml(String(e.dados.texto).slice(0,120))}"</div>` : '';
     return `<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start">
@@ -3235,7 +3261,36 @@ function renderHistoricoPainel(data) {
   });
 
   const tudo = [...linhasEventos, ...linhasFU];
-  box.innerHTML = tudo.length ? tudo.join('') : '<div class="fu-hint">Nenhum evento registrado.</div>';
+  box.innerHTML = formAnotacao + (tudo.length ? tudo.join('') : '<div class="fu-hint">Nenhum evento registrado.</div>');
+}
+
+async function salvarAnotacaoLead(leadId) {
+  if (!leadId) return;
+  const ta = document.getElementById('nova-anotacao-txt');
+  const texto = (ta.value || '').trim();
+  if (!texto) { ta.focus(); return; }
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/anotacao', {
+      method: 'POST', body: JSON.stringify({ texto })
+    });
+    ta.value = '';
+    const data = await api('/movatak/admin/leads/' + leadId + '/historico');
+    renderHistoricoPainel(data);
+  } catch (e) {
+    mostrarToast('Erro ao salvar anotação: ' + e.message, 'erro');
+  }
+}
+
+async function removerAnotacaoLead(leadId, eventoId) {
+  if (!leadId || !eventoId) return;
+  if (!confirm('Remover esta anotação?')) return;
+  try {
+    await api('/movatak/admin/leads/' + leadId + '/anotacao/' + eventoId, { method: 'DELETE' });
+    const data = await api('/movatak/admin/leads/' + leadId + '/historico');
+    renderHistoricoPainel(data);
+  } catch (e) {
+    mostrarToast('Erro ao remover: ' + e.message, 'erro');
+  }
 }
 
 function abrirMensagemRapidaLead(leadId, nomeAbrev) {
