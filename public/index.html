@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.11-agenda-abas</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.12-status-instancia-lista</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.11-agenda-abas';
+const PAINEL_VERSION = 'v2.7.12-status-instancia-lista';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -1791,9 +1791,28 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
         <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
         <button onclick="event.stopPropagation();baixarBackupClientePorId(${c.id})" title="Baixar backup deste cliente" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">💾 Backup</button>
+        <span class="inst-status" data-cliente="${c.id}" onclick="event.stopPropagation();abrirConexaoWhatsapp(${c.id})" title="Status da instância Z-API — clique para ver/reconectar" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border2);border-radius:6px;font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px;color:var(--text2)">Instância <span class="inst-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);display:inline-block;flex-shrink:0"></span></span>
       </td>
     </tr>`;
   }).join('');
+  atualizarStatusInstancias(clientes);
+}
+
+// Consulta o status Z-API de cada cliente e pinta a bolinha da coluna Instância
+// (verde = conectado, vermelho = desconectado, cinza = sem instância/erro).
+async function atualizarStatusInstancias(clientes) {
+  await Promise.allSettled((clientes || []).map(async c => {
+    const dot = () => document.querySelector('.inst-status[data-cliente="' + c.id + '"] .inst-dot');
+    try {
+      const r = await api('/movatak/admin/clientes/' + c.id + '/conexao/status');
+      const d = dot(); if (!d) return;
+      d.style.background = !r.configurado ? 'var(--text3)' : (r.conectado ? '#22c55e' : '#ef4444');
+      d.parentElement.title = !r.configurado ? 'Sem instância Z-API configurada'
+        : (r.conectado ? 'Conectado — clique para ver' : (r.detalhe || 'Desconectado') + ' — clique para reconectar');
+    } catch (e) {
+      const d = dot(); if (d) d.style.background = 'var(--text3)';
+    }
+  }));
 }
 
 // ── Modal ──────────────────────────────────────────────────
@@ -4548,7 +4567,9 @@ function baixarBackupClientePorId(id) {
 // ---- Conexão do WhatsApp (status / reiniciar / QR) — funciona no admin e no portal ----
 let _conexaoQrTimer = null;
 let _conexaoQrTentativas = 0;
+let _conexaoIdManual = null; // definido ao abrir o modal a partir de uma linha da lista
 function clienteIdConexao() {
+  if (_conexaoIdManual) return _conexaoIdManual;
   if (typeof funilState !== 'undefined' && funilState && funilState.clienteId) return funilState.clienteId;
   if (typeof fuId !== 'undefined' && fuId) return fuId;
   return 0; // no portal, o backend força o id do próprio cliente pelo token
@@ -4576,7 +4597,8 @@ async function verificarConexaoWhatsapp() {
     return false;
   }
 }
-function abrirConexaoWhatsapp() {
+function abrirConexaoWhatsapp(id) {
+  _conexaoIdManual = id || null;
   const m = document.getElementById('modal-conexao');
   if (m) m.classList.add('open');
   const area = document.getElementById('conexao-qr-area');
@@ -4590,6 +4612,7 @@ function fecharConexaoModal() {
   if (m) m.classList.remove('open');
   if (_conexaoQrTimer) { clearInterval(_conexaoQrTimer); _conexaoQrTimer = null; }
   _conexaoQrTentativas = 0;
+  _conexaoIdManual = null;
 }
 async function reiniciarConexao() {
   const msg = document.getElementById('conexao-msg');
