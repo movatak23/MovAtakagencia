@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.10-agenda-dia-conflito';
+const MOVATAK_VERSION = 'v2.7.11-resumo-ia';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -5793,6 +5793,35 @@ app.post('/movatak/admin/leads/:id/dispensar-prioridade', ...exigeLead, async (r
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Resumo da conversa do lead por IA — para o vendedor entender o contexto rápido.
+app.get('/movatak/admin/leads/:id/resumo-ia', ...exigeLead, async (req, res) => {
+  try {
+    await garantirEstruturaConversas();
+    const leadId = req.params.id;
+    const convR = await query(
+      `SELECT * FROM (
+         SELECT direcao, conteudo, criado_em FROM movatak_conversas
+          WHERE lead_id = $1 AND conteudo IS NOT NULL AND conteudo <> ''
+          ORDER BY criado_em DESC LIMIT 40
+       ) sub ORDER BY criado_em ASC`,
+      [leadId]
+    );
+    if (!convR.rows.length) return res.json({ ok: true, resumo: 'Ainda não há mensagens nesta conversa para resumir.' });
+    const conversaTxt = convR.rows.map(m =>
+      (m.direcao === 'entrada' ? 'CLIENTE: ' : 'ATENDENTE: ') + (m.conteudo || '')
+    ).join('\n');
+    const systemPrompt =
+      'Você resume conversas de atendimento no WhatsApp para um vendedor que vai assumir o atendimento. ' +
+      'Faça um resumo curto e objetivo em português brasileiro, em no máximo 5 tópicos curtos, cobrindo: o que o cliente quer, ' +
+      'dúvidas ou objeções levantadas, o que já foi respondido e qual o próximo passo pendente. ' +
+      'Não invente informação que não esteja na conversa; se algo não apareceu, não cite. Sem saudação nem despedida.';
+    const userPrompt = 'CONVERSA:\n' + conversaTxt + '\n\nResumo:';
+    const resumo = await chamarHaiku(systemPrompt, userPrompt);
+    if (!resumo) return res.status(502).json({ error: 'A IA não retornou resumo. Tente novamente.' });
+    res.json({ ok: true, resumo });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
