@@ -624,7 +624,10 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 </div>
 
 <script>
-const API_BASE   = 'https://movatakagencia-production.up.railway.app';
+// API relativa ao domínio atual. Evita dependência do serviço antigo da Railway.
+// Ex.: app.movatak.com.br chama app.movatak.com.br/movatak/...
+//      bkpmovatak2026.up.railway.app chama bkpmovatak2026.up.railway.app/movatak/...
+const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
 const PAINEL_VERSION = 'v2.7.4-anexos-preview';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
