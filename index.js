@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.9-conexao-whatsapp';
+const MOVATAK_VERSION = 'v2.7.10-agenda-dia-conflito';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -5151,6 +5151,9 @@ app.post('/movatak/vendedor/agendamentos', authVendedor, async (req, res) => {
       }
     }
     const tipoNorm = String(tipo || 'atendimento').trim().toLowerCase();
+    if (await conflitoAgenda(clienteId, inicio, colunaDestino, null)) {
+      return res.status(409).json({ error: 'Já existe um agendamento neste horário nesta coluna. Escolha outro horário ou outra coluna.' });
+    }
     const ins = await query(`INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`, [clienteId, lead_id || null, titulo, tipoNorm, status || 'agendado', inicio, fim || null, observacao || null, colunaDestino]);
     if (lead_id && colunaDestino && mover_kanban !== false) {
       await moverLeadParaColunaFunil(lead_id, colunaDestino, true).catch(() => null);
@@ -8819,6 +8822,23 @@ async function buscarColunaAgenda(clienteId, tipo, colunaId) {
   return fallback.rows[0] ? fallback.rows[0].id : null;
 }
 
+// Verifica se já existe agendamento no MESMO horário (inicio) e na MESMA coluna do kanban.
+// A coluna é o critério que distingue agendamentos simultâneos (ex.: médicos diferentes =
+// colunas diferentes). IS NOT DISTINCT FROM trata coluna nula = coluna nula como conflito.
+async function conflitoAgenda(clienteId, inicio, colunaId, ignorarId) {
+  const r = await query(
+    `SELECT id FROM movatak_agendamentos
+      WHERE cliente_id = $1
+        AND inicio = $2::timestamptz
+        AND funil_coluna_id IS NOT DISTINCT FROM $3
+        AND COALESCE(status,'agendado') <> 'cancelado'
+        AND ($4::int IS NULL OR id <> $4)
+      LIMIT 1`,
+    [clienteId, inicio, colunaId ?? null, ignorarId ?? null]
+  ).catch(() => ({ rows: [] }));
+  return r.rows.length > 0;
+}
+
 async function garantirFunilPadraoCliente(clienteId) {
   await garantirEstruturaFunil();
   // Se o cliente JÁ tem colunas (ativas ou não), o funil dele já foi inicializado.
@@ -9382,6 +9402,9 @@ app.post('/movatak/admin/clientes/:id/agendamentos', ...forcaClienteIdNaUrl, asy
     const tipoNorm = String(tipo || 'atendimento').trim().toLowerCase();
     const lembreteNorm = [5, 15, 30, 60].includes(Number(lembrete_min)) ? Number(lembrete_min) : 0;
     const colunaDestino = await buscarColunaAgenda(clienteId, tipoNorm, coluna_id || null);
+    if (await conflitoAgenda(clienteId, inicio, colunaDestino, null)) {
+      return res.status(409).json({ error: 'Já existe um agendamento neste horário nesta coluna. Escolha outro horário ou outra coluna.' });
+    }
     const ins = await query(
       `INSERT INTO movatak_agendamentos (cliente_id, lead_id, titulo, tipo, status, inicio, fim, observacao, funil_coluna_id, lembrete_min)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
