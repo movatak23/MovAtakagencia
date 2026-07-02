@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.7-api-relativa</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.9-conexao-whatsapp</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.7-api-relativa';
+const PAINEL_VERSION = 'v2.7.9-conexao-whatsapp';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -824,6 +824,10 @@ async function iniciarAppVendedor() {
           <!-- Coluna 1: Caixa de entrada (conversas) -->
           <div class="funil-inbox-col" data-painel="inbox">
             <div class="funil-inbox-head">
+              <div class="conexao-wpp-bar" onclick="abrirConexaoWhatsapp()" title="Ver conexão do WhatsApp" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;padding:6px 9px;border-radius:8px;background:var(--bg2);border:1px solid var(--border2);margin-bottom:8px">
+                <span class="conexao-wpp-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0"></span>
+                <span class="conexao-wpp-txt" style="color:var(--text2)">WhatsApp: verificando...</span>
+              </div>
               <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
             </div>
             <div class="funil-inbox-filtros" id="funil-inbox-filtros"></div>
@@ -4515,6 +4519,125 @@ async function enviarRelatorioDiarioAgora() {
   }
 }
 
+function baixarBackupCliente() {
+  if (!fuId) return;
+  const erro = document.getElementById('fu-err');
+  if (erro) erro.textContent = 'Gerando backup...';
+  fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/backup', { headers: { 'x-movatak-secret': secret } })
+    .then(r => {
+      if (!r.ok) throw new Error('Erro ' + r.status);
+      const cd = r.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      return r.blob().then(blob => ({ blob, nome: m ? m[1] : 'movatak-backup.json' }));
+    })
+    .then(({ blob, nome }) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = nome;
+      document.body.appendChild(a); a.click(); a.remove();
+      if (erro) erro.textContent = '';
+    })
+    .catch(e => { if (erro) erro.textContent = 'Erro ao gerar backup: ' + e.message; });
+}
+
+// ---- Conexão do WhatsApp (status / reiniciar / QR) — funciona no admin e no portal ----
+let _conexaoQrTimer = null;
+let _conexaoQrTentativas = 0;
+function clienteIdConexao() {
+  if (typeof funilState !== 'undefined' && funilState && funilState.clienteId) return funilState.clienteId;
+  if (typeof fuId !== 'undefined' && fuId) return fuId;
+  return 0; // no portal, o backend força o id do próprio cliente pelo token
+}
+function _pillConexaoVisivel() {
+  return Array.from(document.querySelectorAll('.conexao-wpp-bar')).some(el => el.offsetParent !== null);
+}
+function _pintarConexao(estado, texto) {
+  const cor = estado === 'on' ? '#22c55e' : (estado === 'off' ? '#ef4444' : 'var(--text3)');
+  document.querySelectorAll('.conexao-wpp-dot').forEach(d => { d.style.background = cor; });
+  document.querySelectorAll('.conexao-wpp-txt').forEach(t => { t.textContent = 'WhatsApp: ' + texto; });
+  const md = document.getElementById('conexao-modal-dot');
+  const mt = document.getElementById('conexao-modal-txt');
+  if (md) md.style.background = cor;
+  if (mt) mt.textContent = texto;
+}
+async function verificarConexaoWhatsapp() {
+  try {
+    const r = await api('/movatak/admin/clientes/' + clienteIdConexao() + '/conexao/status');
+    if (!r.configurado) { _pintarConexao('wait', 'não configurado'); return false; }
+    _pintarConexao(r.conectado ? 'on' : 'off', r.conectado ? 'conectado' : (r.detalhe || 'desconectado'));
+    return r.conectado;
+  } catch (e) {
+    _pintarConexao('wait', 'erro ao verificar');
+    return false;
+  }
+}
+function abrirConexaoWhatsapp() {
+  const m = document.getElementById('modal-conexao');
+  if (m) m.classList.add('open');
+  const area = document.getElementById('conexao-qr-area');
+  if (area) area.style.display = 'none';
+  const msg = document.getElementById('conexao-msg');
+  if (msg) msg.textContent = '';
+  verificarConexaoWhatsapp();
+}
+function fecharConexaoModal() {
+  const m = document.getElementById('modal-conexao');
+  if (m) m.classList.remove('open');
+  if (_conexaoQrTimer) { clearInterval(_conexaoQrTimer); _conexaoQrTimer = null; }
+  _conexaoQrTentativas = 0;
+}
+async function reiniciarConexao() {
+  const msg = document.getElementById('conexao-msg');
+  if (msg) msg.textContent = 'Reiniciando conexão...';
+  try {
+    await api('/movatak/admin/clientes/' + clienteIdConexao() + '/conexao/restart', { method: 'POST' });
+    if (msg) msg.textContent = 'Reiniciado. Verificando em alguns segundos...';
+    setTimeout(async () => {
+      const ok = await verificarConexaoWhatsapp();
+      if (msg) msg.textContent = ok ? 'Conectado!' : 'Se não voltar, use o QR Code para reconectar.';
+    }, 5000);
+  } catch (e) {
+    if (msg) msg.textContent = 'Erro ao reiniciar: ' + e.message;
+  }
+}
+async function mostrarQrConexao() {
+  const area = document.getElementById('conexao-qr-area');
+  const msg = document.getElementById('conexao-msg');
+  _conexaoQrTentativas = 0;
+  if (_conexaoQrTimer) { clearInterval(_conexaoQrTimer); _conexaoQrTimer = null; }
+  const puxar = async () => {
+    try {
+      const r = await api('/movatak/admin/clientes/' + clienteIdConexao() + '/conexao/qr');
+      if (r.conectado) {
+        if (area) area.style.display = 'none';
+        if (msg) msg.textContent = 'Já está conectado!';
+        _pintarConexao('on', 'conectado');
+        if (_conexaoQrTimer) { clearInterval(_conexaoQrTimer); _conexaoQrTimer = null; }
+        return;
+      }
+      if (r.qr) {
+        document.getElementById('conexao-qr-img').src = r.qr;
+        if (area) area.style.display = 'block';
+        if (msg) msg.textContent = 'Escaneie o QR com o WhatsApp do número.';
+      } else if (msg) {
+        msg.textContent = r.detalhe || 'QR indisponível, tentando de novo...';
+      }
+      _conexaoQrTentativas++;
+      if (_conexaoQrTentativas >= 8 && _conexaoQrTimer) {
+        clearInterval(_conexaoQrTimer); _conexaoQrTimer = null;
+        if (msg) msg.textContent = 'Parei de atualizar o QR. Clique em "Mostrar QR Code" de novo se precisar.';
+      }
+    } catch (e) {
+      if (msg) msg.textContent = 'Erro ao obter QR: ' + e.message;
+    }
+  };
+  await puxar();
+  _conexaoQrTimer = setInterval(puxar, 15000);
+}
+// Verificação automática do status enquanto a tela de funil estiver aberta.
+setInterval(() => { if (_pillConexaoVisivel()) verificarConexaoWhatsapp(); }, 60000);
+setTimeout(() => { if (_pillConexaoVisivel()) verificarConexaoWhatsapp(); }, 3000);
+
 function exportarLeadsCSV() {
   if (!fuId) return;
   const url = API_BASE + '/movatak/admin/clientes/' + fuId + '/leads.csv';
@@ -6664,6 +6787,10 @@ async function iniciarPaginaFunilAtendimento() {
           <!-- Coluna 1: Caixa de entrada (conversas) -->
           <div class="funil-inbox-col" data-painel="inbox">
             <div class="funil-inbox-head">
+              <div class="conexao-wpp-bar" onclick="abrirConexaoWhatsapp()" title="Ver conexão do WhatsApp" style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:11px;padding:6px 9px;border-radius:8px;background:var(--bg2);border:1px solid var(--border2);margin-bottom:8px">
+                <span class="conexao-wpp-dot" style="width:8px;height:8px;border-radius:50%;background:var(--text3);flex-shrink:0"></span>
+                <span class="conexao-wpp-txt" style="color:var(--text2)">WhatsApp: verificando...</span>
+              </div>
               <input id="funil-inbox-busca" type="text" placeholder="🔍 Nome ou telefone..." oninput="filtrarInbox(this.value)">
             </div>
             <div class="funil-inbox-filtros" id="funil-inbox-filtros"></div>
@@ -8319,6 +8446,7 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
         <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
         <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
+        <button class="btn-add-small" onclick="baixarBackupCliente()">💾 Backup deste cliente</button>
         <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
       </div>
       <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
@@ -8724,6 +8852,27 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
   <button onclick="fecharLightbox()" title="Fechar" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:22px;width:42px;height:42px;border-radius:50%;cursor:pointer;line-height:1">✕</button>
   <a id="lightbox-baixar" href="#" download onclick="event.stopPropagation()" title="Baixar imagem" style="position:absolute;top:18px;right:74px;background:rgba(255,255,255,.15);color:#fff;font-size:18px;width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
   <img id="lightbox-img-el" src="" onclick="event.stopPropagation()" style="max-width:92vw;max-height:88vh;border-radius:8px;box-shadow:0 10px 50px rgba(0,0,0,.6);object-fit:contain">
+</div>
+
+<div class="modal-overlay" id="modal-conexao">
+  <div class="modal" style="max-width:420px;text-align:center">
+    <button class="modal-x" onclick="fecharConexaoModal()" title="Fechar">✕</button>
+    <h3>Conexão do WhatsApp</h3>
+    <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin:14px 0;font-size:14px">
+      <span id="conexao-modal-dot" style="width:12px;height:12px;border-radius:50%;background:var(--text3)"></span>
+      <span id="conexao-modal-txt" style="color:var(--text2)">Verificando...</span>
+    </div>
+    <div id="conexao-qr-area" style="display:none;margin:16px 0">
+      <img id="conexao-qr-img" src="" alt="QR Code" style="width:260px;height:260px;max-width:80vw;background:#fff;border-radius:12px;padding:8px;box-sizing:border-box">
+      <div class="fu-hint" style="font-size:12px;margin-top:10px">No celular: WhatsApp → Aparelhos conectados → Conectar um aparelho → aponte a câmera para este QR. O código renova sozinho.</div>
+    </div>
+    <div id="conexao-msg" style="font-size:12px;color:var(--text2);min-height:16px;margin:6px 0"></div>
+    <div class="modal-btns" style="justify-content:center;flex-wrap:wrap;gap:8px">
+      <button class="btn-cancel" onclick="reiniciarConexao()">🔄 Reiniciar conexão</button>
+      <button class="btn-save" onclick="mostrarQrConexao()">📷 Mostrar QR Code</button>
+    </div>
+    <div class="fu-hint" style="font-size:11px;margin-top:12px">Reiniciar resolve quedas rápidas sem QR. Use o QR só quando pedir pra reconectar de verdade.</div>
+  </div>
 </div>
 
 <div class="modal-overlay" id="modal-reset">
