@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.7-webhook-idempotente';
+const MOVATAK_VERSION = 'v2.7.9-conexao-whatsapp';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -474,6 +474,29 @@ async function vendedorPodeLead(req, leadId) {
 // ============================================================
 // Z-API — helpers
 // ============================================================
+// ---- Controle de execução de crons (hardening pós-incidente) ----
+// No serviço reserva, setar MOVATAK_CRON_ATIVO=false evita cron duplicado no mesmo banco.
+const CRON_ATIVO = String(process.env.MOVATAK_CRON_ATIVO ?? 'true').toLowerCase() !== 'false';
+function hashStringToInt(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) { h = ((h << 5) - h + str.charCodeAt(i)) | 0; }
+  return Math.abs(h);
+}
+// Trava distribuída no Postgres: só UM processo roda a rotina por vez, mesmo com dois
+// backends ligados no mesmo banco. Se não conseguir a trava, pula sem erro.
+async function withPgAdvisoryLock(nome, fn) {
+  const lockId = hashStringToInt('movatak:' + nome);
+  let got = false;
+  try {
+    const r = await query('SELECT pg_try_advisory_lock($1) AS ok', [lockId]);
+    got = !!(r.rows[0] && r.rows[0].ok);
+    if (!got) { console.log('[cron] trava ocupada, pulando:', nome); return; }
+    return await fn();
+  } finally {
+    if (got) await query('SELECT pg_advisory_unlock($1)', [lockId]).catch(() => null);
+  }
+}
+
 const ZAPI_BASE = 'https://api.z-api.io/instances';
 
 // Todas retornam o ID da mensagem que o Z-API devolve no envio. Pra APAGAR depois,
@@ -514,6 +537,30 @@ async function zapiPostComPossivelResposta(url, payload, clientToken, replyMsgId
 async function zapiEnviar(instance, token, clientToken, telefone, mensagem, replyMsgId = null) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/send-text`;
   return zapiPostComPossivelResposta(url, { phone: telefone, message: mensagem }, clientToken, replyMsgId);
+}
+
+// ---- Conexão da instância Z-API (status / reiniciar / QR) ----
+async function getZapiCreds(clienteId) {
+  const r = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id = $1', [clienteId]);
+  if (!r.rows.length) return null;
+  const c = r.rows[0];
+  if (!c.zapi_instance || !c.zapi_token) return null;
+  return { instance: c.zapi_instance, token: c.zapi_token, clientToken: c.zapi_client_token || '' };
+}
+async function zapiStatus(instance, token, clientToken) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/status`;
+  const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, timeout: 12000 });
+  return resp.data || {};
+}
+async function zapiRestart(instance, token, clientToken) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/restart`;
+  const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, timeout: 12000 });
+  return resp.data || {};
+}
+async function zapiQrImagem(instance, token, clientToken) {
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/qr-code/image`;
+  const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, timeout: 12000 });
+  return resp.data;
 }
 
 async function zapiEnviarImagem(instance, token, clientToken, telefone, imageUrl, caption, replyMsgId = null) {
@@ -1673,6 +1720,37 @@ cron.schedule('30 8 * * *', enviarRelatorioDiarioClientes, { timezone: 'America/
 cron.schedule('*/15 * * * *', async () => {
   await processarQuestionariosParados();
 });
+
+// ---- Auto-reconexão: reinicia instâncias caídas (quedas transitórias de sessão) ----
+// Só roda com CRON_ATIVO e sob trava de liderança (não duplica entre serviços).
+// Restart resolve queda de sessão sem QR; se o celular deslogou de vez, precisa do QR
+// (aí o cliente reconecta sozinho pela tela de Conexão). Throttle: 1 restart / 10 min / instância.
+const _ultimoRestartInstancia = new Map();
+if (CRON_ATIVO) {
+  cron.schedule('*/5 * * * *', async () => {
+    await withPgAdvisoryLock('auto-reconexao', async () => {
+      const r = await query(
+        `SELECT id, nome, zapi_instance, zapi_token, zapi_client_token
+           FROM movatak_clientes
+          WHERE ativo = true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL`
+      );
+      for (const c of r.rows) {
+        try {
+          const st = await zapiStatus(c.zapi_instance, c.zapi_token, c.zapi_client_token || '');
+          if (st.connected === true) continue;
+          const agora = Date.now();
+          const ultimo = _ultimoRestartInstancia.get(c.zapi_instance) || 0;
+          if (agora - ultimo < 10 * 60 * 1000) continue;
+          _ultimoRestartInstancia.set(c.zapi_instance, agora);
+          await zapiRestart(c.zapi_instance, c.zapi_token, c.zapi_client_token || '');
+          console.log(JSON.stringify({ tipo: 'auto_reconexao', cliente_id: c.id, instancia: c.zapi_instance, acao: 'restart' }));
+        } catch (e) {
+          console.warn('[auto-reconexao] falha cliente', c.id, e.response?.data?.error || e.message);
+        }
+      }
+    });
+  }, { timezone: 'America/Sao_Paulo' });
+}
 
 // ============================================================
 // WEBHOOK — Lead respondeu (parar sequência)
@@ -6292,6 +6370,110 @@ app.get('/movatak/admin/clientes/:id/leads.csv', ...forcaClienteIdNaUrl, async (
     res.send('\ufeff' + linhas.join('\n'));
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// Backup completo do cliente (somente leitura) — config + leads + conversas + tudo
+// que tem cliente_id. Descobre as tabelas por introspecção: nunca referencia coluna
+// inexistente e se adapta a mudanças futuras de schema. Baixa como JSON no PC do admin.
+// ============================================================
+app.get('/movatak/admin/clientes/:id/backup', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    const clienteId = req.params.id;
+    // Log/dedupe/transientes ficam de fora (sem valor de restore e podem inchar demais).
+    const IGNORAR = new Set(['movatak_webhook_eventos', 'movatak_etiqueta_log', 'movatak_ausencia_enviada']);
+
+    const tabsRes = await query(
+      `SELECT table_name FROM information_schema.columns
+        WHERE table_schema='public' AND column_name='cliente_id' AND table_name LIKE 'movatak_%'
+        GROUP BY table_name ORDER BY table_name`
+    );
+
+    const tabelas = {};
+    const contagens = {};
+
+    // Config do próprio cliente (movatak_clientes tem PK id, não cliente_id).
+    const cliRes = await query('SELECT * FROM movatak_clientes WHERE id = $1', [clienteId]);
+    if (!cliRes.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    tabelas['movatak_clientes'] = cliRes.rows;
+    contagens['movatak_clientes'] = cliRes.rows.length;
+    const clienteNome = cliRes.rows[0].nome || ('cliente_' + clienteId);
+
+    for (const row of tabsRes.rows) {
+      const t = row.table_name;
+      if (IGNORAR.has(t)) continue;
+      if (!/^movatak_[a-z_]+$/.test(t)) continue; // defesa extra contra nome inesperado
+      const r = await query(`SELECT * FROM ${t} WHERE cliente_id = $1`, [clienteId]);
+      tabelas[t] = r.rows;
+      contagens[t] = r.rows.length;
+    }
+
+    const backup = {
+      movatak_backup: true,
+      versao: MOVATAK_VERSION,
+      gerado_em: new Date().toISOString(),
+      cliente_id: Number(clienteId),
+      cliente_nome: clienteNome,
+      contagens,
+      tabelas
+    };
+
+    const slug = String(clienteNome).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase().slice(0, 40) || 'cliente';
+    const dataStr = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="movatak-backup-${slug}-${dataStr}.json"`);
+    res.send(JSON.stringify(backup));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ============================================================
+// Conexão do WhatsApp (status / reiniciar / QR) — mesma rota serve admin e portal.
+// No portal, forcaClienteIdNaUrl trava no próprio cliente (cada um só vê a sua instância).
+// ============================================================
+app.get('/movatak/admin/clientes/:id/conexao/status', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    const creds = await getZapiCreds(req.params.id);
+    if (!creds) return res.json({ ok: true, configurado: false, conectado: false, detalhe: 'Instância Z-API não configurada.' });
+    const st = await zapiStatus(creds.instance, creds.token, creds.clientToken);
+    const conectado = st.connected === true;
+    res.json({
+      ok: true, configurado: true, conectado,
+      detalhe: st.error || (conectado ? 'Conectado' : (st.smartphoneConnected === false ? 'Celular desconectado' : 'Desconectado'))
+    });
+  } catch (e) {
+    res.json({ ok: false, configurado: true, conectado: false, detalhe: 'Erro ao consultar: ' + (e.response?.data?.error || e.message) });
+  }
+});
+app.post('/movatak/admin/clientes/:id/conexao/restart', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    const creds = await getZapiCreds(req.params.id);
+    if (!creds) return res.status(400).json({ error: 'Instância não configurada.' });
+    await zapiRestart(creds.instance, creds.token, creds.clientToken);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.error || e.message });
+  }
+});
+app.get('/movatak/admin/clientes/:id/conexao/qr', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    const creds = await getZapiCreds(req.params.id);
+    if (!creds) return res.status(400).json({ error: 'Instância não configurada.' });
+    try {
+      const st = await zapiStatus(creds.instance, creds.token, creds.clientToken);
+      if (st.connected === true) return res.json({ ok: true, conectado: true, qr: null });
+    } catch (_) {}
+    const data = await zapiQrImagem(creds.instance, creds.token, creds.clientToken);
+    let img = null;
+    if (data) img = data.value || data.qrcode || (typeof data === 'string' ? data : null);
+    if (!img) return res.json({ ok: true, conectado: false, qr: null, detalhe: 'QR indisponível no momento, tente novamente.' });
+    const qr = String(img).startsWith('data:') ? img : ('data:image/png;base64,' + img);
+    res.json({ ok: true, conectado: false, qr });
+  } catch (e) {
+    res.status(500).json({ error: e.response?.data?.error || e.message });
   }
 });
 
