@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.9-conexao-whatsapp</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.10-backup-na-lista</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.9-conexao-whatsapp';
+const PAINEL_VERSION = 'v2.7.10-backup-na-lista';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -1790,6 +1790,7 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
         <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
         <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
+        <button onclick="event.stopPropagation();baixarBackupClientePorId(${c.id})" title="Baixar backup deste cliente" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">💾 Backup</button>
       </td>
     </tr>`;
   }).join('');
@@ -4521,9 +4522,13 @@ async function enviarRelatorioDiarioAgora() {
 
 function baixarBackupCliente() {
   if (!fuId) return;
+  baixarBackupClientePorId(fuId);
+}
+function baixarBackupClientePorId(id) {
+  if (!id) return;
   const erro = document.getElementById('fu-err');
   if (erro) erro.textContent = 'Gerando backup...';
-  fetch(API_BASE + '/movatak/admin/clientes/' + fuId + '/backup', { headers: { 'x-movatak-secret': secret } })
+  fetch(API_BASE + '/movatak/admin/clientes/' + id + '/backup', { headers: { 'x-movatak-secret': secret } })
     .then(r => {
       if (!r.ok) throw new Error('Erro ' + r.status);
       const cd = r.headers.get('Content-Disposition') || '';
@@ -4537,7 +4542,7 @@ function baixarBackupCliente() {
       document.body.appendChild(a); a.click(); a.remove();
       if (erro) erro.textContent = '';
     })
-    .catch(e => { if (erro) erro.textContent = 'Erro ao gerar backup: ' + e.message; });
+    .catch(e => { if (erro) erro.textContent = 'Erro ao gerar backup: ' + e.message; alert('Erro ao gerar backup: ' + e.message); });
 }
 
 // ---- Conexão do WhatsApp (status / reiniciar / QR) — funciona no admin e no portal ----
