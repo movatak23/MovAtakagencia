@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.5-followup-ausencia';
+const MOVATAK_VERSION = 'v2.7.7-webhook-idempotente';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -3493,6 +3493,42 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
   const body = req.body || {};
 
+  // ---- Idempotência + registro do evento bruto (protege autoatendimento/conversa) ----
+  // A Z-API reenvia o mesmo webhook em timeout/429 (aconteceu no incidente). Sem dedupe,
+  // o mesmo messageId vira conversa duplicada e pode reiniciar autoatendimento. Aqui
+  // gravamos o evento cru e, se o messageId já foi recebido, encerramos sem reprocessar.
+  // Regra de ouro: falha ao gravar NUNCA derruba o fluxo — segue processando normal.
+  let _eventoWebhookId = null;
+  try {
+    const _instEv = body.instanceId || body.instance || null;
+    const _msgEv = body.messageId || body.id || null;
+    const _phoneEv = String(body.phone || '') || null;
+    const _dirEv = body.fromMe ? 'saida' : 'entrada';
+    if (_msgEv) {
+      const _insEv = await query(
+        `INSERT INTO movatak_webhook_eventos (origem, instance_id, message_id, phone, direction, payload, status)
+         VALUES ('zapi', $1, $2, $3, $4, $5::jsonb, 'recebido')
+         ON CONFLICT (instance_id, message_id) WHERE message_id IS NOT NULL DO NOTHING
+         RETURNING id`,
+        [_instEv, _msgEv, _phoneEv, _dirEv, JSON.stringify(body)]
+      );
+      if (!_insEv.rows.length) {
+        logDebug('[zapi][ignorado] evento duplicado (messageId ' + _msgEv + ' já recebido)');
+        return;
+      }
+      _eventoWebhookId = _insEv.rows[0].id;
+    } else {
+      const _insEv = await query(
+        `INSERT INTO movatak_webhook_eventos (origem, instance_id, message_id, phone, direction, payload, status)
+         VALUES ('zapi', $1, NULL, $2, $3, $4::jsonb, 'recebido') RETURNING id`,
+        [_instEv, _phoneEv, _dirEv, JSON.stringify(body)]
+      );
+      _eventoWebhookId = _insEv.rows[0].id;
+    }
+  } catch (e) {
+    console.error('[zapi][evento] falha ao registrar evento bruto (seguindo mesmo assim):', e.message);
+  }
+
   // ---- Repasse para o rastreiobot (mantém DTF funcionando) ----
   try {
     await axios.post(`${RASTREIOBOT_URL}/webhook/zapi`, body, { timeout: 8000 });
@@ -4094,6 +4130,31 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     }
   } catch (e) {
     console.error('[zapi] erro processamento:', e.message);
+    // Marca o evento bruto como erro (para diagnóstico via /webhook/status). Guardado.
+    if (_eventoWebhookId) {
+      await query(
+        `UPDATE movatak_webhook_eventos SET status='erro', erro=$1, processado_em=NOW() WHERE id=$2`,
+        [String(e.message || e).slice(0, 500), _eventoWebhookId]
+      ).catch(() => null);
+    }
+  }
+});
+
+// Diagnóstico do webhook Z-API: saúde em segundos, sem expor payload nem dados de lead.
+// Sem auth (como /health e /version) — retorna só contadores agregados.
+app.get('/movatak/webhook/status', async (req, res) => {
+  try {
+    const r = await query(`
+      SELECT
+        COUNT(*) FILTER (WHERE recebido_em > NOW() - INTERVAL '1 hour') AS recebidos_1h,
+        COUNT(*) FILTER (WHERE status = 'erro' AND recebido_em > NOW() - INTERVAL '1 hour') AS erros_1h,
+        MAX(recebido_em) AS ultimo_recebido,
+        MAX(recebido_em) FILTER (WHERE status = 'erro') AS ultimo_erro
+      FROM movatak_webhook_eventos
+    `);
+    res.json({ ok: true, webhook: r.rows[0] });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -6061,7 +6122,7 @@ const ANEXO_TIPOS_OK = ['application/pdf', 'image/jpeg', 'image/png', 'image/web
 app.get('/movatak/admin/leads/:id/anexos', ...exigeLead, async (req, res) => {
   try {
     const r = await query(
-      `SELECT id, nome_arquivo, tipo, tamanho, autor, criado_em
+      `SELECT id, nome_arquivo, tipo, tamanho, autor, criado_em, comentario
          FROM movatak_lead_anexos WHERE lead_id = $1 ORDER BY criado_em DESC`,
       [req.params.id]
     );
@@ -6103,7 +6164,6 @@ app.post('/movatak/admin/leads/:id/anexos', ...exigeLead, async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, nome_arquivo, tipo, tamanho, autor, criado_em`,
       [leadId, clienteId, nomeOriginal, tipo || null, buffer.length, chave, autor]
     );
-    await registrarEventoLead(leadId, clienteId, 'anexo_adicionado', 'Documento anexado: ' + nomeOriginal, { autor }).catch(() => null);
     res.json({ ok: true, anexo: ins.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -6135,6 +6195,19 @@ app.delete('/movatak/admin/leads/:id/anexos/:anexoId', ...exigeLead, async (req,
     if (!r.rows.length) return res.status(404).json({ error: 'Anexo não encontrado.' });
     if (r2Client) { await r2Delete(r.rows[0].r2_chave).catch(() => null); }
     await query('DELETE FROM movatak_lead_anexos WHERE id = $1', [req.params.anexoId]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Define/atualiza o comentário de um anexo (texto livre, esvaziar remove).
+app.put('/movatak/admin/leads/:id/anexos/:anexoId/comentario', ...exigeLead, async (req, res) => {
+  try {
+    const texto = String((req.body && req.body.comentario) || '').trim().slice(0, 2000);
+    const r = await query(
+      'UPDATE movatak_lead_anexos SET comentario = $1 WHERE id = $2 AND lead_id = $3 RETURNING id',
+      [texto || null, req.params.anexoId, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Anexo não encontrado.' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7929,6 +8002,26 @@ async function garantirEstruturaConversas() {
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_lead_anexos_lead ON movatak_lead_anexos(lead_id)`).catch(() => null);
+  await query(`ALTER TABLE movatak_lead_anexos ADD COLUMN IF NOT EXISTS comentario TEXT`).catch(() => null);
+
+  // Registro bruto de todos os webhooks Z-API — idempotência por messageId + diagnóstico.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_webhook_eventos (
+    id BIGSERIAL PRIMARY KEY,
+    origem TEXT NOT NULL DEFAULT 'zapi',
+    instance_id TEXT,
+    message_id TEXT,
+    phone TEXT,
+    direction TEXT,
+    payload JSONB NOT NULL,
+    status TEXT NOT NULL DEFAULT 'recebido',
+    erro TEXT,
+    recebido_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processado_em TIMESTAMPTZ
+  )`).catch(() => null);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_movatak_webhook_evento_msg
+    ON movatak_webhook_eventos(instance_id, message_id) WHERE message_id IS NOT NULL`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_webhook_recebido
+    ON movatak_webhook_eventos(recebido_em DESC)`).catch(() => null);
 
   await query(`CREATE TABLE IF NOT EXISTS movatak_conversas (
     id SERIAL PRIMARY KEY,
