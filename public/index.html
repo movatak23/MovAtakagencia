@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.10-backup-na-lista</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.11-agenda-abas</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.10-backup-na-lista';
+const PAINEL_VERSION = 'v2.7.11-agenda-abas';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -6127,42 +6127,85 @@ function agendaStatusInfo(st) {
   return AGENDA_STATUS.find(s => s[0] === st) || AGENDA_STATUS[0];
 }
 
+let _agendaPorDia = {};
+let _agendaDiaSel = null;
+
+function _chaveDiaLocal(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function _rotuloDiaAgenda(key) {
+  const [y, m, dd] = key.split('-').map(Number);
+  const d = new Date(y, m - 1, dd);
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  if (d.getTime() === hoje.getTime()) return 'Hoje';
+  const amanha = new Date(hoje); amanha.setDate(amanha.getDate() + 1);
+  if (d.getTime() === amanha.getTime()) return 'Amanhã';
+  return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+}
+function _renderAgendaItem(a) {
+  const hora = new Date(a.inicio).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const si = agendaStatusInfo(a.status);
+  const cancelado = a.status === 'cancelado';
+  const opcoesStatus = AGENDA_STATUS.map(s => `<option value="${s[0]}" ${s[0] === a.status ? 'selected' : ''}>${s[1]}</option>`).join('');
+  const btnAbrirLead = a.lead_id
+    ? `<button class="btn-add-small" style="padding:4px 8px;font-size:11px" onclick="abrirLeadDaAgenda(${a.lead_id})" title="Abrir conversa do lead">💬 Abrir lead</button>`
+    : '';
+  return `<div class="agenda-item-card" style="${cancelado ? 'opacity:.55' : ''}">
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
+      <div>
+        <strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong>
+        <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div>
+      </div>
+      <div style="text-align:right">
+        <span style="font-size:13px;color:var(--accent);font-family:var(--mono);white-space:nowrap;display:block;font-weight:600">${hora}</span>
+        <span style="font-size:10px;color:#fff;background:${si[2]};border-radius:4px;padding:1px 7px;display:inline-block;margin-top:3px">${si[1]}</span>
+      </div>
+    </div>
+    ${a.observacao ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">${escapeHtml(a.observacao)}</div>` : ''}
+    <div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">
+      <select onchange="mudarStatusAgendamento(${a.id}, this.value)" style="font-size:11px;padding:4px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text)" ${cancelado ? 'disabled' : ''}>
+        ${opcoesStatus}
+      </select>
+      ${btnAbrirLead}
+      <button class="btn-remove" style="margin-left:auto" title="Excluir agendamento" onclick="excluirAgendamento(${a.id})">×</button>
+    </div>
+  </div>`;
+}
+function selecionarDiaAgenda(k) { _agendaDiaSel = k; renderAgendaTabsEDia(); }
+function renderAgendaTabsEDia() {
+  const lista = document.getElementById('agenda-lista');
+  if (!lista) return;
+  const chaves = Object.keys(_agendaPorDia).sort();
+  if (!chaves.length) { lista.innerHTML = '<div class="fu-hint">Nenhum agendamento próximo.</div>'; return; }
+  if (!_agendaDiaSel || !_agendaPorDia[_agendaDiaSel]) _agendaDiaSel = chaves[0];
+  const tabs = chaves.map(k => {
+    const ativo = k === _agendaDiaSel;
+    return `<button onclick="selecionarDiaAgenda('${k}')" style="font-size:11px;padding:5px 11px;border-radius:999px;border:1px solid ${ativo ? 'var(--accent)' : 'var(--border2)'};background:${ativo ? 'var(--accent)' : 'transparent'};color:${ativo ? '#fff' : 'var(--text2)'};cursor:pointer;white-space:nowrap;flex-shrink:0">${_rotuloDiaAgenda(k)} <span style="opacity:.7">(${_agendaPorDia[k].length})</span></button>`;
+  }).join('');
+  const itensDia = _agendaPorDia[_agendaDiaSel] || [];
+  const corpo = itensDia.length ? itensDia.map(_renderAgendaItem).join('') : '<div class="fu-hint">Nenhum agendamento neste dia.</div>';
+  lista.innerHTML = `<div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:8px;margin-bottom:10px">${tabs}</div>${corpo}`;
+}
 async function carregarAgendaFunil() {
   const lista = document.getElementById('agenda-lista');
   if (!lista || !funilState.clienteId) return;
   lista.innerHTML = '<div class="fu-hint">Carregando...</div>';
   try {
     const itens = await api('/movatak/admin/clientes/' + funilState.clienteId + '/agendamentos?dias=45');
-    if (!itens.length) { lista.innerHTML = '<div class="fu-hint">Nenhum agendamento próximo.</div>'; return; }
-    lista.innerHTML = itens.map(a => {
-      const data = new Date(a.inicio).toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-      const si = agendaStatusInfo(a.status);
-      const cancelado = a.status === 'cancelado';
-      const opcoesStatus = AGENDA_STATUS.map(s => `<option value="${s[0]}" ${s[0]===a.status?'selected':''}>${s[1]}</option>`).join('');
-      const btnAbrirLead = a.lead_id
-        ? `<button class="btn-add-small" style="padding:4px 8px;font-size:11px" onclick="abrirLeadDaAgenda(${a.lead_id})" title="Abrir conversa do lead">💬 Abrir lead</button>`
-        : '';
-      return `<div class="agenda-item-card" style="${cancelado?'opacity:.55':''}">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start">
-          <div>
-            <strong style="font-size:13px;color:var(--text)">${escapeHtml(a.titulo || 'Agendamento')}</strong>
-            <div style="font-size:12px;color:var(--text2);margin-top:2px">${escapeHtml(a.lead_nome || a.lead_telefone || 'Sem lead')} · ${escapeHtml(a.coluna_nome || a.tipo || '')}</div>
-          </div>
-          <div style="text-align:right">
-            <span style="font-size:11px;color:var(--accent);font-family:var(--mono);white-space:nowrap;display:block">${data}</span>
-            <span style="font-size:10px;color:#fff;background:${si[2]};border-radius:4px;padding:1px 7px;display:inline-block;margin-top:3px">${si[1]}</span>
-          </div>
-        </div>
-        ${a.observacao ? `<div style="font-size:12px;color:var(--text2);margin-top:6px">${escapeHtml(a.observacao)}</div>` : ''}
-        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;flex-wrap:wrap">
-          <select onchange="mudarStatusAgendamento(${a.id}, this.value)" style="font-size:11px;padding:4px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text)" ${cancelado?'disabled':''}>
-            ${opcoesStatus}
-          </select>
-          ${btnAbrirLead}
-          <button class="btn-remove" style="margin-left:auto" title="Excluir agendamento" onclick="excluirAgendamento(${a.id})">×</button>
-        </div>
-      </div>`;
-    }).join('');
+    // Agrupa por dia, ignorando dias já passados. Hoje entra como primeira aba; dias
+    // posteriores viram abas próprias. Assim a lista mostra só o dia selecionado.
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    _agendaPorDia = {};
+    (itens || []).forEach(a => {
+      const d = new Date(a.inicio); const dia = new Date(d); dia.setHours(0, 0, 0, 0);
+      if (dia.getTime() < hoje.getTime()) return;
+      const k = _chaveDiaLocal(d);
+      (_agendaPorDia[k] = _agendaPorDia[k] || []).push(a);
+    });
+    Object.values(_agendaPorDia).forEach(arr => arr.sort((x, y) => new Date(x.inicio) - new Date(y.inicio)));
+    const hojeKey = _chaveDiaLocal(new Date());
+    _agendaDiaSel = _agendaPorDia[hojeKey] ? hojeKey : (Object.keys(_agendaPorDia).sort()[0] || null);
+    renderAgendaTabsEDia();
   } catch (e) { lista.innerHTML = '<div class="fu-hint" style="color:var(--red)">Erro: ' + escapeHtml(e.message) + '</div>'; }
 }
 
