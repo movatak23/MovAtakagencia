@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.12-status-instancia-lista</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.13-resumo-ia</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.12-status-instancia-lista';
+const PAINEL_VERSION = 'v2.7.13-resumo-ia';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -4666,6 +4666,37 @@ async function mostrarQrConexao() {
 setInterval(() => { if (_pillConexaoVisivel()) verificarConexaoWhatsapp(); }, 60000);
 setTimeout(() => { if (_pillConexaoVisivel()) verificarConexaoWhatsapp(); }, 3000);
 
+// ---- Resumo da conversa por IA (balão no card, quando a IA da coluna está ativa) ----
+function fecharResumoIA() {
+  const p = document.getElementById('resumo-ia-pop');
+  if (p) p.style.display = 'none';
+}
+async function abrirResumoIA(leadId, ev) {
+  const pop = document.getElementById('resumo-ia-pop');
+  const corpo = document.getElementById('resumo-ia-corpo');
+  if (!pop || !corpo) return;
+  corpo.textContent = 'Gerando resumo...';
+  pop.style.display = 'block';
+  const w = 340, h = 260;
+  const px = ev && ev.clientX ? ev.clientX : window.innerWidth / 2;
+  const py = ev && ev.clientY ? ev.clientY : window.innerHeight / 2;
+  pop.style.left = Math.max(8, Math.min(px, window.innerWidth - w - 12)) + 'px';
+  pop.style.top = Math.max(8, Math.min(py + 8, window.innerHeight - h - 12)) + 'px';
+  try {
+    const r = await api('/movatak/admin/leads/' + leadId + '/resumo-ia');
+    corpo.textContent = r.resumo || 'Sem resumo.';
+  } catch (e) {
+    corpo.textContent = 'Erro ao gerar resumo: ' + e.message;
+  }
+}
+// Fecha o balão ao clicar fora (o clique que abre tem stopPropagation, então não fecha sozinho) ou no Esc.
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('resumo-ia-pop');
+  if (!pop || pop.style.display === 'none') return;
+  if (!pop.contains(e.target)) fecharResumoIA();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') fecharResumoIA(); });
+
 function exportarLeadsCSV() {
   if (!fuId) return;
   const url = API_BASE + '/movatak/admin/clientes/' + fuId + '/leads.csv';
@@ -7887,6 +7918,10 @@ function renderFunilCard(lead, colunaAtualId) {
     ? `<select title="Transferir para outro setor" onclick="event.stopPropagation()" onchange="transferirSetorLead(${lead.id}, this.value)" style="border-color:var(--accent)"><option value="">Setor...</option>${setoresOpts}</select>`
     : '';
   const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 30);
+  const colAtualResumo = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaAtualId));
+  const btnResumoIA = (colAtualResumo && colAtualResumo.ia_ativa)
+    ? `<button onclick="event.stopPropagation();abrirResumoIA(${lead.id}, event)" title="Resumo da conversa por IA" style="color:var(--accent);border-color:var(--accent)">📝 Resumo</button>`
+    : '';
   const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
   const preview = lead.ultima_msg
     ? `<div class="funil-card-preview">${escapeHtml((prefixoVoce + String(lead.ultima_msg)).slice(0, 60))}</div>`
@@ -7911,6 +7946,7 @@ function renderFunilCard(lead, colunaAtualId) {
     <div class="funil-card-actions">
       <button onclick="event.stopPropagation();abrirMensagemRapidaLead(${lead.id}, '${nomeSeguro}')">Mensagem</button>
       <button onclick="event.stopPropagation();reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
+      ${btnResumoIA}
       <select onclick="event.stopPropagation()" onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
       ${seletorSetor}
     </div>
@@ -8944,6 +8980,14 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
     </div>
     <div class="fu-hint" style="font-size:11px;margin-top:12px">Reiniciar resolve quedas rápidas sem QR. Use o QR só quando pedir pra reconectar de verdade.</div>
   </div>
+</div>
+
+<div id="resumo-ia-pop" style="display:none;position:fixed;z-index:100000;max-width:340px;background:var(--bg2);border:1px solid var(--accent);border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.45);padding:14px 16px;font-size:12px;color:var(--text);line-height:1.5">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+    <strong style="font-size:12px;color:var(--accent)">📝 Resumo da conversa</strong>
+    <button onclick="fecharResumoIA()" style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;line-height:1">✕</button>
+  </div>
+  <div id="resumo-ia-corpo" style="white-space:pre-wrap;word-break:break-word;max-height:52vh;overflow-y:auto">Gerando resumo...</div>
 </div>
 
 <div class="modal-overlay" id="modal-reset">
