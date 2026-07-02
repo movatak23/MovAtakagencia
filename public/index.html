@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.6-anexo-comentario</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.7-api-relativa</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -624,8 +624,11 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 </div>
 
 <script>
-const API_BASE   = 'https://movatakagencia-production.up.railway.app';
-const PAINEL_VERSION = 'v2.7.6-anexo-comentario';
+// API base dinâmica: usa a origem de onde o painel foi servido (segue failover
+// automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
+// Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
+const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
+const PAINEL_VERSION = 'v2.7.7-api-relativa';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
