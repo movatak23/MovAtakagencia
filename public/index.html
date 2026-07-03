@@ -445,6 +445,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <div class="section-title"><span class="so-admin">Clientes ativos</span><span class="so-portal" style="display:none">Minha Operação</span></div>
         <div style="display:flex;gap:8px;align-items:center">
           <button class="btn-cancel" style="width:auto;margin:0;padding:10px 16px;font-size:13px" onclick="abrirReset()" title="Apagar um lead de teste pelo número, para ele voltar a entrar como novo">♻️ Resetar lead</button>
+          <button class="btn-cancel so-admin" style="width:auto;margin:0;padding:10px 16px;font-size:13px" onclick="abrirCentralCaptacao()" title="Captação de leads via Google Places (aba separada)">🔎 Captação</button>
           <button class="btn-primary so-admin" style="width:auto;margin:0;padding:10px 20px;font-size:14px" onclick="abrirModal()">+ Novo cliente</button>
         </div>
       </div>
@@ -1311,6 +1312,8 @@ function iniciar() {
   verificarVersao();
   if (ehPaginaSLA()) {
     iniciarPaginaSLA();
+  } else if (ehPaginaCaptacao()) {
+    iniciarPaginaCaptacao();
   } else if (ehPaginaFunilAtendimento()) {
     iniciarPaginaFunilAtendimento();
   } else {
@@ -6696,6 +6699,225 @@ function abrirDashboardSLA() {
 
 function ehPaginaSLA() {
   return new URLSearchParams(window.location.search).get('sla') === '1';
+}
+
+// ============================================================
+// Central de Captação — recurso à parte (aba separada), fora do funil.
+// Busca leads via Google Places, você revisa e só depois promove pro Kanban.
+// ============================================================
+function ehPaginaCaptacao() {
+  return new URLSearchParams(window.location.search).get('captacao') === '1';
+}
+
+function abrirCentralCaptacao() {
+  const auth = (() => {
+    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    catch(e) { return secret || ''; }
+  })();
+  if (auth) {
+    try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
+    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+  }
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.searchParams.set('captacao', '1');
+  const win = window.open(url.toString(), '_blank');
+  if (win) {
+    try {
+      if (auth) {
+        win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
+        win.sessionStorage.setItem(SENHA_KEY, auth);
+        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
+      }
+    } catch(e) {}
+  } else {
+    window.location.href = url.toString();
+  }
+}
+
+let _captacaoSelecionados = new Set();
+let _captacaoUltimaLista = [];
+
+function iniciarPaginaCaptacao() {
+  const headerTitle = document.querySelector('.header-title');
+  const headerSub = document.querySelector('.header-sub');
+  if (headerTitle) headerTitle.textContent = '🔎 Central de Captação';
+  if (headerSub) headerSub.textContent = 'Google Places — revise antes de enviar pro funil';
+
+  const main = document.querySelector('main');
+  if (!main) return;
+  main.className = '';
+  main.innerHTML = `
+    <div style="max-width:1100px;margin:0 auto;padding:24px 16px">
+      <div class="panel" style="margin-bottom:16px">
+        <div class="panel-title">Buscar leads</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
+          <div class="form-field" style="flex:1;min-width:220px;margin:0">
+            <label>Nicho / segmento</label>
+            <input id="cap-nicho" class="fu-textarea" style="min-height:auto" placeholder="ex: empresa de rastreamento veicular">
+          </div>
+          <div class="form-field" style="flex:1;min-width:180px;margin:0">
+            <label>Cidade</label>
+            <input id="cap-cidade" class="fu-textarea" style="min-height:auto" placeholder="ex: Recife, PE">
+          </div>
+          <button class="btn-primary" style="width:auto;margin:0;padding:10px 20px;font-size:14px" onclick="captacaoBuscar()">Buscar</button>
+        </div>
+        <div id="cap-busca-status" class="fu-hint" style="margin-top:8px"></div>
+      </div>
+
+      <div class="panel">
+        <div class="section-header" style="margin-bottom:10px">
+          <div class="panel-title" style="margin:0">Resultados capturados</div>
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="cap-filtro-promovido" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" onchange="captacaoCarregarLista()">
+              <option value="0">Não promovidos</option>
+              <option value="">Todos</option>
+              <option value="1">Já promovidos</option>
+            </select>
+            <button class="btn-cancel" style="padding:8px 14px;font-size:13px" onclick="captacaoCarregarLista()">↻ Atualizar</button>
+          </div>
+        </div>
+
+        <div id="cap-promover-barra" style="display:none;background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-bottom:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span id="cap-selecionados-txt" style="font-size:13px;color:var(--text2)"></span>
+          <select id="cap-cliente-destino" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px;max-width:220px" onchange="captacaoCarregarColunas()">
+            <option value="">Cliente destino...</option>
+          </select>
+          <select id="cap-coluna-destino" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px;max-width:200px">
+            <option value="">Coluna (opcional)</option>
+          </select>
+          <button class="btn-primary" style="width:auto;margin:0;padding:8px 18px;font-size:13px" onclick="captacaoPromover()">Enviar pro Funil</button>
+        </div>
+
+        <div id="cap-tabela-wrap"><div class="fu-hint">Faça uma busca acima para começar.</div></div>
+      </div>
+    </div>`;
+
+  captacaoCarregarClientes();
+  captacaoCarregarLista();
+}
+
+async function captacaoCarregarClientes() {
+  try {
+    const r = await api('/movatak/admin/clientes');
+    const sel = document.getElementById('cap-cliente-destino');
+    if (!sel) return;
+    const lista = Array.isArray(r) ? r : (r.clientes || []);
+    sel.innerHTML = '<option value="">Cliente destino...</option>' +
+      lista.map(c => `<option value="${c.id}">${escapeHtml(c.nome || ('Cliente ' + c.id))}</option>`).join('');
+  } catch (e) { /* silencioso — barra de promoção só aparece ao selecionar itens */ }
+}
+
+async function captacaoCarregarColunas() {
+  const clienteId = document.getElementById('cap-cliente-destino')?.value;
+  const selColuna = document.getElementById('cap-coluna-destino');
+  if (!selColuna) return;
+  selColuna.innerHTML = '<option value="">Coluna (opcional)</option>';
+  if (!clienteId) return;
+  try {
+    const r = await api('/movatak/admin/captacao/colunas/' + clienteId);
+    selColuna.innerHTML = '<option value="">Coluna (opcional)</option>' +
+      (r.colunas || []).map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('');
+  } catch (e) {}
+}
+
+async function captacaoBuscar() {
+  const nicho = document.getElementById('cap-nicho')?.value.trim();
+  const cidade = document.getElementById('cap-cidade')?.value.trim();
+  const status = document.getElementById('cap-busca-status');
+  if (!nicho || !cidade) { if (status) status.textContent = 'Informe nicho e cidade.'; return; }
+  if (status) status.textContent = 'Buscando no Google Places...';
+  try {
+    const r = await api('/movatak/admin/captacao/buscar', {
+      method: 'POST',
+      body: JSON.stringify({ nicho, cidade }),
+      timeoutMs: 60000
+    });
+    if (status) status.textContent = `Encontrados: ${r.encontrados} · Novos: ${r.novos} · Já existiam: ${r.existentes}` + (r.semTelefone ? ` · Sem telefone: ${r.semTelefone}` : '');
+    document.getElementById('cap-filtro-promovido').value = '0';
+    captacaoCarregarLista();
+  } catch (e) {
+    if (status) status.textContent = 'Erro: ' + e.message;
+  }
+}
+
+async function captacaoCarregarLista() {
+  const wrap = document.getElementById('cap-tabela-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="fu-hint">Carregando...</div>';
+  _captacaoSelecionados.clear();
+  captacaoAtualizarBarra();
+  try {
+    const promovido = document.getElementById('cap-filtro-promovido')?.value ?? '0';
+    const qs = promovido !== '' ? ('?promovido=' + promovido) : '';
+    const r = await api('/movatak/admin/captacao/leads' + qs);
+    _captacaoUltimaLista = r.leads || [];
+    if (!_captacaoUltimaLista.length) {
+      wrap.innerHTML = '<div class="fu-hint">Nenhum lead nessa lista ainda.</div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="background:var(--bg2);border:1px solid var(--border);border-radius:16px;overflow:hidden">
+        <table>
+          <thead><tr>
+            <th style="width:32px"><input type="checkbox" onchange="captacaoMarcarTodos(this.checked)"></th>
+            <th>Nome</th><th>Telefone</th><th>Categoria</th><th>Cidade</th><th>Status</th>
+          </tr></thead>
+          <tbody>
+            ${_captacaoUltimaLista.map(l => `
+              <tr>
+                <td><input type="checkbox" ${l.promovido ? 'disabled' : ''} onchange="captacaoMarcar(${l.id}, this.checked)"></td>
+                <td>${escapeHtml(l.nome || '—')}</td>
+                <td>${escapeHtml(l.telefone || '—')}</td>
+                <td>${escapeHtml(l.categoria || '—')}</td>
+                <td>${escapeHtml(l.cidade || '—')}</td>
+                <td>${l.promovido ? '✅ No funil' : '—'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+  } catch (e) {
+    wrap.innerHTML = '<div style="color:var(--red);font-size:13px">Erro: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function captacaoMarcar(id, marcado) {
+  if (marcado) _captacaoSelecionados.add(id); else _captacaoSelecionados.delete(id);
+  captacaoAtualizarBarra();
+}
+
+function captacaoMarcarTodos(marcado) {
+  document.querySelectorAll('#cap-tabela-wrap tbody input[type=checkbox]:not(:disabled)').forEach(cb => {
+    cb.checked = marcado;
+  });
+  _captacaoSelecionados = new Set(marcado ? _captacaoUltimaLista.filter(l => !l.promovido).map(l => l.id) : []);
+  captacaoAtualizarBarra();
+}
+
+function captacaoAtualizarBarra() {
+  const barra = document.getElementById('cap-promover-barra');
+  const txt = document.getElementById('cap-selecionados-txt');
+  if (!barra) return;
+  const n = _captacaoSelecionados.size;
+  barra.style.display = n > 0 ? 'flex' : 'none';
+  if (txt) txt.textContent = n + (n === 1 ? ' lead selecionado' : ' leads selecionados');
+}
+
+async function captacaoPromover() {
+  const clienteId = document.getElementById('cap-cliente-destino')?.value;
+  const colunaId = document.getElementById('cap-coluna-destino')?.value;
+  if (!clienteId) { alert('Selecione o cliente destino.'); return; }
+  if (!_captacaoSelecionados.size) return;
+  try {
+    const r = await api('/movatak/admin/captacao/promover', {
+      method: 'POST',
+      body: JSON.stringify({ ids: Array.from(_captacaoSelecionados), clienteId: Number(clienteId), colunaId: colunaId ? Number(colunaId) : null })
+    });
+    alert(`Promovidos: ${r.promovidos} · Já existiam no funil: ${r.duplicados}`);
+    captacaoCarregarLista();
+  } catch (e) {
+    alert('Erro ao promover: ' + e.message);
+  }
 }
 
 // Monta a página SLA em tela cheia (aba separada).
