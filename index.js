@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.13-fix-dup-fromme';
+const MOVATAK_VERSION = 'v2.7.14-pos-followup';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -1164,6 +1164,8 @@ async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = tr
     `FU${sequenciaFu} agendado`,
     { sequencia_fu: sequenciaFu, limpar_fila: limparFila }
   );
+  // Reentrou no follow-up → volta a ser elegível para a finalização pós-FU.
+  await query('UPDATE movatak_leads SET pos_followup_finalizado = false WHERE id = $1', [leadId]).catch(() => null);
 }
 
 // Envia imediatamente as mensagens pendentes de um lead.
@@ -1752,6 +1754,51 @@ if (CRON_ATIVO) {
   }, { timezone: 'America/Sao_Paulo' });
 }
 
+// Finaliza leads que esgotaram toda a régua de follow-up (chegaram ao FU2, nada mais
+// pendente, passou a carência de 24h após a última mensagem) e não responderam.
+// Aplica a ação configurada no cliente: mover para uma coluna ou descartar. Assim o
+// lead não fica preso em "novo contato" / "autoatendimento".
+async function finalizarFollowupsEsgotados() {
+  const r = await query(
+    `SELECT l.id AS lead_id, l.cliente_id, c.pos_followup_acao, c.pos_followup_coluna_id
+       FROM movatak_leads l
+       JOIN movatak_clientes c ON c.id = l.cliente_id
+      WHERE l.etapa = 'followup'
+        AND NOT COALESCE(l.pos_followup_finalizado, false)
+        AND COALESCE(c.pos_followup_acao, 'nenhum') <> 'nenhum'
+        AND EXISTS (SELECT 1 FROM movatak_followup f WHERE f.lead_id = l.id AND f.sequencia_fu = 2)
+        AND NOT EXISTS (SELECT 1 FROM movatak_followup f WHERE f.lead_id = l.id AND f.status = 'pendente')
+        AND (
+          SELECT MAX(f.enviado_em) FROM movatak_followup f
+           WHERE f.lead_id = l.id AND f.status = 'enviado'
+        ) <= NOW() - INTERVAL '24 hours'
+      LIMIT 200`
+  ).catch(() => ({ rows: [] }));
+
+  for (const row of r.rows) {
+    try {
+      if (row.pos_followup_acao === 'mover' && row.pos_followup_coluna_id) {
+        await moverLeadParaColunaFunil(row.lead_id, row.pos_followup_coluna_id, true);
+      } else if (row.pos_followup_acao === 'descartar') {
+        await query(`UPDATE movatak_leads SET etapa='descartado', atualizado_em=NOW() WHERE id=$1`, [row.lead_id]);
+        await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [row.lead_id]).catch(() => null);
+        await registrarEventoLead(row.lead_id, row.cliente_id, 'pos_followup_descartado', 'Descartado automaticamente após o follow-up sem resposta', {}).catch(() => null);
+      } else {
+        continue; // 'mover' sem coluna definida → não faz nada
+      }
+      await query('UPDATE movatak_leads SET pos_followup_finalizado = true, atualizado_em = NOW() WHERE id = $1', [row.lead_id]);
+      console.log(JSON.stringify({ tipo: 'pos_followup', lead_id: row.lead_id, acao: row.pos_followup_acao, coluna_id: row.pos_followup_coluna_id || null }));
+    } catch (e) {
+      console.error('[pos-fu] erro ao finalizar lead', row.lead_id, e.message);
+    }
+  }
+}
+if (CRON_ATIVO) {
+  cron.schedule('*/30 * * * *', async () => {
+    await withPgAdvisoryLock('pos-followup', finalizarFollowupsEsgotados);
+  }, { timezone: 'America/Sao_Paulo' });
+}
+
 // ============================================================
 // WEBHOOK — Lead respondeu (parar sequência)
 // Z-API dispara quando lead envia qualquer mensagem
@@ -2020,6 +2067,7 @@ app.get('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req,
       `SELECT id, nome, whatsapp, zapi_instance, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido,
               boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay,
               ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha_trocada_em,
+              pos_followup_acao, pos_followup_coluna_id,
               CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
@@ -2064,7 +2112,7 @@ app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (
 app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha } = req.body;
+    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha, pos_followup_acao, pos_followup_coluna_id } = req.body;
 
     // Modo cliente (portal): NUNCA altera dados sensíveis (WhatsApp, Z-API, CPL,
     // permissões, credenciais do portal). Preserva os valores atuais do banco e
@@ -2107,6 +2155,8 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
     if (ia_oferta !== undefined) { campos.push('ia_oferta = $' + idx); valores.push(ia_oferta || null); idx++; }
     if (ia_tom !== undefined) { campos.push('ia_tom = $' + idx); valores.push(ia_tom || null); idx++; }
     if (ia_resumo !== undefined) { campos.push('ia_resumo = $' + idx); valores.push(ia_resumo || null); idx++; }
+    if (pos_followup_acao !== undefined) { campos.push('pos_followup_acao = $' + idx); valores.push(['mover', 'descartar'].includes(pos_followup_acao) ? pos_followup_acao : 'nenhum'); idx++; }
+    if (pos_followup_coluna_id !== undefined) { campos.push('pos_followup_coluna_id = $' + idx); valores.push(pos_followup_coluna_id ? parseInt(pos_followup_coluna_id) : null); idx++; }
     if (portal_email !== undefined) { campos.push('portal_email = $' + idx); valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null); idx++; }
     if (portal_senha) { campos.push('portal_senha_hash = $' + idx); valores.push(hashSenha(portal_senha)); idx++; }
 
@@ -6687,6 +6737,10 @@ async function garantirEstruturaQuestionario() {
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_atualizada_em TIMESTAMPTZ`).catch(() => null);
+  // Pós-follow-up: ação automática quando a régua de FU termina sem resposta.
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS pos_followup_acao TEXT DEFAULT 'nenhum'`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS pos_followup_coluna_id INTEGER`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS pos_followup_finalizado BOOLEAN DEFAULT false`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
