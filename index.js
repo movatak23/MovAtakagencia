@@ -9999,6 +9999,17 @@ app.get('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Limpa os leads capturados ainda NÃO promovidos. Os já promovidos (que viraram
+// card no funil) são preservados para manter o histórico do que foi enviado.
+app.delete('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    const r = await query('DELETE FROM movatak_leads_captacao WHERE promovido = false', []);
+    res.json({ ok: true, removidos: r.rowCount || 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/captacao/colunas/:clienteId', authMovatakOuApp, async (req, res) => {
   if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
   try {
