@@ -9876,6 +9876,150 @@ app.post('/movatak/admin/reset-lead', authMovatakOuApp, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ============================================================
+// Central de Captação — Google Places (recurso à parte, fora do funil)
+// Admin only. Não dispara mensagem automática — promoção é sempre manual.
+// ============================================================
+async function garantirEstruturaCaptacao() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_leads_captacao (
+    id SERIAL PRIMARY KEY,
+    nome TEXT,
+    telefone TEXT,
+    endereco TEXT,
+    categoria TEXT,
+    cidade TEXT,
+    nicho_busca TEXT,
+    place_id TEXT,
+    tem_whatsapp BOOLEAN,
+    promovido BOOLEAN NOT NULL DEFAULT false,
+    promovido_em TIMESTAMPTZ,
+    lead_id INTEGER,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_captacao_place_id ON movatak_leads_captacao(place_id) WHERE place_id IS NOT NULL`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_captacao_cidade_nicho ON movatak_leads_captacao(cidade, nicho_busca)`).catch(() => null);
+}
+
+// Busca no Google Places (Text Search) e enriquece cada resultado com telefone via Place Details.
+async function buscarGooglePlaces(nicho, cidade) {
+  const key = process.env.GOOGLE_PLACES_API_KEY;
+  if (!key) throw new Error('GOOGLE_PLACES_API_KEY não configurada no Railway.');
+  const termo = `${nicho} em ${cidade}`;
+  const textUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(termo)}&language=pt-BR&region=br&key=${key}`;
+  const textResp = await axios.get(textUrl);
+  if (textResp.data.status && textResp.data.status !== 'OK' && textResp.data.status !== 'ZERO_RESULTS') {
+    throw new Error('Google Places: ' + textResp.data.status + (textResp.data.error_message ? ' — ' + textResp.data.error_message : ''));
+  }
+  const results = textResp.data.results || [];
+  const detalhados = [];
+  for (const r of results.slice(0, 20)) {
+    try {
+      const detUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${r.place_id}&fields=name,formatted_phone_number,international_phone_number,formatted_address&language=pt-BR&key=${key}`;
+      const detResp = await axios.get(detUrl);
+      const d = detResp.data.result || {};
+      const telefoneRaw = d.international_phone_number || d.formatted_phone_number || '';
+      const telefone = telefoneRaw.replace(/\D/g, '');
+      detalhados.push({
+        place_id: r.place_id,
+        nome: d.name || r.name,
+        telefone,
+        endereco: d.formatted_address || r.formatted_address,
+        categoria: (r.types || [])[0] || null
+      });
+    } catch (e) { /* ignora item individual com erro, segue os demais */ }
+  }
+  return detalhados;
+}
+
+app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    const { nicho, cidade } = req.body;
+    if (!nicho || !String(nicho).trim() || !cidade || !String(cidade).trim()) {
+      return res.status(400).json({ error: 'Informe nicho e cidade.' });
+    }
+    const nichoT = String(nicho).trim();
+    const cidadeT = String(cidade).trim();
+    const encontrados = await buscarGooglePlaces(nichoT, cidadeT);
+    let novos = 0, semTelefone = 0, existentes = 0;
+    for (const item of encontrados) {
+      if (!item.telefone) { semTelefone++; continue; }
+      const r = await query(
+        `INSERT INTO movatak_leads_captacao (nome, telefone, endereco, categoria, cidade, nicho_busca, place_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (place_id) DO NOTHING
+         RETURNING id`,
+        [item.nome, item.telefone, item.endereco, item.categoria, cidadeT, nichoT, item.place_id]
+      ).catch(() => ({ rows: [] }));
+      if (r.rows.length) novos++; else existentes++;
+    }
+    res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone });
+  } catch (e) { res.status(500).json({ error: e.response?.data?.error_message || e.message }); }
+});
+
+app.get('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    const { cidade, nicho, promovido } = req.query;
+    const cond = [];
+    const params = [];
+    if (cidade) { params.push('%' + cidade + '%'); cond.push(`cidade ILIKE $${params.length}`); }
+    if (nicho) { params.push('%' + nicho + '%'); cond.push(`nicho_busca ILIKE $${params.length}`); }
+    if (promovido === '0') cond.push(`promovido = false`);
+    if (promovido === '1') cond.push(`promovido = true`);
+    const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
+    const r = await query(`SELECT * FROM movatak_leads_captacao ${where} ORDER BY criado_em DESC LIMIT 500`, params);
+    res.json({ ok: true, leads: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/admin/captacao/colunas/:clienteId', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    const r = await query('SELECT id, nome FROM movatak_funil_colunas WHERE cliente_id=$1 AND ativo=true ORDER BY ordem ASC', [req.params.clienteId]);
+    res.json({ ok: true, colunas: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/captacao/promover', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    await garantirEstruturaFunil();
+    const { ids, clienteId, colunaId } = req.body;
+    if (!Array.isArray(ids) || !ids.length || !clienteId) {
+      return res.status(400).json({ error: 'Informe ids[] e clienteId.' });
+    }
+    let promovidos = 0, duplicados = 0;
+    for (const id of ids) {
+      const c = await query('SELECT * FROM movatak_leads_captacao WHERE id=$1 AND promovido=false', [id]);
+      if (!c.rows.length) continue;
+      const cap = c.rows[0];
+      const existe = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [clienteId, cap.telefone]);
+      let leadId;
+      if (existe.rows.length) {
+        leadId = existe.rows[0].id;
+        duplicados++;
+      } else {
+        const ins = await query(
+          `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, nao_lida, criado_em, atualizado_em)
+           VALUES ($1,$2,$3,'lead','captacao_google_places',false,NOW(),NOW()) RETURNING id`,
+          [clienteId, cap.nome || cap.telefone, cap.telefone]
+        );
+        leadId = ins.rows[0].id;
+        promovidos++;
+      }
+      if (colunaId) {
+        await moverLeadParaColunaFunil(leadId, colunaId, false).catch(() => null);
+      }
+      await query('UPDATE movatak_leads_captacao SET promovido=true, promovido_em=NOW(), lead_id=$1 WHERE id=$2', [leadId, id]);
+    }
+    res.json({ ok: true, promovidos, duplicados });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/health', (req, res) => {
   res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
 });
@@ -9893,4 +10037,5 @@ httpServer.listen(PORT, () => {
   garantirEstruturaQuestionario().catch(e => console.error('[questionario] schema:', e.message));
   garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
   garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
+  garantirEstruturaCaptacao().catch(e => console.error('[captacao] schema:', e.message));
 });
