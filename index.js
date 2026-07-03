@@ -552,6 +552,27 @@ async function zapiStatus(instance, token, clientToken) {
   const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, timeout: 12000 });
   return resp.data || {};
 }
+// Verifica se um número tem WhatsApp usando a instância fixa da captação (env vars).
+// Retorna true/false/null (null = não deu pra verificar).
+async function zapiPhoneExiste(telefone) {
+  const instance = process.env.ZAPI_CAPTACAO_INSTANCE;
+  const token = process.env.ZAPI_CAPTACAO_TOKEN;
+  const clientToken = process.env.ZAPI_CAPTACAO_CLIENT_TOKEN || '';
+  if (!instance || !token) throw new Error('Instância de captação Z-API não configurada (ZAPI_CAPTACAO_INSTANCE / ZAPI_CAPTACAO_TOKEN).');
+  const fone = String(telefone || '').replace(/\D/g, '');
+  if (!fone) return null;
+  const url = `${ZAPI_BASE}/${instance}/token/${token}/phone-exists/${fone}`;
+  try {
+    const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, timeout: 12000 });
+    const d = resp.data || {};
+    if (typeof d.exists === 'boolean') return d.exists;
+    if (typeof d.existsWhatsapp === 'boolean') return d.existsWhatsapp;
+    return null;
+  } catch (e) {
+    console.error('[captacao] phone-exists falhou p/', fone, '-', e.response?.status, e.message);
+    return null;
+  }
+}
 async function zapiRestart(instance, token, clientToken) {
   const url = `${ZAPI_BASE}/${instance}/token/${token}/restart`;
   const resp = await axios.get(url, { headers: { 'Client-Token': clientToken }, timeout: 12000 });
@@ -9962,13 +9983,16 @@ app.get('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
   if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
   try {
     await garantirEstruturaCaptacao();
-    const { cidade, nicho, promovido } = req.query;
+    const { cidade, nicho, promovido, whatsapp } = req.query;
     const cond = [];
     const params = [];
     if (cidade) { params.push('%' + cidade + '%'); cond.push(`cidade ILIKE $${params.length}`); }
     if (nicho) { params.push('%' + nicho + '%'); cond.push(`nicho_busca ILIKE $${params.length}`); }
     if (promovido === '0') cond.push(`promovido = false`);
     if (promovido === '1') cond.push(`promovido = true`);
+    if (whatsapp === '1') cond.push(`tem_whatsapp = true`);
+    if (whatsapp === '0') cond.push(`tem_whatsapp = false`);
+    if (whatsapp === 'null') cond.push(`tem_whatsapp IS NULL`);
     const where = cond.length ? 'WHERE ' + cond.join(' AND ') : '';
     const r = await query(`SELECT * FROM movatak_leads_captacao ${where} ORDER BY criado_em DESC LIMIT 500`, params);
     res.json({ ok: true, leads: r.rows });
@@ -9980,6 +10004,36 @@ app.get('/movatak/admin/captacao/colunas/:clienteId', authMovatakOuApp, async (r
   try {
     const r = await query('SELECT id, nome FROM movatak_funil_colunas WHERE cliente_id=$1 AND ativo=true ORDER BY ordem ASC', [req.params.clienteId]);
     res.json({ ok: true, colunas: r.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Verifica no WhatsApp os leads ainda não checados (tem_whatsapp IS NULL) do filtro atual.
+// Usa a instância fixa da captação (env). Processa em série pra não estourar a Z-API.
+app.post('/movatak/admin/captacao/verificar-whatsapp', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    if (!process.env.ZAPI_CAPTACAO_INSTANCE || !process.env.ZAPI_CAPTACAO_TOKEN) {
+      return res.status(400).json({ error: 'Instância Z-API de captação não configurada no Railway.' });
+    }
+    const { cidade, nicho } = req.body || {};
+    const cond = ['tem_whatsapp IS NULL'];
+    const params = [];
+    if (cidade) { params.push('%' + cidade + '%'); cond.push(`cidade ILIKE $${params.length}`); }
+    if (nicho) { params.push('%' + nicho + '%'); cond.push(`nicho_busca ILIKE $${params.length}`); }
+    const r = await query(
+      `SELECT id, telefone FROM movatak_leads_captacao WHERE ${cond.join(' AND ')} ORDER BY criado_em DESC LIMIT 100`,
+      params
+    );
+    let comWhats = 0, semWhats = 0, indefinido = 0;
+    for (const lead of r.rows) {
+      const existe = await zapiPhoneExiste(lead.telefone);
+      if (existe === true) comWhats++;
+      else if (existe === false) semWhats++;
+      else { indefinido++; continue; } // null: não marca, permite tentar de novo depois
+      await query('UPDATE movatak_leads_captacao SET tem_whatsapp=$1 WHERE id=$2', [existe, lead.id]).catch(() => null);
+    }
+    res.json({ ok: true, verificados: r.rows.length, comWhats, semWhats, indefinido });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
