@@ -390,6 +390,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
       <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
       <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
+      <button class="theme-toggle" id="btn-som-msg" onclick="toggleSomMensagem()" title="Aviso sonoro ao chegar mensagem nova">🔔</button>
       <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
       <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
       <button class="btn-sair" onclick="sair()">Sair</button>
@@ -807,7 +808,6 @@ async function iniciarAppVendedor() {
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
         <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
-      <button class="theme-toggle" id="btn-som-msg" onclick="toggleSomMensagem()" title="Aviso sonoro ao chegar mensagem nova">🔔</button>
       <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
         <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()">🌙</button>
         <button class="btn-sair" onclick="sair()">Sair</button>
