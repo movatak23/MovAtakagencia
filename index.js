@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.12-fu1-fu2-manual';
+const MOVATAK_VERSION = 'v2.7.13-fix-dup-fromme';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -3818,17 +3818,20 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
             [leadFromMe.id, msgIdFromMe]
           ).catch(() => ({ rows: [] }));
           jaRegistrada = dup.rows.length > 0;
-        } else {
-          // Sem messageId no payload: deduplica por conteúdo + janela de tempo curta,
-          // pra não regravar uma mensagem que o painel acabou de salvar segundos antes.
-          const dup = await query(
+        }
+        // Fallback por conteúdo + janela curta — roda sempre que o match por msg_id não
+        // achou. Cobre mensagens que o CRM enviou e gravou SEM messageId (follow-up,
+        // boas-vindas, ausência): o eco fromMe chega com messageId próprio, então o match
+        // acima falha e, sem isto, a mensagem apareceria DUPLICADA no painel.
+        if (!jaRegistrada && texto && String(texto).trim()) {
+          const dupC = await query(
             `SELECT 1 FROM movatak_conversas
               WHERE lead_id=$1 AND direcao='saida'
                 AND COALESCE(conteudo,'')=COALESCE($2,'')
-                AND criado_em > NOW() - INTERVAL '30 seconds' LIMIT 1`,
+                AND criado_em > NOW() - INTERVAL '45 seconds' LIMIT 1`,
             [leadFromMe.id, texto || '']
           ).catch(() => ({ rows: [] }));
-          jaRegistrada = dup.rows.length > 0;
+          jaRegistrada = dupC.rows.length > 0;
         }
         if (!jaRegistrada) {
           const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
