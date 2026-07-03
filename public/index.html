@@ -6757,8 +6757,8 @@ function iniciarPaginaCaptacao() {
             <input id="cap-nicho" class="fu-textarea" style="min-height:auto" placeholder="ex: empresa de rastreamento veicular">
           </div>
           <div class="form-field" style="flex:1;min-width:180px;margin:0">
-            <label>Cidade</label>
-            <input id="cap-cidade" class="fu-textarea" style="min-height:auto" placeholder="ex: Recife, PE">
+            <label>Cidade / Estado / País</label>
+            <input id="cap-cidade" class="fu-textarea" style="min-height:auto" placeholder="ex: Recife PE · Pernambuco · Brasil">
           </div>
           <button class="btn-primary" style="width:auto;margin:0;padding:10px 20px;font-size:14px" onclick="captacaoBuscar()">Buscar</button>
         </div>
@@ -6768,12 +6768,19 @@ function iniciarPaginaCaptacao() {
       <div class="panel">
         <div class="section-header" style="margin-bottom:10px">
           <div class="panel-title" style="margin:0">Resultados capturados</div>
-          <div style="display:flex;gap:8px;align-items:center">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <select id="cap-filtro-whats" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" onchange="captacaoCarregarLista()">
+              <option value="">WhatsApp: todos</option>
+              <option value="1">Só com WhatsApp</option>
+              <option value="0">Sem WhatsApp</option>
+              <option value="null">Não verificados</option>
+            </select>
             <select id="cap-filtro-promovido" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" onchange="captacaoCarregarLista()">
               <option value="0">Não promovidos</option>
               <option value="">Todos</option>
               <option value="1">Já promovidos</option>
             </select>
+            <button class="btn-cancel" style="padding:8px 14px;font-size:13px" onclick="captacaoVerificarWhats()">✓ Verificar WhatsApp</button>
             <button class="btn-cancel" style="padding:8px 14px;font-size:13px" onclick="captacaoCarregarLista()">↻ Atualizar</button>
           </div>
         </div>
@@ -6841,6 +6848,24 @@ async function captacaoBuscar() {
   }
 }
 
+async function captacaoVerificarWhats() {
+  const status = document.getElementById('cap-busca-status');
+  const nicho = document.getElementById('cap-nicho')?.value.trim() || '';
+  const cidade = document.getElementById('cap-cidade')?.value.trim() || '';
+  if (status) status.textContent = 'Verificando WhatsApp dos leads não checados...';
+  try {
+    const r = await api('/movatak/admin/captacao/verificar-whatsapp', {
+      method: 'POST',
+      body: JSON.stringify({ nicho, cidade }),
+      timeoutMs: 120000
+    });
+    if (status) status.textContent = `Verificados: ${r.verificados} · Com WhatsApp: ${r.comWhats} · Sem: ${r.semWhats}` + (r.indefinido ? ` · Não deu p/ checar: ${r.indefinido}` : '');
+    captacaoCarregarLista();
+  } catch (e) {
+    if (status) status.textContent = 'Erro ao verificar: ' + e.message;
+  }
+}
+
 async function captacaoCarregarLista() {
   const wrap = document.getElementById('cap-tabela-wrap');
   if (!wrap) return;
@@ -6849,7 +6874,11 @@ async function captacaoCarregarLista() {
   captacaoAtualizarBarra();
   try {
     const promovido = document.getElementById('cap-filtro-promovido')?.value ?? '0';
-    const qs = promovido !== '' ? ('?promovido=' + promovido) : '';
+    const whats = document.getElementById('cap-filtro-whats')?.value ?? '';
+    const parts = [];
+    if (promovido !== '') parts.push('promovido=' + promovido);
+    if (whats !== '') parts.push('whatsapp=' + whats);
+    const qs = parts.length ? ('?' + parts.join('&')) : '';
     const r = await api('/movatak/admin/captacao/leads' + qs);
     _captacaoUltimaLista = r.leads || [];
     if (!_captacaoUltimaLista.length) {
@@ -6861,7 +6890,7 @@ async function captacaoCarregarLista() {
         <table>
           <thead><tr>
             <th style="width:32px"><input type="checkbox" onchange="captacaoMarcarTodos(this.checked)"></th>
-            <th>Nome</th><th>Telefone</th><th>Categoria</th><th>Cidade</th><th>Status</th>
+            <th>Nome</th><th>Telefone</th><th>WhatsApp</th><th>Categoria</th><th>Cidade</th><th>Status</th>
           </tr></thead>
           <tbody>
             ${_captacaoUltimaLista.map(l => `
@@ -6869,6 +6898,7 @@ async function captacaoCarregarLista() {
                 <td><input type="checkbox" ${l.promovido ? 'disabled' : ''} onchange="captacaoMarcar(${l.id}, this.checked)"></td>
                 <td>${escapeHtml(l.nome || '—')}</td>
                 <td>${escapeHtml(l.telefone || '—')}</td>
+                <td>${l.tem_whatsapp === true ? '✅' : (l.tem_whatsapp === false ? '❌' : '—')}</td>
                 <td>${escapeHtml(l.categoria || '—')}</td>
                 <td>${escapeHtml(l.cidade || '—')}</td>
                 <td>${l.promovido ? '✅ No funil' : '—'}</td>
