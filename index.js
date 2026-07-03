@@ -9948,10 +9948,10 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
       const r = await query(
         `INSERT INTO movatak_leads_captacao (nome, telefone, endereco, categoria, cidade, nicho_busca, place_id)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
-         ON CONFLICT (place_id) DO NOTHING
+         ON CONFLICT (place_id) WHERE place_id IS NOT NULL DO NOTHING
          RETURNING id`,
         [item.nome, item.telefone, item.endereco, item.categoria, cidadeT, nichoT, item.place_id]
-      ).catch(() => ({ rows: [] }));
+      ).catch((e) => { console.error('[captacao] erro ao inserir lead:', e.message); return { rows: [] }; });
       if (r.rows.length) novos++; else existentes++;
     }
     res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone });
