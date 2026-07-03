@@ -1327,6 +1327,7 @@ async function verificarVersao() {
   try {
     const r = await api('/movatak/version');
     const elBack = document.getElementById('versao-backend');
+    if (!elBack) return;
     elBack.textContent = r.version || '—';
     if (r.version && r.version !== PAINEL_VERSION) {
       elBack.style.color = 'var(--amber)';
@@ -1335,7 +1336,8 @@ async function verificarVersao() {
       elBack.style.color = 'var(--green)';
     }
   } catch(e) {
-    document.getElementById('versao-backend').textContent = 'offline';
+    const elOff = document.getElementById('versao-backend');
+    if (elOff) elOff.textContent = 'offline';
   }
 }
 
@@ -5813,9 +5815,12 @@ function agendarReloadKanban() {
 }
 
 // ── Som de aviso de mensagem nova ───────────────────────────
-const SOM_MSG_KEY = 'movatak-som-msg';
-let _somMsgAtivo = false;
-let _audioCtx = null;
+// Usamos var (não let/const) porque restaurarSomMensagem() é chamada durante o
+// boot do funil, que pode executar antes desta linha ser avaliada. var é hoisted
+// e não sofre "temporal dead zone", evitando ReferenceError na inicialização.
+var SOM_MSG_KEY = 'movatak-som-msg';
+var _somMsgAtivo = false;
+var _audioCtx = null;
 
 // A política de autoplay do navegador bloqueia áudio até o usuário interagir.
 // O toggle é essa interação: ao ligar, criamos/destravamos o AudioContext.
@@ -7414,7 +7419,7 @@ async function iniciarPaginaFunilAtendimento() {
       </div>`;
   }
   restaurarLayoutFunil();
-  restaurarSomMensagem();
+  try { restaurarSomMensagem(); } catch (e) { console.warn('[som] init:', e.message); }
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
 }
