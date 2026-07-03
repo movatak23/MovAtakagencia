@@ -6764,6 +6764,7 @@ function iniciarPaginaCaptacao() {
           <button class="btn-cancel" style="width:auto;margin:0;padding:10px 18px;font-size:14px" onclick="captacaoLimpar()" title="Limpa os campos e apaga os capturados não promovidos">Limpar</button>
         </div>
         <div id="cap-busca-status" class="fu-hint" style="margin-top:8px"></div>
+        <div id="cap-uso" class="fu-hint" style="margin-top:6px;padding-top:8px;border-top:1px solid var(--border)"></div>
       </div>
 
       <div class="panel">
@@ -6803,6 +6804,20 @@ function iniciarPaginaCaptacao() {
 
   captacaoCarregarClientes();
   captacaoCarregarLista();
+  captacaoCarregarUso();
+}
+
+async function captacaoCarregarUso() {
+  const el = document.getElementById('cap-uso');
+  if (!el) return;
+  try {
+    const u = await api('/movatak/admin/captacao/uso');
+    const alerta = u.buscasRestantesEstim <= 20 ? ' ⚠️' : '';
+    el.innerHTML = `📊 <b>${u.mes}</b> · ${u.buscas} buscas · ${u.placeDetails}/${u.cotaPlaceDetails} chamadas de detalhe (telefone) · `
+      + `cota grátis estimada restante: <b>~${u.buscasRestantesEstim} buscas</b>${alerta}`;
+  } catch (e) {
+    el.textContent = '';
+  }
 }
 
 async function captacaoCarregarClientes() {
@@ -6844,6 +6859,7 @@ async function captacaoBuscar() {
     if (status) status.textContent = `Encontrados: ${r.encontrados} · Novos: ${r.novos} · Já existiam: ${r.existentes}` + (r.semTelefone ? ` · Sem telefone: ${r.semTelefone}` : '');
     document.getElementById('cap-filtro-promovido').value = '0';
     captacaoCarregarLista();
+    captacaoCarregarUso();
   } catch (e) {
     if (status) status.textContent = 'Erro: ' + e.message;
   }
