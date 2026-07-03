@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.14-pos-followup';
+const MOVATAK_VERSION = 'v2.7.15-pos-followup-fix';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -2057,6 +2057,20 @@ app.post('/movatak/admin/clientes', authMovatak, async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Config pós-follow-up (ação quando a régua termina sem resposta). Endpoint dedicado
+// para não passar pela validação do formulário completo (nome/WhatsApp/Instance).
+app.patch('/movatak/admin/clientes/:id/pos-followup', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    const acao = ['mover', 'descartar'].includes(req.body && req.body.pos_followup_acao) ? req.body.pos_followup_acao : 'nenhum';
+    const colunaId = (acao === 'mover' && req.body.pos_followup_coluna_id) ? parseInt(req.body.pos_followup_coluna_id) : null;
+    await query(
+      'UPDATE movatak_clientes SET pos_followup_acao = $1, pos_followup_coluna_id = $2 WHERE id = $3',
+      [acao, colunaId, req.params.id]
+    );
+    res.json({ ok: true, pos_followup_acao: acao, pos_followup_coluna_id: colunaId });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Buscar dados de um cliente para edição (sem expor token/client-token)
