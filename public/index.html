@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.16-pos-followup</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.17-pos-followup-fix</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.16-pos-followup';
+const PAINEL_VERSION = 'v2.7.17-pos-followup-fix';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -4441,7 +4441,7 @@ async function salvarPosFollowup() {
   if (sel.value === 'descartar') acao = 'descartar';
   else if (sel.value.indexOf('col:') === 0) { acao = 'mover'; coluna_id = parseInt(sel.value.slice(4)); }
   try {
-    await api('/movatak/admin/clientes/' + fuId + '/dados', {
+    await api('/movatak/admin/clientes/' + fuId + '/pos-followup', {
       method: 'PATCH',
       body: JSON.stringify({ pos_followup_acao: acao, pos_followup_coluna_id: coluna_id })
     });
