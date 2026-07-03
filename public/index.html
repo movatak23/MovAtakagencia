@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.14-fu1-fu2-manual</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.15-fix-nome-longo-fu2</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.14-fu1-fu2-manual';
+const PAINEL_VERSION = 'v2.7.15-fix-nome-longo-fu2';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -867,9 +867,9 @@ async function iniciarAppVendedor() {
             </div>
             <div id="funil-chat-conteudo" style="display:none;flex-direction:column;flex:1;min-height:0">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-                <div>
-                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
-                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+                <div style="min-width:0;flex:1;overflow:hidden;margin-right:8px">
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
@@ -6934,9 +6934,9 @@ async function iniciarPaginaFunilAtendimento() {
             </div>
             <div id="funil-chat-conteudo" style="display:none;flex-direction:column;flex:1;min-height:0">
               <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-                <div>
-                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text)"></div>
-                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2)"></div>
+                <div style="min-width:0;flex:1;overflow:hidden;margin-right:8px">
+                  <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
+                  <div id="painel-lead-fone" style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
