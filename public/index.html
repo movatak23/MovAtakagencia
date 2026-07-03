@@ -805,6 +805,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()">📅 Agenda</button>
         <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--red);color:#fff;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()">📊 SLA</button>
+        <button class="btn-sair" id="btn-som-msg" onclick="toggleSomMensagem()" title="Aviso sonoro ao chegar mensagem nova">🔔 Som</button>
         <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
         <span style="width:1px;height:22px;background:var(--border2);margin:0 4px"></span>
       <button class="theme-toggle" id="btn-tutorial" onclick="iniciarTour(true)" title="Rever o tutorial">❓</button>
@@ -5811,6 +5812,69 @@ function agendarReloadKanban() {
   }, 3000);
 }
 
+// ── Som de aviso de mensagem nova ───────────────────────────
+const SOM_MSG_KEY = 'movatak-som-msg';
+let _somMsgAtivo = false;
+let _audioCtx = null;
+
+// A política de autoplay do navegador bloqueia áudio até o usuário interagir.
+// O toggle é essa interação: ao ligar, criamos/destravamos o AudioContext.
+function _garantirAudioCtx() {
+  try {
+    if (!_audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      _audioCtx = new AC();
+    }
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    return _audioCtx;
+  } catch (e) { return null; }
+}
+
+function tocarSomMensagem() {
+  if (!_somMsgAtivo) return;
+  const ctx = _garantirAudioCtx();
+  if (!ctx) return;
+  try {
+    // Dois tons curtos, estilo notificação — gerados na hora, sem arquivo.
+    const agora = ctx.currentTime;
+    [[880, 0], [1320, 0.12]].forEach(([freq, offset]) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, agora + offset);
+      gain.gain.exponentialRampToValueAtTime(0.25, agora + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, agora + offset + 0.18);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(agora + offset);
+      osc.stop(agora + offset + 0.2);
+    });
+  } catch (e) { /* silencioso — som nunca pode quebrar a tela */ }
+}
+
+function atualizarBotaoSom() {
+  const b = document.getElementById('btn-som-msg');
+  if (!b) return;
+  b.textContent = _somMsgAtivo ? '🔔 Som' : '🔕 Som';
+  b.style.opacity = _somMsgAtivo ? '1' : '0.55';
+}
+
+function toggleSomMensagem() {
+  _somMsgAtivo = !_somMsgAtivo;
+  try { localStorage.setItem(SOM_MSG_KEY, _somMsgAtivo ? '1' : '0'); } catch (e) {}
+  if (_somMsgAtivo) {
+    _garantirAudioCtx();
+    tocarSomMensagem(); // toca uma vez pra confirmar que ligou
+  }
+  atualizarBotaoSom();
+}
+
+function restaurarSomMensagem() {
+  try { _somMsgAtivo = localStorage.getItem(SOM_MSG_KEY) === '1'; } catch (e) { _somMsgAtivo = false; }
+  atualizarBotaoSom();
+}
+
 function iniciarSocketFunil(clienteId) {
   if (typeof io === 'undefined') return; // CDN não carregou; segue com polling
   if ((!secret && !_vendedorToken) || !clienteId) return;
@@ -5825,6 +5889,10 @@ function iniciarSocketFunil(clienteId) {
     _socketFunil.on('mensagem:nova', (payload) => {
       const leadId = payload && payload.leadId;
       const mensagem = payload && payload.mensagem;
+      // Aviso sonoro: só para mensagem RECEBIDA (entrada), não para o que você envia.
+      if (mensagem && mensagem.direcao === 'entrada') {
+        tocarSomMensagem();
+      }
       // 1) Se a conversa desse lead está aberta no painel lateral, adiciona na hora
       if (leadId && window._painelLeadId && String(leadId) === String(window._painelLeadId)) {
         adicionarMensagemAoPainel(mensagem);
@@ -7346,6 +7414,7 @@ async function iniciarPaginaFunilAtendimento() {
       </div>`;
   }
   restaurarLayoutFunil();
+  restaurarSomMensagem();
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
 }
