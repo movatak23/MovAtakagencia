@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.13-resumo-ia</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.14-fu1-fu2-manual</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.13-resumo-ia';
+const PAINEL_VERSION = 'v2.7.14-fu1-fu2-manual';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -875,7 +875,8 @@ async function iniciarAppVendedor() {
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
-                  <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">FU1</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId, 2)" class="btn-top-fu" title="Disparar Follow-up 2 (reativação) manualmente" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">FU2</button>
                 </div>
               </div>
               <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
@@ -3614,12 +3615,13 @@ async function enviarMensagemRapidaLead() {
   finally { if (btn) { btn.disabled = false; btn.textContent = 'Enviar'; } }
 }
 
-async function reativarFollowupManual(leadId) {
+async function reativarFollowupManual(leadId, sequencia) {
+  const seq = Number(sequencia) === 2 ? 2 : 1;
   const st = document.getElementById('funil-status');
-  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Reativando follow-up...'; }
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Disparando Follow-up ' + seq + '...'; }
   try {
-    await api('/movatak/admin/leads/' + leadId + '/reativar-followup', { method: 'POST', body: '{}' });
-    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Follow-up reativado. FU1 enviado.'; }
+    await api('/movatak/admin/leads/' + leadId + '/reativar-followup', { method: 'POST', body: JSON.stringify({ sequencia: seq }) });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Follow-up ' + seq + ' disparado.'; }
     await carregarFunilAtendimento();
   } catch (e) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
@@ -6940,7 +6942,8 @@ async function iniciarPaginaFunilAtendimento() {
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
-                  <button onclick="reativarFollowupManual(window._painelLeadId)" id="btn-top-fu" title="Colocar este lead no Follow-up" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">+ FU</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">FU1</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId, 2)" class="btn-top-fu" title="Disparar Follow-up 2 (reativação) manualmente" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">FU2</button>
                 </div>
               </div>
               <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
