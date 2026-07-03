@@ -9919,15 +9919,25 @@ async function garantirEstruturaCaptacao() {
   )`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_captacao_place_id ON movatak_leads_captacao(place_id) WHERE place_id IS NOT NULL`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_captacao_cidade_nicho ON movatak_leads_captacao(cidade, nicho_busca)`).catch(() => null);
+  await query(`CREATE TABLE IF NOT EXISTS movatak_captacao_uso (
+    mes TEXT PRIMARY KEY,
+    buscas INTEGER NOT NULL DEFAULT 0,
+    text_search INTEGER NOT NULL DEFAULT 0,
+    place_details INTEGER NOT NULL DEFAULT 0,
+    atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(() => null);
 }
 
 // Busca no Google Places (Text Search) e enriquece cada resultado com telefone via Place Details.
+// Retorna { itens, textSearchCalls, placeDetailsCalls } para contabilizar consumo da cota.
 async function buscarGooglePlaces(nicho, cidade) {
   const key = process.env.GOOGLE_PLACES_API_KEY;
   if (!key) throw new Error('GOOGLE_PLACES_API_KEY não configurada no Railway.');
   const termo = `${nicho} em ${cidade}`;
   const textUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(termo)}&language=pt-BR&region=br&key=${key}`;
+  let textSearchCalls = 0, placeDetailsCalls = 0;
   const textResp = await axios.get(textUrl);
+  textSearchCalls++;
   if (textResp.data.status && textResp.data.status !== 'OK' && textResp.data.status !== 'ZERO_RESULTS') {
     throw new Error('Google Places: ' + textResp.data.status + (textResp.data.error_message ? ' — ' + textResp.data.error_message : ''));
   }
@@ -9937,6 +9947,7 @@ async function buscarGooglePlaces(nicho, cidade) {
     try {
       const detUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${r.place_id}&fields=name,formatted_phone_number,international_phone_number,formatted_address&language=pt-BR&key=${key}`;
       const detResp = await axios.get(detUrl);
+      placeDetailsCalls++;
       const d = detResp.data.result || {};
       const telefoneRaw = d.international_phone_number || d.formatted_phone_number || '';
       const telefone = telefoneRaw.replace(/\D/g, '');
@@ -9949,7 +9960,16 @@ async function buscarGooglePlaces(nicho, cidade) {
       });
     } catch (e) { /* ignora item individual com erro, segue os demais */ }
   }
-  return detalhados;
+  return { itens: detalhados, textSearchCalls, placeDetailsCalls };
+}
+
+// Cota grátis mensal ESTIMADA por SKU (Google mudou p/ cotas por SKU em 2025).
+// Ajustável por env se o Google alterar. O gargalo real é o Place Details.
+const CAPTACAO_COTA_TEXT_SEARCH = Number(process.env.CAPTACAO_COTA_TEXT_SEARCH || 5000);
+const CAPTACAO_COTA_PLACE_DETAILS = Number(process.env.CAPTACAO_COTA_PLACE_DETAILS || 5000);
+function mesAtualStr() {
+  const d = new Date();
+  return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
 }
 
 app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) => {
@@ -9962,7 +9982,7 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
     }
     const nichoT = String(nicho).trim();
     const cidadeT = String(cidade).trim();
-    const encontrados = await buscarGooglePlaces(nichoT, cidadeT);
+    const { itens: encontrados, textSearchCalls, placeDetailsCalls } = await buscarGooglePlaces(nichoT, cidadeT);
     let novos = 0, semTelefone = 0, existentes = 0;
     for (const item of encontrados) {
       if (!item.telefone) { semTelefone++; continue; }
@@ -9975,8 +9995,45 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
       ).catch((e) => { console.error('[captacao] erro ao inserir lead:', e.message); return { rows: [] }; });
       if (r.rows.length) novos++; else existentes++;
     }
+    await query(
+      `INSERT INTO movatak_captacao_uso (mes, buscas, text_search, place_details, atualizado_em)
+       VALUES ($1, 1, $2, $3, NOW())
+       ON CONFLICT (mes) DO UPDATE SET
+         buscas = movatak_captacao_uso.buscas + 1,
+         text_search = movatak_captacao_uso.text_search + EXCLUDED.text_search,
+         place_details = movatak_captacao_uso.place_details + EXCLUDED.place_details,
+         atualizado_em = NOW()`,
+      [mesAtualStr(), textSearchCalls, placeDetailsCalls]
+    ).catch((e) => console.error('[captacao] erro ao registrar uso:', e.message));
     res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone });
   } catch (e) { res.status(500).json({ error: e.response?.data?.error_message || e.message }); }
+});
+
+// Consumo do mês corrente + estimativa de cota grátis restante.
+app.get('/movatak/admin/captacao/uso', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    const mes = mesAtualStr();
+    const r = await query('SELECT buscas, text_search, place_details FROM movatak_captacao_uso WHERE mes=$1', [mes]);
+    const u = r.rows[0] || { buscas: 0, text_search: 0, place_details: 0 };
+    const detalhesRestante = Math.max(0, CAPTACAO_COTA_PLACE_DETAILS - u.place_details);
+    const textRestante = Math.max(0, CAPTACAO_COTA_TEXT_SEARCH - u.text_search);
+    // O Place Details (telefone) é o gargalo; ~20 por busca.
+    const buscasRestantesEstim = Math.floor(detalhesRestante / 20);
+    res.json({
+      ok: true,
+      mes,
+      buscas: u.buscas,
+      textSearch: u.text_search,
+      placeDetails: u.place_details,
+      cotaTextSearch: CAPTACAO_COTA_TEXT_SEARCH,
+      cotaPlaceDetails: CAPTACAO_COTA_PLACE_DETAILS,
+      textSearchRestante: textRestante,
+      placeDetailsRestante: detalhesRestante,
+      buscasRestantesEstim
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
