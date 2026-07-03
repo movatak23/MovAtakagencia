@@ -3,7 +3,7 @@
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.11-resumo-ia';
+const MOVATAK_VERSION = 'v2.7.12-fu1-fu2-manual';
 
 const express = require('express');
 const { Pool } = require('pg');
@@ -8523,14 +8523,15 @@ app.post('/movatak/admin/leads/:id/mensagem-kanban', ...exigeLead, async (req, r
 
 app.post('/movatak/admin/leads/:id/reativar-followup', ...exigeLead, async (req, res) => {
   try {
+    const seq = (req.body && Number(req.body.sequencia) === 2) ? 2 : 1;
     const rl = await query('SELECT id, cliente_id, etapa FROM movatak_leads WHERE id=$1', [req.params.id]);
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     const lead = rl.rows[0];
     await query(`UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
-    await agendarFollowupV2(lead.id, lead.cliente_id, 1, true);
-    await enviarFollowupsPendentesDoLead(lead.id, 1);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up reativado manualmente pelo kanban', {});
-    res.json({ ok: true });
+    await agendarFollowupV2(lead.id, lead.cliente_id, seq, true);
+    await enviarFollowupsPendentesDoLead(lead.id, seq);
+    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up ' + seq + ' disparado manualmente', { sequencia: seq });
+    res.json({ ok: true, sequencia: seq });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
