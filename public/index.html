@@ -467,7 +467,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       </div>
     </div>
     <div style="text-align:center;padding:24px 0 8px;color:var(--text3);font-size:11px;font-family:var(--mono)">
-      Movatak <span id="versao-painel">v2.7.15-fix-nome-longo-fu2</span> · backend <span id="versao-backend">—</span>
+      Movatak <span id="versao-painel">v2.7.16-pos-followup</span> · backend <span id="versao-backend">—</span>
     </div>
   </main>
 </div>
@@ -628,7 +628,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 // automaticamente). Nunca mais amarrada a um backend específico por URL fixa.
 // Override opcional via window.MOVATAK_API_BASE se um dia frontend e API separarem.
 const API_BASE   = (window.MOVATAK_API_BASE || window.location.origin).replace(/\/+$/, '');
-const PAINEL_VERSION = 'v2.7.15-fix-nome-longo-fu2';
+const PAINEL_VERSION = 'v2.7.16-pos-followup';
 const SENHA_KEY  = 'mvtk_painel_secret';
 const SENHA_LOCAL_KEY = 'mvtk_painel_secret_local';
 // Reordenação dos painéis — declaradas no topo para estarem disponíveis quando
@@ -4098,6 +4098,7 @@ async function abrirFU(id) {
     carregarRanking(id);
     carregarOperacao(id);
     carregarFilaFollowup(id);
+    carregarPosFollowup(id);
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro: ' + e.message;
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
@@ -4410,6 +4411,44 @@ function fmtData(iso) {
   if (!iso) return '—';
   try { return new Date(iso).toLocaleString('pt-BR'); }
   catch(e) { return iso; }
+}
+
+// Config "após o follow-up": preenche o dropdown com as colunas do cliente + descartar
+// e mostra o valor atual. Salva na hora (onchange) via o PATCH de dados.
+async function carregarPosFollowup(id) {
+  const sel = document.getElementById('pos-followup-select');
+  if (!sel) return;
+  try {
+    const [dados, funil] = await Promise.all([
+      api('/movatak/admin/clientes/' + id + '/dados'),
+      api('/movatak/admin/clientes/' + id + '/funil')
+    ]);
+    const colunas = funil.colunas || [];
+    let opts = '<option value="nenhum">Não fazer nada (padrão)</option>';
+    opts += colunas.map(c => `<option value="col:${c.id}">➡️ Mover para: ${escapeHtml(c.nome)}</option>`).join('');
+    opts += '<option value="descartar">🗑️ Descartar o lead</option>';
+    sel.innerHTML = opts;
+    if (dados.pos_followup_acao === 'descartar') sel.value = 'descartar';
+    else if (dados.pos_followup_acao === 'mover' && dados.pos_followup_coluna_id) sel.value = 'col:' + dados.pos_followup_coluna_id;
+    else sel.value = 'nenhum';
+  } catch (e) { /* silencioso — mantém opção padrão */ }
+}
+async function salvarPosFollowup() {
+  const sel = document.getElementById('pos-followup-select');
+  const st = document.getElementById('pos-followup-status');
+  if (!sel || !fuId) return;
+  let acao = 'nenhum', coluna_id = null;
+  if (sel.value === 'descartar') acao = 'descartar';
+  else if (sel.value.indexOf('col:') === 0) { acao = 'mover'; coluna_id = parseInt(sel.value.slice(4)); }
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/dados', {
+      method: 'PATCH',
+      body: JSON.stringify({ pos_followup_acao: acao, pos_followup_coluna_id: coluna_id })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Salvo'; setTimeout(() => { if (st) st.textContent = ''; }, 2000); }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  }
 }
 
 async function carregarOperacao(id) {
@@ -8496,6 +8535,15 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
       <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
+    </div>
+
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px">
+      <label class="fu-label" style="margin-top:0">Após o follow-up terminar (lead não respondeu)</label>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Quando toda a régua (FU1 + FU2) for enviada sem resposta, o lead é movido automaticamente — pra não ficar preso em "novo contato" ou "autoatendimento".</div>
+      <select id="pos-followup-select" onchange="salvarPosFollowup()" style="width:100%;padding:9px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:13px">
+        <option value="nenhum">Não fazer nada (padrão)</option>
+      </select>
+      <span id="pos-followup-status" style="font-size:12px;margin-top:6px;display:inline-block"></span>
     </div>
 
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:-8px 0 20px">
