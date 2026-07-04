@@ -2538,12 +2538,7 @@ function renderConversaPainel(msgs) {
 // Mostra, de forma discreta, em qual setor/etapa do kanban o lead está —
 // útil para quem trabalha pela conversa e não pelo kanban.
 function mostrarSetorLeadPainel(lead) {
-  const badge = document.getElementById('painel-lead-setor');
-  const badge2Ref = document.getElementById('painel-setor-compositor');
-  if (!badge && !badge2Ref) return;
-
-  // Prioridade: nome/cor vindos do backend (histórico já faz JOIN com a coluna).
-  // Fallback: procura no estado do funil pelo id, caso o backend não mande.
+  // Descobre nome/cor da coluna (backend manda no histórico; fallback no funilState).
   let nomeCol = lead && lead.funil_coluna_nome;
   let cor = (lead && lead.funil_coluna_cor) || null;
   if (!nomeCol) {
@@ -2556,14 +2551,37 @@ function mostrarSetorLeadPainel(lead) {
   }
   cor = cor || 'var(--accent)';
 
-  if (!nomeCol) {
-    if (badge) badge.style.display = 'none';
-    if (badge2Ref) badge2Ref.style.display = 'none';
-    return;
+  // O HTML tem dois blocos de painel duplicados; o navegador só mantém um no DOM.
+  // Por isso, em vez de depender de IDs estáticos, localizamos âncoras reais e
+  // injetamos os badges dinamicamente no bloco que de fato está renderizado.
+  const foneEl = document.getElementById('painel-lead-fone');
+  const painel = foneEl ? foneEl.closest('#funil-chat-conteudo') : null;
+  if (!painel) return;
+
+  // Badge no cabeçalho (ao lado dos botões de ação).
+  let badgeHeader = painel.querySelector('.painel-setor-badge-header');
+  const barraBotoes = painel.querySelector('#btn-marcar-nao-lida')?.parentElement;
+  if (!badgeHeader && barraBotoes) {
+    badgeHeader = document.createElement('span');
+    badgeHeader.className = 'painel-setor-badge-header';
+    badgeHeader.style.cssText = 'font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis';
+    barraBotoes.insertBefore(badgeHeader, barraBotoes.firstChild);
   }
+
+  // Badge no compositor (onde ficava a dica "arraste um arquivo").
+  let badgeComp = painel.querySelector('.painel-setor-badge-comp');
+  const areaAnexo = painel.querySelector('#btn-gravar-audio')?.parentElement;
+  if (!badgeComp && areaAnexo) {
+    badgeComp = document.createElement('span');
+    badgeComp.className = 'painel-setor-badge-comp';
+    badgeComp.style.cssText = 'font-size:11px;font-weight:600;padding:4px 10px;border-radius:10px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis';
+    areaAnexo.appendChild(badgeComp);
+  }
+
   const bg = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
-  [badge, badge2Ref].forEach(el => {
+  [badgeHeader, badgeComp].forEach(el => {
     if (!el) return;
+    if (!nomeCol) { el.style.display = 'none'; return; }
     el.textContent = '📍 ' + nomeCol;
     el.style.color = cor;
     el.style.background = bg;
