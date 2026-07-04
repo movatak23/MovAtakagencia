@@ -6019,15 +6019,25 @@ async function gerarRespostaIALead(leadId) {
     if (lead.ia_resumo) baseConhecimento += `Resumo do negócio: ${lead.ia_resumo}\n`;
   }
 
-  const systemPrompt = `Você é um atendente de vendas da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
-    `Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, em português brasileiro, no tom de WhatsApp: ` +
-    `natural, direto, cordial e objetivo. Use o CONHECIMENTO SOBRE A EMPRESA e o MATERIAL OFICIAL abaixo como base — ` +
-    `siga o conteúdo das respostas rápidas, do roteiro de autoatendimento e das mensagens de followup. ` +
-    `Você PODE adaptar as palavras ao contexto da conversa, mas mantenha o sentido, as informações e o tom do material oficial. ` +
-    `Imite também o estilo dos exemplos de respostas reais da equipe. ` +
-    `Não invente preços, prazos ou condições que não estejam no material oficial, no conhecimento da empresa ou na conversa. ` +
-    `Se faltar informação, faça uma pergunta curta para avançar. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
-    `Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.` +
+  const systemPrompt = `Você é um atendente de vendas HUMANO da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
+    `Você NÃO é um robô e jamais deve soar como um. Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, ` +
+    `em português brasileiro, no tom de WhatsApp: natural, humano, cordial e objetivo, como uma pessoa de verdade digitando. ` +
+    `Use o CONHECIMENTO SOBRE A EMPRESA e o MATERIAL OFICIAL abaixo como base — siga o conteúdo das respostas rápidas, ` +
+    `do roteiro de autoatendimento e das mensagens de followup. Você PODE adaptar as palavras ao contexto, mas mantenha o ` +
+    `sentido, as informações e o tom do material oficial. Imite o estilo dos exemplos reais da equipe.\n\n` +
+    `REGRAS PARA SOAR HUMANO E NÃO REPETITIVO (muito importante):\n` +
+    `- NUNCA repita a mesma frase, pergunta ou estrutura que já apareceu antes na conversa. Olhe o histórico e varie sempre.\n` +
+    `- Se já perguntou algo e o cliente não respondeu direto, reformule de outro jeito — não copie a pergunta anterior.\n` +
+    `- Varie as saudações e conectores; evite começar toda mensagem igual. Escreva como gente, não como script.\n` +
+    `- Não fique insistindo na mesma informação. Se travou, avance a conversa de outro ângulo ou passe para um humano.\n\n` +
+    `QUANDO VOCÊ NÃO SOUBER A RESPOSTA (regra crítica):\n` +
+    `- Se a pergunta do cliente não puder ser respondida com o material oficial, o conhecimento da empresa ou a conversa, ` +
+    `NÃO invente, NÃO enrole e NÃO repita respostas genéricas.\n` +
+    `- Nesse caso, responda EXATAMENTE com o marcador: [TRANSFERIR_HUMANO]\n` +
+    `- Use o marcador também se o cliente pedir para falar com uma pessoa, demonstrar irritação, ou se a conversa fugir do que você domina.\n` +
+    `- Não escreva mais nada junto do marcador — só ele.\n\n` +
+    `Não invente preços, prazos ou condições fora do material. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
+    `Responda APENAS com o texto da mensagem (ou só o marcador), sem aspas, sem rótulos, sem explicação.` +
     baseConhecimento +
     materialCurado +
     `\n\nEXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
@@ -6042,6 +6052,10 @@ async function gerarRespostaIALead(leadId) {
 
   const sugestao = await chamarHaiku(systemPrompt, userPrompt);
   if (!sugestao) return { erro: 'A IA não retornou sugestão.' };
+  // Marcador de transferência para humano (IA não soube responder).
+  if (sugestao.includes('[TRANSFERIR_HUMANO]')) {
+    return { transferir: true, telefone: lead.telefone };
+  }
   return { sugestao, telefone: lead.telefone };
 }
 
@@ -6068,6 +6082,19 @@ async function iaResponderAutomatico(cliente, lead) {
     if (!colR.rows.length || !colR.rows[0].ia_ativa) return false;
 
     const gerada = await gerarRespostaIALead(lead.id);
+
+    // Handoff: a IA não soube responder → transfere para um humano.
+    if (gerada.transferir) {
+      const msgTransfer = 'Deixa eu confirmar isso certinho pra você com um dos meus colegas aqui da equipe. Já te retorno com a resposta, tá? 🙂';
+      await enviarMsgQuestionario(cliente, lead.telefone, msgTransfer, null);
+      await registrarConversa(lead.id, cliente.id, 'saida', msgTransfer, null, null, null, null, 'ia').catch(() => null);
+      // Sinaliza para a equipe e pausa a IA neste lead, pra não continuar respondendo sozinha.
+      await query('UPDATE movatak_leads SET nao_lida = true, automacao_pausada = true, atualizado_em = NOW() WHERE id = $1', [lead.id]).catch(() => null);
+      await registrarEventoLead(lead.id, cliente.id, 'ia_transferiu_humano', 'IA não soube responder e transferiu para um atendente humano', {}).catch(() => null);
+      console.log(`[ia-auto] lead ${lead.id}: transferido para humano`);
+      return true;
+    }
+
     if (gerada.erro || !gerada.sugestao) {
       console.log(`[ia-auto] lead ${lead.id}: sem resposta (${gerada.erro || 'vazia'})`);
       return false;
