@@ -5301,6 +5301,7 @@ async function carregarQuestNoEditor() {
     document.getElementById('quest-ativo').disabled = ehTemplate;
     document.getElementById('quest-acao-arquivar').checked = !ehTemplate && !!r.acao_arquivar_ao_final;
     document.getElementById('quest-acao-nao-lido').checked = !ehTemplate && !!r.acao_marcar_nao_lido;
+    document.getElementById('quest-enviar-final').checked = (r.enviar_msg_final !== false);
     document.getElementById('quest-intro').value = r.intro || '';
     document.getElementById('quest-final').value = r.final || '';
     document.getElementById('quest-comando-parar').value = r.comando_parar || '';
@@ -5598,6 +5599,7 @@ async function salvarQuestionario() {
           recomendacao: [],
           acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
           acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked,
+          enviar_msg_final: document.getElementById('quest-enviar-final').checked,
           quest_lembrete_msg: lembreteMsg,
           quest_lembrete_minutos: lembreteMinutos
         })
@@ -9292,6 +9294,8 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Mensagem final</label>
     <textarea class="fu-textarea" id="quest-final" rows="3" placeholder="Prontinho{nome}! O plano ideal pra você é: {plano}. Um consultor já vai falar com você."></textarea>
     <div id="quest-final-img"></div>
+    <label class="perm-item" style="margin-top:10px"><input type="checkbox" id="quest-enviar-final" checked> Enviar a mensagem final ao lead quando ele concluir o questionário</label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:4px">Se desmarcado, o lead NÃO recebe mensagem ao terminar — o fluxo segue normalmente (resumo pro vendedor, mover no funil, etc.), só a mensagem para o lead deixa de ser enviada.</div>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comando para parar atendimento <span class="fu-tag">encaminha p/ humano</span></label>
     <input type="text" class="fu-textarea" id="quest-comando-parar" placeholder="Ex: #atendente">
