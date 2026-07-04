@@ -2539,33 +2539,37 @@ function renderConversaPainel(msgs) {
 // útil para quem trabalha pela conversa e não pelo kanban.
 function mostrarSetorLeadPainel(lead) {
   const badge = document.getElementById('painel-lead-setor');
-  if (!badge) return;
-  const colId = lead && lead.funil_coluna_id;
-  const col = colId
-    ? (funilState.colunas || []).concat(funilState.colunasVendedores || [])
-        .find(c => Number(c.id) === Number(colId))
-    : null;
   const badge2Ref = document.getElementById('painel-setor-compositor');
-  if (!col) {
-    badge.style.display = 'none';
+  if (!badge && !badge2Ref) return;
+
+  // Prioridade: nome/cor vindos do backend (histórico já faz JOIN com a coluna).
+  // Fallback: procura no estado do funil pelo id, caso o backend não mande.
+  let nomeCol = lead && lead.funil_coluna_nome;
+  let cor = (lead && lead.funil_coluna_cor) || null;
+  if (!nomeCol) {
+    const colId = lead && lead.funil_coluna_id;
+    const col = colId
+      ? (funilState.colunas || []).concat(funilState.colunasVendedores || [])
+          .find(c => Number(c.id) === Number(colId))
+      : null;
+    if (col) { nomeCol = col.nome; cor = col.cor || cor; }
+  }
+  cor = cor || 'var(--accent)';
+
+  if (!nomeCol) {
+    if (badge) badge.style.display = 'none';
     if (badge2Ref) badge2Ref.style.display = 'none';
     return;
   }
-  const cor = col.cor || 'var(--accent)';
-  badge.textContent = '📍 ' + col.nome;
-  badge.style.color = cor;
-  badge.style.background = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
-  badge.style.border = '1px solid ' + cor;
-  badge.style.display = 'inline-block';
-
-  // Segundo indicador, no compositor (onde ficava a dica "arraste um arquivo").
-  if (badge2Ref) {
-    badge2Ref.textContent = '📍 ' + col.nome;
-    badge2Ref.style.color = cor;
-    badge2Ref.style.background = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
-    badge2Ref.style.border = '1px solid ' + cor;
-    badge2Ref.style.display = 'inline-block';
-  }
+  const bg = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
+  [badge, badge2Ref].forEach(el => {
+    if (!el) return;
+    el.textContent = '📍 ' + nomeCol;
+    el.style.color = cor;
+    el.style.background = bg;
+    el.style.border = '1px solid ' + cor;
+    el.style.display = 'inline-block';
+  });
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
