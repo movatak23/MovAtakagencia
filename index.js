@@ -7465,11 +7465,15 @@ async function finalizarQuestionario(cliente, lead, respostas) {
       await query(`UPDATE movatak_leads SET plano_id = $1, atualizado_em = NOW() WHERE id = $2`, [rec.plano.id, lead.id]).catch(() => null);
     }
 
-    const finalTpl = (cliente.questionario_final && String(cliente.questionario_final).trim())
-      ? cliente.questionario_final
-      : 'Prontinho{nome}! Com base nas suas respostas, o plano ideal pra você é: {plano}. Um consultor já vai falar com você pra finalizar. 🙌';
-    const finalMsg = finalTpl.replace(/{nome}/g, nome).replace(/{plano}/g, planoTxt);
-    await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
+    // Mensagem final ao concluir o questionário — pode ser desligada no painel
+    // (enviar_msg_final). Default é ligado, pra preservar o comportamento atual.
+    if (cliente.enviar_msg_final !== false) {
+      const finalTpl = (cliente.questionario_final && String(cliente.questionario_final).trim())
+        ? cliente.questionario_final
+        : 'Prontinho{nome}! Com base nas suas respostas, o plano ideal pra você é: {plano}. Um consultor já vai falar com você pra finalizar. 🙌';
+      const finalMsg = finalTpl.replace(/{nome}/g, nome).replace(/{plano}/g, planoTxt);
+      await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
+    }
 
     const resumoLinhas = passos
       .filter(p => p.pergunta_curta && String(p.pergunta_curta).trim() && respostas[p.id] !== undefined)
@@ -8134,7 +8138,7 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
               questionario_intro_imagem, questionario_final_imagem,
               questionario_passos, questionario_recomendacao,
               questionario_comando_parar, questionario_comando_ativar,
-              acao_arquivar_ao_final, acao_marcar_nao_lido,
+              acao_arquivar_ao_final, acao_marcar_nao_lido, enviar_msg_final,
               quest_lembrete_msg, quest_lembrete_minutos
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
@@ -8156,6 +8160,7 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
       cobertura_total: cob.rows[0].total,
       acao_arquivar_ao_final: !!r.rows[0].acao_arquivar_ao_final,
       acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido,
+      enviar_msg_final: r.rows[0].enviar_msg_final !== false,
       quest_lembrete_msg: r.rows[0].quest_lembrete_msg || '',
       quest_lembrete_minutos: r.rows[0].quest_lembrete_minutos || null
     });
@@ -8165,7 +8170,7 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
 app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
-    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar, acao_arquivar_ao_final, acao_marcar_nao_lido, quest_lembrete_msg, quest_lembrete_minutos } = req.body || {};
+    const { ativo, intro, final, intro_imagem, final_imagem, passos, recomendacao, comando_parar, comando_ativar, acao_arquivar_ao_final, acao_marcar_nao_lido, enviar_msg_final, quest_lembrete_msg, quest_lembrete_minutos } = req.body || {};
     await query(
       `UPDATE movatak_clientes
           SET questionario_ativo = COALESCE($1, questionario_ativo),
@@ -8180,7 +8185,8 @@ app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, as
               questionario_comando_parar = $10,
               questionario_comando_ativar = $11,
               quest_lembrete_msg = $12,
-              quest_lembrete_minutos = $13
+              quest_lembrete_minutos = $13,
+              enviar_msg_final = COALESCE($15, enviar_msg_final)
         WHERE id = $14`,
       [
         typeof ativo === 'boolean' ? ativo : null,
@@ -8196,7 +8202,8 @@ app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, as
         (typeof comando_ativar === 'string' && comando_ativar.trim()) ? comando_ativar.trim() : null,
         (typeof quest_lembrete_msg === 'string' && quest_lembrete_msg.trim()) ? quest_lembrete_msg.trim() : null,
         (Number.isInteger(quest_lembrete_minutos) && quest_lembrete_minutos > 0) ? quest_lembrete_minutos : null,
-        req.params.id
+        req.params.id,
+        typeof enviar_msg_final === 'boolean' ? enviar_msg_final : null
       ]
     );
     res.json({ ok: true });
@@ -8767,6 +8774,7 @@ async function garantirEstruturaFunil() {
 
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_arquivar_ao_final BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_marcar_nao_lido BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS enviar_msg_final BOOLEAN DEFAULT true`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS nicho TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads
