@@ -874,7 +874,7 @@ async function iniciarAppVendedor() {
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
-                  <span id="painel-lead-setor" style="display:none;font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis"></span>
+                  
                   <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:14px;padding:5px 7px;cursor:pointer;line-height:1">📩</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:14px;padding:5px 7px;cursor:pointer;line-height:1">↪️</button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--red);font-size:14px;padding:5px 7px;cursor:pointer;line-height:1">🗑️</button>
@@ -912,7 +912,7 @@ async function iniciarAppVendedor() {
                   </label>
                   <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
-                  <span id="painel-setor-compositor" style="display:none;font-size:11px;font-weight:600;padding:4px 10px;border-radius:10px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis"></span>
+                  
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
@@ -2553,20 +2553,10 @@ function mostrarSetorLeadPainel(lead) {
 
   // O HTML tem dois blocos de painel duplicados; o navegador só mantém um no DOM.
   // Por isso, em vez de depender de IDs estáticos, localizamos âncoras reais e
-  // injetamos os badges dinamicamente no bloco que de fato está renderizado.
+  // injetamos o badge dinamicamente no bloco que de fato está renderizado.
   const foneEl = document.getElementById('painel-lead-fone');
   const painel = foneEl ? foneEl.closest('#funil-chat-conteudo') : null;
   if (!painel) return;
-
-  // Badge no cabeçalho (ao lado dos botões de ação).
-  let badgeHeader = painel.querySelector('.painel-setor-badge-header');
-  const barraBotoes = painel.querySelector('#btn-marcar-nao-lida')?.parentElement;
-  if (!badgeHeader && barraBotoes) {
-    badgeHeader = document.createElement('span');
-    badgeHeader.className = 'painel-setor-badge-header';
-    badgeHeader.style.cssText = 'font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis';
-    barraBotoes.insertBefore(badgeHeader, barraBotoes.firstChild);
-  }
 
   // Badge no compositor (onde ficava a dica "arraste um arquivo").
   let badgeComp = painel.querySelector('.painel-setor-badge-comp');
@@ -2574,20 +2564,19 @@ function mostrarSetorLeadPainel(lead) {
   if (!badgeComp && areaAnexo) {
     badgeComp = document.createElement('span');
     badgeComp.className = 'painel-setor-badge-comp';
-    badgeComp.style.cssText = 'font-size:11px;font-weight:600;padding:4px 10px;border-radius:10px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis';
+    badgeComp.style.cssText = 'font-size:11px;font-weight:600;padding:4px 10px;border-radius:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
     areaAnexo.appendChild(badgeComp);
   }
 
   const bg = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
-  [badgeHeader, badgeComp].forEach(el => {
-    if (!el) return;
-    if (!nomeCol) { el.style.display = 'none'; return; }
-    el.textContent = '📍 ' + nomeCol;
-    el.style.color = cor;
-    el.style.background = bg;
-    el.style.border = '1px solid ' + cor;
-    el.style.display = 'inline-block';
-  });
+  if (badgeComp) {
+    if (!nomeCol) { badgeComp.style.display = 'none'; return; }
+    badgeComp.textContent = '📍 ' + nomeCol;
+    badgeComp.style.color = cor;
+    badgeComp.style.background = bg;
+    badgeComp.style.border = '1px solid ' + cor;
+    badgeComp.style.display = 'inline-block';
+  }
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
@@ -7446,14 +7435,14 @@ async function iniciarPaginaFunilAtendimento() {
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
                   onpaste="painelColarArea(event)"
                   ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;justify-content:center">
                   <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
                     📎
                     <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
                   </label>
                   <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                     style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
-                  <span style="font-size:11px;color:var(--text3)">arraste um arquivo na caixa de mensagem pra anexar</span>
+                  
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
