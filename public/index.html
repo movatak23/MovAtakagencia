@@ -868,17 +868,18 @@ async function iniciarAppVendedor() {
               <div>Selecione uma conversa na caixa de entrada<br>ou clique em um card do kanban.</div>
             </div>
             <div id="funil-chat-conteudo" style="display:none;flex-direction:column;flex:1;min-height:0">
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--border);flex-shrink:0">
-                <div style="min-width:0;flex:1;overflow:hidden;margin-right:8px">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);flex-shrink:0;gap:8px">
+                <div style="min-width:0;flex:1;overflow:hidden">
                   <div id="painel-lead-nome" style="font-weight:700;font-size:15px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                 </div>
-                <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">📩</button>
-                  <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">↪️</button>
-                  <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:16px;padding:6px 9px;cursor:pointer;line-height:1">🗑️</button>
-                  <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">FU1</button>
-                  <button onclick="reativarFollowupManual(window._painelLeadId, 2)" class="btn-top-fu" title="Disparar Follow-up 2 (reativação) manualmente" style="padding:6px 10px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:12px;line-height:1;font-weight:700">FU2</button>
+                <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+                  <span id="painel-lead-setor" style="display:none;font-size:10px;font-weight:600;padding:3px 8px;border-radius:10px;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis"></span>
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:14px;padding:5px 7px;cursor:pointer;line-height:1">📩</button>
+                  <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--text2);font-size:14px;padding:5px 7px;cursor:pointer;line-height:1">↪️</button>
+                  <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:7px;color:var(--red);font-size:14px;padding:5px 7px;cursor:pointer;line-height:1">🗑️</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="padding:5px 8px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:7px;cursor:pointer;font-size:11px;line-height:1;font-weight:700">FU1</button>
+                  <button onclick="reativarFollowupManual(window._painelLeadId, 2)" class="btn-top-fu" title="Disparar Follow-up 2 (reativação) manualmente" style="padding:5px 8px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:7px;cursor:pointer;font-size:11px;line-height:1;font-weight:700">FU2</button>
                 </div>
               </div>
               <div style="display:flex;border-bottom:1px solid var(--border2);flex-shrink:0">
@@ -2537,15 +2538,8 @@ function renderConversaPainel(msgs) {
 // Mostra, de forma discreta, em qual setor/etapa do kanban o lead está —
 // útil para quem trabalha pela conversa e não pelo kanban.
 function mostrarSetorLeadPainel(lead) {
-  const foneEl = document.getElementById('painel-lead-fone');
-  if (!foneEl) return;
-  let badge = document.getElementById('painel-lead-setor');
-  if (!badge) {
-    badge = document.createElement('span');
-    badge.id = 'painel-lead-setor';
-    badge.style.cssText = 'display:none;margin-top:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;align-self:flex-start';
-    foneEl.insertAdjacentElement('afterend', badge);
-  }
+  const badge = document.getElementById('painel-lead-setor');
+  if (!badge) return;
   const colId = lead && lead.funil_coluna_id;
   const col = colId
     ? (funilState.colunas || []).concat(funilState.colunasVendedores || [])
