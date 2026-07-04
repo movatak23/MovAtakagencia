@@ -6234,6 +6234,7 @@ app.post('/movatak/webhook/zapi-status', async (req, res) => {
 });
 
 app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => {
+  const _t0 = Date.now();
   try {
     const leadId = req.params.id;
     const lead = await query(
@@ -6245,6 +6246,7 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
       [leadId]
     );
     if (!lead.rows.length) return res.status(404).json({ error: 'Lead nao encontrado.' });
+    const _tLead = Date.now();
 
     const eventos = await query(
       `SELECT id, tipo, descricao, dados, criado_em
@@ -6254,6 +6256,7 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
         LIMIT 100`,
       [leadId]
     );
+    const _tEventos = Date.now();
 
     const fila = await query(
       `SELECT id, etapa_seq, COALESCE(sequencia_fu, 1) AS sequencia_fu, proximo_envio,
@@ -6264,9 +6267,16 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
         LIMIT 100`,
       [leadId]
     );
+    const _tFila = Date.now();
+
+    const totalMs = _tFila - _t0;
+    if (totalMs > 3000) {
+      console.log(`[DIAG-HIST] lead ${leadId} LENTO total=${totalMs}ms | lead=${_tLead - _t0}ms eventos=${_tEventos - _tLead}ms fila=${_tFila - _tEventos}ms`);
+    }
 
     res.json({ lead: lead.rows[0], eventos: eventos.rows, fila: fila.rows });
   } catch (e) {
+    console.error(`[DIAG-HIST] lead ${req.params.id} ERRO após ${Date.now() - _t0}ms:`, e.message);
     res.status(500).json({ error: e.message });
   }
 });
@@ -8772,6 +8782,8 @@ async function garantirEstruturaFunil() {
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_funil_coluna ON movatak_leads(funil_coluna_id)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_cliente_setor_atualizado ON movatak_leads(cliente_id, setor_id, atualizado_em DESC)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_conversas_lead_criado_desc ON movatak_conversas(lead_id, criado_em DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_lead_eventos_lead_criado ON movatak_lead_eventos(lead_id, criado_em DESC)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_followup_lead_proximo ON movatak_followup(lead_id, proximo_envio DESC)`).catch(() => null);
 }
 
 
