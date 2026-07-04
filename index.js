@@ -4228,6 +4228,9 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         await registrarEventoLead(lead.id, cliente.id, 'lead_respondeu', 'Lead respondeu e saiu do follow-up', { texto_preview: texto ? String(texto).slice(0, 160) : null });
         console.log(`[zapi] Follow up pausado e lead voltou para atendimento -> lead ${lead.id}`);
       }
+
+      // IA automática: se a coluna do lead tem IA ativa, a IA responde sozinha.
+      await iaResponderAutomatico(cliente, lead);
       return;
     }
 
@@ -5922,87 +5925,164 @@ app.get('/movatak/admin/leads/:id/resumo-ia', ...exigeLead, async (req, res) => 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Gera a próxima resposta sugerida da IA para um lead, baseada em: conversa atual,
+// conhecimento da empresa, respostas rápidas, autoatendimento e followup.
+// Retorna { sugestao } ou { erro }. Reutilizada pelo botão manual e pela IA automática.
+async function gerarRespostaIALead(leadId) {
+  await garantirEstruturaConversas();
+
+  const convR = await query(
+    `SELECT * FROM (
+       SELECT direcao, conteudo, criado_em FROM movatak_conversas
+        WHERE lead_id = $1 AND conteudo IS NOT NULL AND conteudo <> ''
+        ORDER BY criado_em DESC LIMIT 15
+     ) sub ORDER BY criado_em ASC`,
+    [leadId]
+  );
+  if (!convR.rows.length) return { erro: 'Sem mensagens nesta conversa para basear a sugestão.' };
+
+  const leadR = await query(
+    `SELECT l.nome, l.telefone, l.etapa, l.cliente_id,
+            p.nome AS plano_nome, p.valor AS plano_valor,
+            s.nome AS setor_nome, c.nome AS empresa_nome,
+            c.ia_oferta, c.ia_tom, c.ia_resumo,
+            c.questionario_intro, c.questionario_passos, c.questionario_final,
+            c.followup_msgs_v2
+       FROM movatak_leads l
+       LEFT JOIN movatak_planos p ON p.id = l.plano_id
+       LEFT JOIN movatak_setores s ON s.id = l.setor_id
+       LEFT JOIN movatak_clientes c ON c.id = l.cliente_id
+      WHERE l.id = $1`,
+    [leadId]
+  );
+  const lead = leadR.rows[0];
+  if (!lead) return { erro: 'Lead não encontrado.' };
+
+  const estiloR = await query(
+    `SELECT conteudo FROM movatak_conversas
+      WHERE cliente_id = $1 AND direcao = 'saida'
+        AND lead_id <> $2 AND conteudo IS NOT NULL AND LENGTH(conteudo) BETWEEN 15 AND 400
+      ORDER BY criado_em DESC LIMIT 8`,
+    [lead.cliente_id, leadId]
+  ).catch(() => ({ rows: [] }));
+
+  const conversaTxt = convR.rows.map(m =>
+    (m.direcao === 'entrada' ? 'CLIENTE: ' : 'ATENDENTE: ') + (m.conteudo || '')
+  ).join('\n');
+  const exemplosTxt = estiloR.rows.map(r => '- ' + r.conteudo.replace(/\n+/g, ' ')).join('\n') || '(sem exemplos)';
+
+  // Material curado: respostas rápidas + autoatendimento + followup.
+  const rapidasR = await query(
+    `SELECT titulo, texto FROM movatak_mensagens_rapidas
+      WHERE cliente_id = $1 AND texto IS NOT NULL AND LENGTH(texto) > 0
+      ORDER BY vezes_usado DESC, ordem ASC LIMIT 25`,
+    [lead.cliente_id]
+  ).catch(() => ({ rows: [] }));
+
+  let materialCurado = '';
+  if (rapidasR.rows.length) {
+    const listaRapidas = rapidasR.rows
+      .map(r => '- ' + (r.titulo ? '[' + r.titulo + '] ' : '') + String(r.texto).replace(/\n+/g, ' ').trim())
+      .join('\n');
+    materialCurado += `\n\nRESPOSTAS RÁPIDAS OFICIAIS (use como base para responder dúvidas comuns):\n${listaRapidas}`;
+  }
+  const passosQuest = Array.isArray(lead.questionario_passos) ? lead.questionario_passos : [];
+  const partesAuto = [];
+  if (lead.questionario_intro) partesAuto.push('Abertura: ' + String(lead.questionario_intro).replace(/\n+/g, ' ').trim());
+  passosQuest.forEach((p, i) => {
+    const pergunta = p && (p.pergunta || p.texto || p.titulo);
+    if (pergunta) partesAuto.push(`Passo ${i + 1}: ` + String(pergunta).replace(/\n+/g, ' ').trim());
+  });
+  if (lead.questionario_final) partesAuto.push('Fechamento: ' + String(lead.questionario_final).replace(/\n+/g, ' ').trim());
+  if (partesAuto.length) {
+    materialCurado += `\n\nROTEIRO DE AUTOATENDIMENTO (siga esta linha de qualificação/abordagem):\n- ${partesAuto.join('\n- ')}`;
+  }
+  const fuObj = lead.followup_msgs_v2 && typeof lead.followup_msgs_v2 === 'object' ? lead.followup_msgs_v2 : {};
+  const fuMsgs = [];
+  Object.keys(fuObj).forEach(k => {
+    const v = fuObj[k];
+    if (typeof v === 'string' && v.trim()) fuMsgs.push(v.trim());
+    else if (v && typeof v === 'object') {
+      Object.values(v).forEach(m => { if (typeof m === 'string' && m.trim()) fuMsgs.push(m.trim()); });
+    }
+  });
+  if (fuMsgs.length) {
+    const listaFu = fuMsgs.slice(0, 10).map(m => '- ' + m.replace(/\n+/g, ' ')).join('\n');
+    materialCurado += `\n\nMENSAGENS DE FOLLOWUP (tom e abordagem para reativar/retomar o lead):\n${listaFu}`;
+  }
+
+  let baseConhecimento = '';
+  if (lead.ia_oferta || lead.ia_tom || lead.ia_resumo) {
+    baseConhecimento = `\n\nCONHECIMENTO SOBRE A EMPRESA (use como base, é a fonte da verdade):\n`;
+    if (lead.ia_oferta) baseConhecimento += `O que vende e diferencial: ${lead.ia_oferta}\n`;
+    if (lead.ia_tom) baseConhecimento += `Tom de voz e regras: ${lead.ia_tom}\n`;
+    if (lead.ia_resumo) baseConhecimento += `Resumo do negócio: ${lead.ia_resumo}\n`;
+  }
+
+  const systemPrompt = `Você é um atendente de vendas da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
+    `Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, em português brasileiro, no tom de WhatsApp: ` +
+    `natural, direto, cordial e objetivo. Use o CONHECIMENTO SOBRE A EMPRESA e o MATERIAL OFICIAL abaixo como base — ` +
+    `siga o conteúdo das respostas rápidas, do roteiro de autoatendimento e das mensagens de followup. ` +
+    `Você PODE adaptar as palavras ao contexto da conversa, mas mantenha o sentido, as informações e o tom do material oficial. ` +
+    `Imite também o estilo dos exemplos de respostas reais da equipe. ` +
+    `Não invente preços, prazos ou condições que não estejam no material oficial, no conhecimento da empresa ou na conversa. ` +
+    `Se faltar informação, faça uma pergunta curta para avançar. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
+    `Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.` +
+    baseConhecimento +
+    materialCurado +
+    `\n\nEXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
+
+  const userPrompt =
+    `CONTEXTO DO LEAD:\n` +
+    `Nome: ${lead.nome || '—'}\n` +
+    `Etapa no funil: ${lead.etapa || '—'}${lead.setor_nome ? ' / ' + lead.setor_nome : ''}\n` +
+    (lead.plano_nome ? `Plano de interesse: ${lead.plano_nome}${lead.plano_valor ? ' (R$ ' + lead.plano_valor + ')' : ''}\n` : '') +
+    `\nCONVERSA ATÉ AGORA:\n${conversaTxt}\n\n` +
+    `Escreva a próxima mensagem do ATENDENTE:`;
+
+  const sugestao = await chamarHaiku(systemPrompt, userPrompt);
+  if (!sugestao) return { erro: 'A IA não retornou sugestão.' };
+  return { sugestao, telefone: lead.telefone };
+}
+
 app.get('/movatak/admin/leads/:id/sugerir-resposta', ...exigeLead, async (req, res) => {
   try {
-    await garantirEstruturaConversas();
-    const leadId = req.params.id;
-
-    // 1) Conversa atual (últimas 15 mensagens, em ordem cronológica).
-    const convR = await query(
-      `SELECT * FROM (
-         SELECT direcao, conteudo, criado_em FROM movatak_conversas
-          WHERE lead_id = $1 AND conteudo IS NOT NULL AND conteudo <> ''
-          ORDER BY criado_em DESC LIMIT 15
-       ) sub ORDER BY criado_em ASC`,
-      [leadId]
-    );
-    if (!convR.rows.length) return res.status(400).json({ error: 'Sem mensagens nesta conversa para basear a sugestão.' });
-
-    // 2) Dados do lead + cliente (contexto).
-    const leadR = await query(
-      `SELECT l.nome, l.telefone, l.etapa, l.cliente_id,
-              p.nome AS plano_nome, p.valor AS plano_valor,
-              s.nome AS setor_nome, c.nome AS empresa_nome,
-              c.ia_oferta, c.ia_tom, c.ia_resumo
-         FROM movatak_leads l
-         LEFT JOIN movatak_planos p ON p.id = l.plano_id
-         LEFT JOIN movatak_setores s ON s.id = l.setor_id
-         LEFT JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1`,
-      [leadId]
-    );
-    const lead = leadR.rows[0];
-    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
-
-    // 3) Exemplos de estilo: respostas de SAÍDA recentes a OUTROS leads do mesmo cliente
-    //    (mostra como a casa costuma responder, pra IA imitar o tom).
-    const estiloR = await query(
-      `SELECT conteudo FROM movatak_conversas
-        WHERE cliente_id = $1 AND direcao = 'saida'
-          AND lead_id <> $2 AND conteudo IS NOT NULL AND LENGTH(conteudo) BETWEEN 15 AND 400
-        ORDER BY criado_em DESC LIMIT 8`,
-      [lead.cliente_id, leadId]
-    ).catch(() => ({ rows: [] }));
-
-    const conversaTxt = convR.rows.map(m =>
-      (m.direcao === 'entrada' ? 'CLIENTE: ' : 'ATENDENTE: ') + (m.conteudo || '')
-    ).join('\n');
-    const exemplosTxt = estiloR.rows.map(r => '- ' + r.conteudo.replace(/\n+/g, ' ')).join('\n') || '(sem exemplos)';
-
-    // Conhecimento da empresa (preenchido no menu Editar → Treinamento da IA).
-    let baseConhecimento = '';
-    if (lead.ia_oferta || lead.ia_tom || lead.ia_resumo) {
-      baseConhecimento = `\n\nCONHECIMENTO SOBRE A EMPRESA (use como base, é a fonte da verdade):\n`;
-      if (lead.ia_oferta) baseConhecimento += `O que vende e diferencial: ${lead.ia_oferta}\n`;
-      if (lead.ia_tom) baseConhecimento += `Tom de voz e regras: ${lead.ia_tom}\n`;
-      if (lead.ia_resumo) baseConhecimento += `Resumo do negócio: ${lead.ia_resumo}\n`;
-    }
-
-    const systemPrompt = `Você é um atendente de vendas da empresa "${lead.empresa_nome || 'nossa empresa'}" no WhatsApp. ` +
-      `Escreva a PRÓXIMA resposta do ATENDENTE para o cliente, em português brasileiro, no tom de WhatsApp: ` +
-      `natural, direto, cordial e objetivo. Use o CONHECIMENTO SOBRE A EMPRESA abaixo como base — siga o tom de voz, ` +
-      `as regras e as informações descritas ali. Imite também o estilo dos exemplos de respostas reais da equipe. ` +
-      `Não invente preços, prazos ou condições que não estejam no conhecimento da empresa ou na conversa. ` +
-      `Se faltar informação, faça uma pergunta curta para avançar. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
-      `Responda APENAS com o texto da mensagem, sem aspas, sem rótulos, sem explicação.` +
-      baseConhecimento +
-      `\n\nEXEMPLOS DE COMO A EQUIPE RESPONDE:\n${exemplosTxt}`;
-
-    const userPrompt =
-      `CONTEXTO DO LEAD:\n` +
-      `Nome: ${lead.nome || '—'}\n` +
-      `Etapa no funil: ${lead.etapa || '—'}${lead.setor_nome ? ' / ' + lead.setor_nome : ''}\n` +
-      (lead.plano_nome ? `Plano de interesse: ${lead.plano_nome}${lead.plano_valor ? ' (R$ ' + lead.plano_valor + ')' : ''}\n` : '') +
-      `\nCONVERSA ATÉ AGORA:\n${conversaTxt}\n\n` +
-      `Escreva a próxima mensagem do ATENDENTE:`;
-
-    const sugestao = await chamarHaiku(systemPrompt, userPrompt);
-    if (!sugestao) return res.status(502).json({ error: 'A IA não retornou sugestão. Tente novamente.' });
-    res.json({ sugestao });
+    const r = await gerarRespostaIALead(req.params.id);
+    if (r.erro) return res.status(r.erro.includes('não retornou') ? 502 : 400).json({ error: r.erro });
+    res.json({ sugestao: r.sugestao });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
+
+// IA automática por coluna: quando a coluna do lead tem ia_ativa, a IA gera e ENVIA
+// a resposta sozinha, sempre que o lead escreve. Baseada no mesmo material curado
+// (respostas rápidas, autoatendimento, followup, conhecimento da empresa).
+async function iaResponderAutomatico(cliente, lead) {
+  try {
+    if (!lead || !lead.funil_coluna_id) return false;
+    const colR = await query(
+      'SELECT ia_ativa FROM movatak_funil_colunas WHERE id=$1 AND ativo=true',
+      [lead.funil_coluna_id]
+    ).catch(() => ({ rows: [] }));
+    if (!colR.rows.length || !colR.rows[0].ia_ativa) return false;
+
+    const gerada = await gerarRespostaIALead(lead.id);
+    if (gerada.erro || !gerada.sugestao) {
+      console.log(`[ia-auto] lead ${lead.id}: sem resposta (${gerada.erro || 'vazia'})`);
+      return false;
+    }
+    await enviarMsgQuestionario(cliente, lead.telefone, gerada.sugestao, null);
+    await registrarConversa(lead.id, cliente.id, 'saida', gerada.sugestao, null, null, null, null, 'ia').catch(() => null);
+    await registrarEventoLead(lead.id, cliente.id, 'ia_resposta_automatica', 'IA respondeu automaticamente (coluna com IA ativa)', { preview: gerada.sugestao.slice(0, 160) }).catch(() => null);
+    console.log(`[ia-auto] lead ${lead.id}: IA respondeu automaticamente`);
+    return true;
+  } catch (e) {
+    console.error(`[ia-auto] erro no lead ${lead && lead.id}:`, e.message);
+    return false;
+  }
+}
+
 // (delete for everyone, só funciona pra mensagens que a gente mandou e dentro
 // da janela de tempo que o WhatsApp permite) e remove do nosso histórico de
 // qualquer forma, pra não ficar uma mensagem "travada" caso o lado do WhatsApp falhe.
