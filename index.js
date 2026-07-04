@@ -6238,10 +6238,12 @@ app.get('/movatak/admin/leads/:id/historico', ...exigeLead, async (req, res) => 
   try {
     const leadId = req.params.id;
     const lead = await query(
-      `SELECT l.*, c.nome AS cliente_nome, v.nome AS vendedor_nome
+      `SELECT l.*, c.nome AS cliente_nome, v.nome AS vendedor_nome,
+              fc.nome AS funil_coluna_nome, fc.cor AS funil_coluna_cor
          FROM movatak_leads l
          JOIN movatak_clientes c ON c.id = l.cliente_id
          LEFT JOIN movatak_vendedores v ON v.id = l.vendedor_id
+         LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
         WHERE l.id = $1`,
       [leadId]
     );
