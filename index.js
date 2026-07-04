@@ -6026,6 +6026,8 @@ async function gerarRespostaIALead(leadId) {
     `do roteiro de autoatendimento e das mensagens de followup. Você PODE adaptar as palavras ao contexto, mas mantenha o ` +
     `sentido, as informações e o tom do material oficial. Imite o estilo dos exemplos reais da equipe.\n\n` +
     `REGRAS PARA SOAR HUMANO E NÃO REPETITIVO (muito importante):\n` +
+    `- Seja BREVE. Responda em 1 ou 2 frases curtas, como uma pessoa digitando no WhatsApp. NADA de textão ou parágrafos longos.\n` +
+    `- Vá direto ao ponto. Se der pra responder em uma linha, responda em uma linha.\n` +
     `- NUNCA repita a mesma frase, pergunta ou estrutura que já apareceu antes na conversa. Olhe o histórico e varie sempre.\n` +
     `- Se já perguntou algo e o cliente não respondeu direto, reformule de outro jeito — não copie a pergunta anterior.\n` +
     `- Varie as saudações e conectores; evite começar toda mensagem igual. Escreva como gente, não como script.\n` +
@@ -6072,6 +6074,37 @@ app.get('/movatak/admin/leads/:id/sugerir-resposta', ...exigeLead, async (req, r
 // IA automática por coluna: quando a coluna do lead tem ia_ativa, a IA gera e ENVIA
 // a resposta sozinha, sempre que o lead escreve. Baseada no mesmo material curado
 // (respostas rápidas, autoatendimento, followup, conhecimento da empresa).
+// Envia a resposta da IA em "pedaços", com pausas entre eles, simulando uma
+// pessoa digitando no WhatsApp — em vez de mandar um bloco único instantâneo.
+async function enviarComPausasHumanas(cliente, telefone, leadId, textoCompleto) {
+  const texto = String(textoCompleto || '').trim();
+  if (!texto) return;
+  // Quebra por frases (. ! ? e quebras de linha), mantendo pedaços curtos.
+  let partes = texto
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(p => p.trim())
+    .filter(Boolean);
+  // Se ficou só um pedaço grande ou muitos pedaços minúsculos, normaliza:
+  // no máximo 3 mensagens, pra não soar picotado demais.
+  if (partes.length > 3) {
+    const agrupadas = [];
+    const porGrupo = Math.ceil(partes.length / 3);
+    for (let i = 0; i < partes.length; i += porGrupo) {
+      agrupadas.push(partes.slice(i, i + porGrupo).join(' '));
+    }
+    partes = agrupadas;
+  }
+  for (let i = 0; i < partes.length; i++) {
+    const parte = partes[i];
+    // Pausa proporcional ao tamanho (simula digitação): ~45ms por caractere,
+    // entre 0,8s e 4s. A primeira também tem uma pequena pausa inicial.
+    const ms = Math.min(4000, Math.max(800, parte.length * 45));
+    await new Promise(r => setTimeout(r, ms));
+    await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, parte).catch(() => null);
+    if (leadId) await registrarConversa(leadId, cliente.id, 'saida', parte, null, null, null, null, 'ia').catch(() => null);
+  }
+}
+
 async function iaResponderAutomatico(cliente, lead) {
   try {
     if (!lead || !lead.funil_coluna_id) return false;
@@ -6099,8 +6132,7 @@ async function iaResponderAutomatico(cliente, lead) {
       console.log(`[ia-auto] lead ${lead.id}: sem resposta (${gerada.erro || 'vazia'})`);
       return false;
     }
-    await enviarMsgQuestionario(cliente, lead.telefone, gerada.sugestao, null);
-    await registrarConversa(lead.id, cliente.id, 'saida', gerada.sugestao, null, null, null, null, 'ia').catch(() => null);
+    await enviarComPausasHumanas(cliente, lead.telefone, lead.id, gerada.sugestao);
     await registrarEventoLead(lead.id, cliente.id, 'ia_resposta_automatica', 'IA respondeu automaticamente (coluna com IA ativa)', { preview: gerada.sugestao.slice(0, 160) }).catch(() => null);
     console.log(`[ia-auto] lead ${lead.id}: IA respondeu automaticamente`);
     return true;
