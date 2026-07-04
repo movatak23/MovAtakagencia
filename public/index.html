@@ -5270,11 +5270,18 @@ async function carregarQuestNoEditor() {
   const id = questState.clienteId;
   try {
     let r;
+    // Config do CLIENTE — sempre carregada, porque alguns campos (ações ao final,
+    // enviar msg final, lembrete de inatividade) pertencem ao cliente e não ao
+    // template. Sem isso, ao editar com um template selecionado, esses campos
+    // apareciam vazios e as edições se perdiam.
+    let rCliente = null;
     if (questState.templateId) {
       r = await api('/movatak/admin/questionario-templates/' + questState.templateId);
       r.planos = await carregarPlanosQuest(id);
+      rCliente = await api('/movatak/admin/clientes/' + id + '/questionario').catch(() => null);
     } else {
       r = await api('/movatak/admin/clientes/' + id + '/questionario');
+      rCliente = r;
     }
     questState.planos = r.planos || [];
     questState.passos = (r.passos || []).map(p => ({
@@ -5295,23 +5302,24 @@ async function carregarQuestNoEditor() {
       plano_id: g.plano_id != null ? String(g.plano_id) : '',
       condicoes: Array.isArray(g.condicoes) ? g.condicoes.map(c => ({ campo: c.campo || '', op: c.op || '=', valor: c.valor != null ? String(c.valor) : '' })) : []
     }));
-    // Campos exclusivos do cliente (não existem em template): desabilita visualmente quando em template
+    // Campos exclusivos do cliente: sempre carregados de rCliente, mesmo em modo template.
     const ehTemplate = !!questState.templateId;
+    const cfgCli = rCliente || {};
     document.getElementById('quest-ativo').checked = ehTemplate ? true : !!r.ativo;
     document.getElementById('quest-ativo').disabled = ehTemplate;
-    document.getElementById('quest-acao-arquivar').checked = !ehTemplate && !!r.acao_arquivar_ao_final;
-    document.getElementById('quest-acao-nao-lido').checked = !ehTemplate && !!r.acao_marcar_nao_lido;
-    document.getElementById('quest-enviar-final').checked = (r.enviar_msg_final !== false);
+    document.getElementById('quest-acao-arquivar').checked = !!cfgCli.acao_arquivar_ao_final;
+    document.getElementById('quest-acao-nao-lido').checked = !!cfgCli.acao_marcar_nao_lido;
+    document.getElementById('quest-enviar-final').checked = (cfgCli.enviar_msg_final !== false);
     document.getElementById('quest-intro').value = r.intro || '';
     document.getElementById('quest-final').value = r.final || '';
     document.getElementById('quest-comando-parar').value = r.comando_parar || '';
     document.getElementById('quest-comando-ativar').value = r.comando_ativar || '';
-    // Lembrete de inatividade: converte minutos salvos para tempo+unidade amigável.
+    // Lembrete de inatividade: pertence ao cliente — carrega de rCliente.
     const lmEl = document.getElementById('quest-lembrete-msg');
     const ltEl = document.getElementById('quest-lembrete-tempo');
     const luEl = document.getElementById('quest-lembrete-unidade');
-    if (lmEl) lmEl.value = r.quest_lembrete_msg || '';
-    const min = r.quest_lembrete_minutos || 0;
+    if (lmEl) lmEl.value = cfgCli.quest_lembrete_msg || '';
+    const min = cfgCli.quest_lembrete_minutos || 0;
     if (ltEl && luEl) {
       if (min > 0 && min % 60 === 0) { ltEl.value = min / 60; luEl.value = 'horas'; }
       else if (min > 0) { ltEl.value = min; luEl.value = 'minutos'; }
@@ -5581,6 +5589,18 @@ async function salvarQuestionario() {
           final_imagem: questState.finalImagem || '',
           passos,
           recomendacao: []
+        })
+      });
+      // Estes campos pertencem ao CLIENTE, não ao template — salva separado
+      // pra não se perderem quando há um template selecionado.
+      await api('/movatak/admin/clientes/' + questState.clienteId + '/questionario', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          acao_arquivar_ao_final: document.getElementById('quest-acao-arquivar').checked,
+          acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked,
+          enviar_msg_final: document.getElementById('quest-enviar-final').checked,
+          quest_lembrete_msg: lembreteMsg,
+          quest_lembrete_minutos: lembreteMinutos
         })
       });
       await carregarListaTemplatesQuest(questState.clienteId);
