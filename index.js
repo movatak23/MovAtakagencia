@@ -10177,6 +10177,70 @@ app.get('/movatak/health', (req, res) => {
   res.json({ status: 'ok', version: MOVATAK_VERSION, ts: new Date().toISOString() });
 });
 
+// Contador de mensagens do mês corrente + estimativa de custo (WhatsApp per-message).
+// Admin vê o total geral e a quebra por cliente; cliente vê só o próprio.
+// A taxa por mensagem é informada pelo frontend (?taxa=) por ser configurável.
+app.get('/movatak/admin/uso-mensagens', authMovatakOuApp, async (req, res) => {
+  try {
+    const taxa = Number(req.query.taxa);
+    const taxaCobravel = (Number.isFinite(taxa) && taxa >= 0) ? taxa : 0.12;
+    // Primeiro dia do mês corrente (UTC), alinhado ao ciclo de cobrança.
+    const agora = new Date();
+    const inicioMes = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1, 0, 0, 0));
+
+    const filtroCliente = req.ehCliente ? 'AND cliente_id = $2' : '';
+    const params = req.ehCliente ? [inicioMes.toISOString(), req.clienteId] : [inicioMes.toISOString()];
+
+    const tot = await query(
+      `SELECT
+         COUNT(*) FILTER (WHERE direcao='saida')   AS enviadas,
+         COUNT(*) FILTER (WHERE direcao='entrada')  AS recebidas
+       FROM movatak_conversas
+       WHERE criado_em >= $1 ${filtroCliente}`,
+      params
+    );
+    const enviadas = Number(tot.rows[0].enviadas || 0);
+    const recebidas = Number(tot.rows[0].recebidas || 0);
+
+    // Estimativa de custo: só mensagens ENVIADAS são cobráveis (as recebidas nunca custam).
+    // É uma estimativa — o custo real do Meta depende da categoria e da janela de 24h,
+    // que o CRM não classifica hoje. A taxa é configurável para refletir a média do gestor.
+    const custoEstimado = Number((enviadas * taxaCobravel).toFixed(2));
+
+    const resposta = {
+      ok: true,
+      mes: inicioMes.toISOString().slice(0, 7),
+      taxa: taxaCobravel,
+      enviadas, recebidas,
+      total: enviadas + recebidas,
+      custo_estimado: custoEstimado,
+      ehCliente: !!req.ehCliente
+    };
+
+    // Admin: quebra por cliente.
+    if (!req.ehCliente) {
+      const porCliente = await query(
+        `SELECT c.id, c.nome,
+                COUNT(*) FILTER (WHERE cv.direcao='saida')  AS enviadas,
+                COUNT(*) FILTER (WHERE cv.direcao='entrada') AS recebidas
+           FROM movatak_conversas cv
+           JOIN movatak_clientes c ON c.id = cv.cliente_id
+          WHERE cv.criado_em >= $1
+          GROUP BY c.id, c.nome
+          ORDER BY enviadas DESC`,
+        [inicioMes.toISOString()]
+      );
+      resposta.por_cliente = porCliente.rows.map(r => ({
+        id: r.id, nome: r.nome,
+        enviadas: Number(r.enviadas || 0),
+        recebidas: Number(r.recebidas || 0),
+        custo_estimado: Number((Number(r.enviadas || 0) * taxaCobravel).toFixed(2))
+      }));
+    }
+    res.json(resposta);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/version', (req, res) => {
   res.json({ version: MOVATAK_VERSION });
 });
