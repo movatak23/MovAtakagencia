@@ -2534,6 +2534,32 @@ function renderConversaPainel(msgs) {
   rolarConversaParaFim();
 }
 
+// Mostra, de forma discreta, em qual setor/etapa do kanban o lead está —
+// útil para quem trabalha pela conversa e não pelo kanban.
+function mostrarSetorLeadPainel(lead) {
+  const foneEl = document.getElementById('painel-lead-fone');
+  if (!foneEl) return;
+  let badge = document.getElementById('painel-lead-setor');
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.id = 'painel-lead-setor';
+    badge.style.cssText = 'display:none;margin-top:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;align-self:flex-start';
+    foneEl.insertAdjacentElement('afterend', badge);
+  }
+  const colId = lead && lead.funil_coluna_id;
+  const col = colId
+    ? (funilState.colunas || []).concat(funilState.colunasVendedores || [])
+        .find(c => Number(c.id) === Number(colId))
+    : null;
+  if (!col) { badge.style.display = 'none'; return; }
+  const cor = col.cor || 'var(--accent)';
+  badge.textContent = '📍 ' + col.nome;
+  badge.style.color = cor;
+  badge.style.background = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
+  badge.style.border = '1px solid ' + cor;
+  badge.style.display = 'inline-block';
+}
+
 async function abrirPainelLead(leadId, nomeAbrev) {
   window._painelLeadId = leadId;
   garantirColunaFunilVisivel('chat');
@@ -2565,6 +2591,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
     const lead = histData.lead || {};
     document.getElementById('painel-lead-nome').textContent = lead.nome || nomeAbrev || 'Lead';
     document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
+    mostrarSetorLeadPainel(lead);
     renderConversaPainel(convData);
     renderHistoricoPainel(histData);
   } catch (e) {
