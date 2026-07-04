@@ -2712,6 +2712,15 @@ app.patch('/movatak/admin/leads/:id/marcar-lida', ...exigeLead, async (req, res)
 // Retorna a foto de perfil do lead. Usa cache de 24h (foto_atualizada_em). Se estiver
 // vazia ou velha, busca no Z-API uma vez e salva. A URL do WhatsApp expira ~48h, por
 // isso renovamos sob demanda em vez de guardar para sempre.
+// Chamado pelo frontend quando a foto (URL do WhatsApp) falha ao carregar —
+// limpa foto_url para não tentar de novo e poluir o console com 404 externos.
+app.post('/movatak/admin/leads/:id/foto/expirada', ...exigeLead, async (req, res) => {
+  try {
+    await query(`UPDATE movatak_leads SET foto_url=NULL WHERE id=$1`, [req.params.id]).catch(() => null);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/leads/:id/foto', ...exigeLead, async (req, res) => {
   try {
     const r = await query(
