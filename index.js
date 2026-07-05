@@ -167,6 +167,16 @@ const io = new SocketIOServer(httpServer, {
 io.use(async (socket, next) => {
   const auth = socket.handshake.auth || {};
   const secret = auth.secret;
+  // Sessão de gestor individual (Etapa A).
+  if (secret && secret.startsWith('gsess_')) {
+    const gestor = await validarSessaoGestor(secret);
+    if (gestor) {
+      socket.data.role = 'admin';
+      socket.data.gestorId = gestor.id;
+      return next();
+    }
+    return next(new Error('Não autorizado.'));
+  }
   if (secret && safeEq(secret, process.env.MOVATAK_SECRET)) {
     socket.data.role = 'admin';
     return next();
@@ -290,6 +300,74 @@ function gerarToken(prefixo) {
   return prefixo + '_' + Date.now() + '_' + crypto.randomBytes(8).toString('hex');
 }
 
+// ============================================================
+// Etapa A — Gestores individuais (login próprio por usuário).
+// Convive com o MOVATAK_SECRET legado durante a migração: o middleware
+// authMovatak aceita tanto uma sessão de gestor válida quanto o secret antigo.
+// ============================================================
+const GESTOR_SESSAO_HORAS = 12; // validade da sessão de gestor
+
+async function garantirTabelaGestores() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_gestores (
+    id SERIAL PRIMARY KEY,
+    nome TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    senha_hash TEXT NOT NULL,
+    ativo BOOLEAN DEFAULT true,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    ultimo_login TIMESTAMPTZ
+  )`, []);
+  await query(`CREATE TABLE IF NOT EXISTS movatak_gestor_sessoes (
+    token TEXT PRIMARY KEY,
+    gestor_id INTEGER NOT NULL REFERENCES movatak_gestores(id) ON DELETE CASCADE,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    expira_em TIMESTAMPTZ NOT NULL
+  )`, []);
+
+  // Semeia um gestor inicial a partir de variáveis de ambiente, para não trancar
+  // ninguém pra fora. Só cria se ainda não existir nenhum gestor.
+  const emailSeed = (process.env.GESTOR_INICIAL_EMAIL || '').trim().toLowerCase();
+  const senhaSeed = process.env.GESTOR_INICIAL_SENHA || '';
+  if (emailSeed && senhaSeed) {
+    const existe = await query('SELECT COUNT(*)::int AS n FROM movatak_gestores', []);
+    if (existe.rows[0].n === 0) {
+      await query(
+        'INSERT INTO movatak_gestores (nome, email, senha_hash) VALUES ($1, $2, $3) ON CONFLICT (email) DO NOTHING',
+        ['Gestor', emailSeed, hashSenhaNova(senhaSeed)]
+      );
+      console.log('[gestores] Gestor inicial criado:', emailSeed);
+    }
+  }
+}
+
+// Cria uma sessão de gestor e devolve o token. Faz limpeza de sessões expiradas.
+async function criarSessaoGestor(gestorId) {
+  const token = gerarToken('gsess');
+  const expira = new Date(Date.now() + GESTOR_SESSAO_HORAS * 3600 * 1000);
+  await query(
+    'INSERT INTO movatak_gestor_sessoes (token, gestor_id, expira_em) VALUES ($1, $2, $3)',
+    [token, gestorId, expira]
+  );
+  query('DELETE FROM movatak_gestor_sessoes WHERE expira_em < NOW()', []).catch(() => null);
+  return token;
+}
+
+// Valida um token de sessão de gestor. Retorna { id, nome, email } ou null.
+async function validarSessaoGestor(token) {
+  if (!token) return null;
+  try {
+    const r = await query(
+      `SELECT g.id, g.nome, g.email
+         FROM movatak_gestor_sessoes s
+         JOIN movatak_gestores g ON g.id = s.gestor_id AND g.ativo = true
+        WHERE s.token = $1 AND s.expira_em > NOW()
+        LIMIT 1`,
+      [token]
+    );
+    return r.rows.length ? r.rows[0] : null;
+  } catch (e) { return null; }
+}
+
 
 // ============================================================
 // Banco de dados
@@ -354,7 +432,17 @@ async function garantirColunasVendedoresPortal() {
 // e marca req.ehCliente para bloquear ações sensíveis e validar posse de recursos.
 async function authMovatakOuApp(req, res, next) {
   const secret = req.headers['x-movatak-secret'];
-  // Caminho admin: segredo correto = acesso total (comportamento original).
+  // Caminho admin via sessão de gestor individual (Etapa A).
+  if (secret && secret.startsWith('gsess_')) {
+    const gestor = await validarSessaoGestor(secret);
+    if (gestor) {
+      req.ehCliente = false;
+      req.gestor = gestor;
+      return next();
+    }
+    return res.status(401).json({ error: 'Sessao expirada. Faca login novamente.' });
+  }
+  // Caminho admin: segredo global legado = acesso total (comportamento original).
   if (secret && safeEq(secret, process.env.MOVATAK_SECRET)) {
     req.ehCliente = false;
     return next();
@@ -472,12 +560,22 @@ const forcaClienteIdNaUrl = [authMovatakOuApp, (req, res, next) => {
   next();
 }];
 
-function authMovatak(req, res, next) {
+async function authMovatak(req, res, next) {
   const secret = req.headers['x-movatak-secret'];
-  if (!safeEq(secret, process.env.MOVATAK_SECRET)) {
-    return res.status(401).json({ error: 'Nao autorizado.' });
+  // Caminho 1: sessão de gestor individual (Etapa A). Preferencial.
+  if (secret && secret.startsWith('gsess_')) {
+    const gestor = await validarSessaoGestor(secret);
+    if (gestor) {
+      req.gestor = gestor; // identifica quem está agindo
+      return next();
+    }
+    return res.status(401).json({ error: 'Sessao expirada. Faca login novamente.' });
   }
-  next();
+  // Caminho 2: secret global legado (mantido durante a migração).
+  if (safeEq(secret, process.env.MOVATAK_SECRET)) {
+    return next();
+  }
+  return res.status(401).json({ error: 'Nao autorizado.' });
 }
 
 // Autenticação do app do cliente (acesso somente leitura)
@@ -4639,6 +4737,121 @@ app.patch('/movatak/admin/vendedores/:id/setores', ...exigeVendedor, async (req,
     }
     res.json({ ok: true, setor_ids: setorIds });
   } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// ============================================================
+// Etapa A — Rotas de gestor individual
+// ============================================================
+
+// Login de gestor: email + senha → token de sessão (não é mais o secret global).
+app.post('/movatak/gestor/login', loginLimiter, async (req, res) => {
+  try {
+    await garantirTabelaGestores();
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const senha = String((req.body && req.body.senha) || '');
+    if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
+    const r = await query(
+      'SELECT id, nome, email, senha_hash FROM movatak_gestores WHERE email = $1 AND ativo = true LIMIT 1',
+      [email]
+    );
+    if (!r.rows.length) return res.status(401).json({ error: 'Email ou senha inválidos.' });
+    const g = r.rows[0];
+    if (!verificaSenha(senha, g.senha_hash)) {
+      return res.status(401).json({ error: 'Email ou senha inválidos.' });
+    }
+    // Migração transparente de hash legado, se aplicável.
+    if (!String(g.senha_hash).startsWith('scrypt$')) {
+      query('UPDATE movatak_gestores SET senha_hash = $1 WHERE id = $2',
+        [hashSenhaNova(senha), g.id]).catch(() => null);
+    }
+    const token = await criarSessaoGestor(g.id);
+    query('UPDATE movatak_gestores SET ultimo_login = NOW() WHERE id = $1', [g.id]).catch(() => null);
+    res.json({ token, gestor: { id: g.id, nome: g.nome, email: g.email } });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Logout de gestor: invalida a sessão atual.
+app.post('/movatak/gestor/logout', async (req, res) => {
+  try {
+    const token = req.headers['x-movatak-secret'];
+    if (token && token.startsWith('gsess_')) {
+      await query('DELETE FROM movatak_gestor_sessoes WHERE token = $1', [token]).catch(() => null);
+    }
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Identidade do gestor logado.
+app.get('/movatak/gestor/me', authMovatak, async (req, res) => {
+  res.json({ gestor: req.gestor || null, via: req.gestor ? 'sessao' : 'secret_legado' });
+});
+
+// Lista gestores (só admin). Não expõe hashes.
+app.get('/movatak/gestores', authMovatak, async (req, res) => {
+  try {
+    await garantirTabelaGestores();
+    const r = await query(
+      'SELECT id, nome, email, ativo, criado_em, ultimo_login FROM movatak_gestores ORDER BY nome',
+      []
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Cria um novo gestor (só admin).
+app.post('/movatak/gestores', authMovatak, async (req, res) => {
+  try {
+    await garantirTabelaGestores();
+    const nome = String((req.body && req.body.nome) || '').trim();
+    const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+    const senha = String((req.body && req.body.senha) || '');
+    if (!nome || !email || !senha) return res.status(400).json({ error: 'Informe nome, email e senha.' });
+    if (senha.length < 8) return res.status(400).json({ error: 'A senha deve ter pelo menos 8 caracteres.' });
+    const r = await query(
+      'INSERT INTO movatak_gestores (nome, email, senha_hash) VALUES ($1, $2, $3) RETURNING id, nome, email, ativo, criado_em',
+      [nome, email, hashSenhaNova(senha)]
+    ).catch(err => {
+      if (String(err.message).includes('duplicate') || String(err.code) === '23505') return null;
+      throw err;
+    });
+    if (!r) return res.status(409).json({ error: 'Já existe um gestor com esse email.' });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Ativa/desativa um gestor (só admin). Não permite desativar o último gestor ativo.
+app.patch('/movatak/gestores/:id', authMovatak, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (!id) return res.status(400).json({ error: 'ID inválido.' });
+    const campos = [];
+    const valores = [];
+    let idx = 1;
+    if (typeof req.body.nome === 'string' && req.body.nome.trim()) { campos.push('nome = $' + idx++); valores.push(req.body.nome.trim()); }
+    if (typeof req.body.ativo === 'boolean') {
+      if (req.body.ativo === false) {
+        const ativos = await query('SELECT COUNT(*)::int AS n FROM movatak_gestores WHERE ativo = true', []);
+        if (ativos.rows[0].n <= 1) return res.status(400).json({ error: 'Não é possível desativar o último gestor ativo.' });
+      }
+      campos.push('ativo = $' + idx++); valores.push(req.body.ativo);
+    }
+    if (req.body.senha) {
+      if (String(req.body.senha).length < 8) return res.status(400).json({ error: 'A senha deve ter pelo menos 8 caracteres.' });
+      campos.push('senha_hash = $' + idx++); valores.push(hashSenhaNova(String(req.body.senha)));
+    }
+    if (!campos.length) return res.status(400).json({ error: 'Nada para atualizar.' });
+    valores.push(id);
+    const r = await query(
+      `UPDATE movatak_gestores SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id, nome, email, ativo`,
+      valores
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Gestor não encontrado.' });
+    // Se desativou, derruba as sessões desse gestor.
+    if (req.body.ativo === false) {
+      query('DELETE FROM movatak_gestor_sessoes WHERE gestor_id = $1', [id]).catch(() => null);
+    }
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/movatak/vendedor/login', loginLimiter, async (req, res) => {
@@ -10489,4 +10702,5 @@ httpServer.listen(PORT, () => {
   garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
   garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
   garantirEstruturaCaptacao().catch(e => console.error('[captacao] schema:', e.message));
+  garantirTabelaGestores().catch(e => console.error('[gestores] schema:', e.message));
 });
