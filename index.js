@@ -91,10 +91,62 @@ async function r2Delete(chave) {
   if (!r2Client) throw new Error('R2 não configurado.');
   await r2Client.send(new R2_DeleteObjectCommand({ Bucket: R2_BUCKET_REAL, Key: chave }));
 }
+// ============================================================
+// Segurança: allowlist de origens (CORS) e comparação constante.
+// Defina MOVATAK_ORIGINS no ambiente (Railway), separadas por vírgula.
+// Ex.: MOVATAK_ORIGINS=https://painel.movatak.com,https://app.movatak.com
+// Vazio => nenhuma origem cross-site liberada (só same-origin funciona).
+// ============================================================
+const ORIGENS_PERMITIDAS = (process.env.MOVATAK_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+
+// Comparação em tempo constante para secrets/hashes (evita timing attack).
+function safeEq(a, b) {
+  const ba = Buffer.from(String(a == null ? '' : a));
+  const bb = Buffer.from(String(b == null ? '' : b));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+// Rate limiter simples em memória (sem dependência externa). Suficiente para
+// travar força bruta em logins. Chave = IP + rota. Janela deslizante por bloco.
+function criarRateLimiter({ windowMs = 15 * 60 * 1000, max = 10 } = {}) {
+  const hits = new Map(); // chave -> { count, reset }
+  // Limpeza periódica para não crescer indefinidamente.
+  setInterval(() => {
+    const agora = Date.now();
+    for (const [k, v] of hits) if (v.reset <= agora) hits.delete(k);
+  }, windowMs).unref?.();
+  return function (req, res, next) {
+    const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
+      || req.socket?.remoteAddress || 'desconhecido';
+    const chave = ip + '|' + req.path;
+    const agora = Date.now();
+    let reg = hits.get(chave);
+    if (!reg || reg.reset <= agora) { reg = { count: 0, reset: agora + windowMs }; hits.set(chave, reg); }
+    reg.count++;
+    if (reg.count > max) {
+      const seg = Math.ceil((reg.reset - agora) / 1000);
+      res.header('Retry-After', String(seg));
+      return res.status(429).json({ error: 'Muitas tentativas. Tente novamente em alguns minutos.' });
+    }
+    next();
+  };
+}
+const loginLimiter = criarRateLimiter({ windowMs: 15 * 60 * 1000, max: 10 });
+
 const app = express();
+// Railway (e a maioria dos PaaS) fica na frente do app como proxy reverso.
+// Isso faz o Express confiar no x-forwarded-for e enxergar o IP real do cliente,
+// importante para o rate limiter de login funcionar por usuário, não por proxy.
+app.set('trust proxy', 1);
 app.use(express.json({ limit: '30mb' }));
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
+  const origin = req.headers.origin;
+  if (origin && ORIGENS_PERMITIDAS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
+  }
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token, x-vendedor-token');
   res.header('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE, OPTIONS');
   if (req.method === 'OPTIONS') return res.sendStatus(200);
@@ -109,13 +161,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ============================================================
 const httpServer = http.createServer(app);
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: '*', methods: ['GET', 'POST'] }
+  cors: { origin: ORIGENS_PERMITIDAS, methods: ['GET', 'POST'] }
 });
 
 io.use(async (socket, next) => {
   const auth = socket.handshake.auth || {};
   const secret = auth.secret;
-  if (secret && secret === process.env.MOVATAK_SECRET) {
+  if (secret && safeEq(secret, process.env.MOVATAK_SECRET)) {
     socket.data.role = 'admin';
     return next();
   }
@@ -201,9 +253,37 @@ function normalizarPermissoes(permissoes) {
   return { ...DEFAULT_CLIENTE_PERMISSOES, ...(permissoes || {}) };
 }
 
+// Hash legado (SHA-256 + salt global). Mantido só para verificar senhas
+// gravadas antes da migração; NÃO usar para gravar senhas novas.
 function hashSenha(senha) {
   if (!senha) return null;
   return crypto.createHash('sha256').update(String(senha) + ':' + (process.env.MOVATAK_SECRET || 'movatak')).digest('hex');
+}
+
+// Hash forte para senhas novas: scrypt com salt aleatório por usuário.
+// Formato armazenado: "scrypt$<salt_hex>$<derivado_hex>".
+function hashSenhaNova(senha) {
+  if (!senha) return null;
+  const salt = crypto.randomBytes(16).toString('hex');
+  const dk = crypto.scryptSync(String(senha), salt, 64).toString('hex');
+  return 'scrypt$' + salt + '$' + dk;
+}
+
+// Verifica uma senha contra o hash armazenado, aceitando os dois formatos.
+// Retorna true/false em tempo constante.
+function verificaSenha(senha, armazenado) {
+  if (!armazenado || !senha) return false;
+  if (String(armazenado).startsWith('scrypt$')) {
+    const partes = String(armazenado).split('$');
+    if (partes.length !== 3) return false;
+    const salt = partes[1], dk = partes[2];
+    let calc;
+    try { calc = crypto.scryptSync(String(senha), salt, 64).toString('hex'); }
+    catch (e) { return false; }
+    return safeEq(calc, dk);
+  }
+  // Formato legado (SHA-256): comparação constante.
+  return safeEq(hashSenha(senha), armazenado);
 }
 
 function gerarToken(prefixo) {
@@ -275,7 +355,7 @@ async function garantirColunasVendedoresPortal() {
 async function authMovatakOuApp(req, res, next) {
   const secret = req.headers['x-movatak-secret'];
   // Caminho admin: segredo correto = acesso total (comportamento original).
-  if (secret && secret === process.env.MOVATAK_SECRET) {
+  if (secret && safeEq(secret, process.env.MOVATAK_SECRET)) {
     req.ehCliente = false;
     return next();
   }
@@ -394,7 +474,7 @@ const forcaClienteIdNaUrl = [authMovatakOuApp, (req, res, next) => {
 
 function authMovatak(req, res, next) {
   const secret = req.headers['x-movatak-secret'];
-  if (secret !== process.env.MOVATAK_SECRET) {
+  if (!safeEq(secret, process.env.MOVATAK_SECRET)) {
     return res.status(401).json({ error: 'Nao autorizado.' });
   }
   next();
@@ -1884,12 +1964,12 @@ app.patch('/movatak/app/trocar-senha', authCliente, async (req, res) => {
     const r = await query('SELECT portal_senha_hash FROM movatak_clientes WHERE id = $1', [req.clienteId]);
     const atualHash = r.rows.length ? r.rows[0].portal_senha_hash : null;
     // Se já existe senha, exige a atual correta. Se não existe ainda, permite definir.
-    if (atualHash && atualHash !== hashSenha(senhaAtual)) {
+    if (atualHash && !verificaSenha(senhaAtual, atualHash)) {
       return res.status(401).json({ error: 'Senha atual incorreta.' });
     }
     await query(
       'UPDATE movatak_clientes SET portal_senha_hash = $1, portal_senha_trocada_em = NOW() WHERE id = $2',
-      [hashSenha(senhaNova), req.clienteId]
+      [hashSenhaNova(senhaNova), req.clienteId]
     );
     res.json({ ok: true });
   } catch (e) {
@@ -1899,7 +1979,7 @@ app.patch('/movatak/app/trocar-senha', authCliente, async (req, res) => {
 
 // ── PORTAL DO CLIENTE — Login por email e senha ──────────────
 // Valida email+senha do cliente e devolve o app_token (usado nas demais chamadas).
-app.post('/movatak/app/login', async (req, res) => {
+app.post('/movatak/app/login', loginLimiter, async (req, res) => {
   try {
     const email = String((req.body && req.body.email) || '').trim().toLowerCase();
     const senha = String((req.body && req.body.senha) || '');
@@ -1911,8 +1991,13 @@ app.post('/movatak/app/login', async (req, res) => {
     );
     if (!r.rows.length) return res.status(401).json({ error: 'Email ou senha inválidos.' });
     const cli = r.rows[0];
-    if (!cli.portal_senha_hash || cli.portal_senha_hash !== hashSenha(senha)) {
+    if (!verificaSenha(senha, cli.portal_senha_hash)) {
       return res.status(401).json({ error: 'Email ou senha inválidos.' });
+    }
+    // Migração transparente: se o hash ainda é o formato legado, regrava em scrypt.
+    if (!String(cli.portal_senha_hash).startsWith('scrypt$')) {
+      query('UPDATE movatak_clientes SET portal_senha_hash = $1 WHERE id = $2',
+        [hashSenhaNova(senha), cli.id]).catch(() => null);
     }
     res.json({ app_token: cli.app_token, nome: cli.nome });
   } catch (e) {
@@ -2129,7 +2214,7 @@ app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (
     }
     if (portal_senha) {
       campos.push('portal_senha_hash = $' + idx++);
-      valores.push(hashSenha(portal_senha));
+      valores.push(hashSenhaNova(portal_senha));
     }
     if (!campos.length) return res.status(400).json({ error: 'Nada para salvar.' });
     valores.push(req.params.id);
@@ -2193,7 +2278,7 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
     if (pos_followup_acao !== undefined) { campos.push('pos_followup_acao = $' + idx); valores.push(['mover', 'descartar'].includes(pos_followup_acao) ? pos_followup_acao : 'nenhum'); idx++; }
     if (pos_followup_coluna_id !== undefined) { campos.push('pos_followup_coluna_id = $' + idx); valores.push(pos_followup_coluna_id ? parseInt(pos_followup_coluna_id) : null); idx++; }
     if (portal_email !== undefined) { campos.push('portal_email = $' + idx); valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null); idx++; }
-    if (portal_senha) { campos.push('portal_senha_hash = $' + idx); valores.push(hashSenha(portal_senha)); idx++; }
+    if (portal_senha) { campos.push('portal_senha_hash = $' + idx); valores.push(hashSenhaNova(portal_senha)); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
@@ -2479,7 +2564,7 @@ app.post('/movatak/admin/clientes/:id/vendedores', ...forcaClienteIdNaUrl, async
       `INSERT INTO movatak_vendedores (cliente_id, nome, email_acesso, senha_hash, acesso_token, comando)
        VALUES ($1,$2,$3,$4,$5,$6)
        RETURNING id, cliente_id, nome, comando, email_acesso, acesso_token, ativo, criado_em`,
-      [req.params.id, nome, email_acesso || null, hashSenha(senha_acesso), gerarToken('vend'), comando ? String(comando).trim().toLowerCase() : null]
+      [req.params.id, nome, email_acesso || null, hashSenhaNova(senha_acesso), gerarToken('vend'), comando ? String(comando).trim().toLowerCase() : null]
     );
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
@@ -3058,7 +3143,7 @@ app.post('/movatak/app/vendedores', authCliente, async (req, res) => {
     const { nome, comando, email_acesso, senha_acesso } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome obrigatório.' });
     const r = await query(`INSERT INTO movatak_vendedores (cliente_id, nome, comando, email_acesso, senha_hash, acesso_token) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id, nome, comando, email_acesso, acesso_token`,
-      [req.clienteId, String(nome).trim(), comando ? String(comando).trim().toLowerCase() : null, email_acesso || null, hashSenha(senha_acesso), gerarToken('vend')]);
+      [req.clienteId, String(nome).trim(), comando ? String(comando).trim().toLowerCase() : null, email_acesso || null, hashSenhaNova(senha_acesso), gerarToken('vend')]);
     res.json(r.rows[0]);
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
@@ -3072,7 +3157,7 @@ app.patch('/movatak/app/vendedores/:id', authCliente, async (req, res) => {
     if (nome !== undefined) { campos.push('nome = $' + idx++); valores.push(String(nome).trim()); }
     if (comando !== undefined) { campos.push('comando = $' + idx++); valores.push(comando ? String(comando).trim().toLowerCase() : null); }
     if (email_acesso !== undefined) { campos.push('email_acesso = $' + idx++); valores.push(email_acesso ? String(email_acesso).trim().toLowerCase() : null); }
-    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenha(senha_acesso)); }
+    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenhaNova(senha_acesso)); }
     if (!campos.length) return res.json({ ok: true });
     valores.push(req.clienteId, req.params.id);
     const r = await query(`UPDATE movatak_vendedores SET ${campos.join(', ')} WHERE cliente_id = $${idx++} AND id = $${idx} RETURNING id, nome, comando, email_acesso, acesso_token`, valores);
@@ -4525,7 +4610,7 @@ app.patch('/movatak/admin/vendedores/:id/acesso', ...exigeVendedor, async (req, 
     let idx = 1;
     if (nome !== undefined) { campos.push('nome = $' + idx++); valores.push(String(nome).trim()); }
     if (email_acesso !== undefined) { campos.push('email_acesso = $' + idx++); valores.push(email_acesso ? String(email_acesso).trim().toLowerCase() : null); }
-    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenha(senha_acesso)); }
+    if (senha_acesso) { campos.push('senha_hash = $' + idx++); valores.push(hashSenhaNova(senha_acesso)); }
     if (comando !== undefined) { campos.push('comando = $' + idx++); valores.push(comando ? String(comando).trim().toLowerCase() : null); }
     if (!campos.length) return res.json({ ok: true });
     valores.push(req.params.id);
@@ -4556,21 +4641,31 @@ app.patch('/movatak/admin/vendedores/:id/setores', ...exigeVendedor, async (req,
   } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/movatak/vendedor/login', async (req, res) => {
+app.post('/movatak/vendedor/login', loginLimiter, async (req, res) => {
   try {
     await garantirColunasVendedoresPortal();
     const { email, senha } = req.body || {};
     if (!email || !senha) return res.status(400).json({ error: 'Informe email e senha.' });
+    // Busca só por email; a senha é verificada em JS (scrypt tem salt por linha,
+    // então não dá para comparar por igualdade no SQL).
     const r = await query(
-      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, v.acesso_token, c.nome AS cliente_nome
+      `SELECT v.id, v.cliente_id, v.nome, v.email_acesso, v.acesso_token, v.senha_hash, c.nome AS cliente_nome
          FROM movatak_vendedores v
          JOIN movatak_clientes c ON c.id = v.cliente_id
-        WHERE LOWER(v.email_acesso) = LOWER($1) AND v.senha_hash = $2 AND v.ativo = true AND c.ativo = true
+        WHERE LOWER(v.email_acesso) = LOWER($1) AND v.ativo = true AND c.ativo = true
         LIMIT 1`,
-      [String(email).trim().toLowerCase(), hashSenha(senha)]
+      [String(email).trim().toLowerCase()]
     );
     if (!r.rows.length) return res.status(401).json({ error: 'Acesso inválido.' });
     const vend = r.rows[0];
+    if (!verificaSenha(senha, vend.senha_hash)) {
+      return res.status(401).json({ error: 'Acesso inválido.' });
+    }
+    // Migração transparente do hash legado para scrypt.
+    if (!String(vend.senha_hash).startsWith('scrypt$')) {
+      query('UPDATE movatak_vendedores SET senha_hash = $1 WHERE id = $2',
+        [hashSenhaNova(senha), vend.id]).catch(() => null);
+    }
     // Setores que este vendedor acessa — definem o que ele vê no kanban.
     const setoresR = await query(
       `SELECT s.id, s.nome, s.cor FROM movatak_setor_vendedores sv
