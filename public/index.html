@@ -761,7 +761,7 @@ async function fazerLogin() {
 
   secret = val;
   sessionStorage.setItem(SENHA_KEY, val);
-  localStorage.setItem(SENHA_LOCAL_KEY, val);
+  // [segurança] secret do gestor NÃO é mais persistido em localStorage (só sessionStorage).
   iniciar();
 }
 
@@ -1364,7 +1364,7 @@ async function verificarVersao() {
 function recuperarSecretFunilJanela() {
   let auth = '';
   try { auth = sessionStorage.getItem(SENHA_KEY) || ''; } catch(e) {}
-  try { if (!auth) auth = localStorage.getItem(SENHA_LOCAL_KEY) || ''; } catch(e) {}
+  try { /* [segurança] sem fallback de secret em localStorage */ } catch(e) {}
 
   // Fallback robusto para janela/aba nova: o painel pai grava o segredo em window.name.
   // Isso evita a corrida onde a nova aba inicia antes do localStorage/sessionStorage ser copiado.
@@ -1381,7 +1381,7 @@ function recuperarSecretFunilJanela() {
 
   if (auth) {
     try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
-    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+    /* [segurança] não persiste secret em localStorage */
   }
   return auth;
 }
@@ -1704,7 +1704,7 @@ function renderVendedoresVendas(vendedores) {
     const cor  = i === 0 ? 'var(--green)' : i === 1 ? 'var(--accent)' : 'var(--amber)';
     return `<div class="vv-item">
       <div class="vv-row">
-        <span class="vv-nome">${v.nome}</span>
+        <span class="vv-nome">${escapeHtml(v.nome)}</span>
         <span class="vv-num" style="color:${cor}">${fech} ${fech === 1 ? 'venda' : 'vendas'}</span>
       </div>
       <div class="vv-bar-bg"><div class="vv-bar-fill" style="width:${pct}%;background:${cor}"></div></div>
@@ -1836,8 +1836,8 @@ function renderClientes(clientes) {
     const fu     = parseInt(c.em_followup || 0);
     const taxa   = total > 0 ? ((conv / total) * 100).toFixed(1) : '0.0';
     const taxaCls = parseFloat(taxa) >= 20 ? 'td-green' : parseFloat(taxa) >= 10 ? 'td-amber' : '';
-    return `<tr class="cliente-row" data-id="${c.id}" onclick="selecionarCliente(${c.id}, '${c.nome.replace(/'/g, "")}')">
-      <td><strong>${c.nome}</strong></td>
+    return `<tr class="cliente-row" data-id="${c.id}" onclick="selecionarCliente(${c.id}, '${escAttr(c.nome.replace(/'/g, ""))}')">
+      <td><strong>${escapeHtml(c.nome)}</strong></td>
       <td class="td-mono">${total}</td>
       <td class="td-green">${conv}</td>
       <td class="td-amber">${fu}</td>
@@ -1849,8 +1849,8 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
-        <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
-        <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
+        <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${escAttr(c.nome.replace(/'/g, ""))}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
+        <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${escAttr(c.nome.replace(/'/g, ""))}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
         <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
         <button onclick="event.stopPropagation();baixarBackupClientePorId(${c.id})" title="Baixar backup deste cliente" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">💾 Backup</button>
         <span class="inst-status" data-cliente="${c.id}" onclick="event.stopPropagation();abrirConexaoWhatsapp(${c.id})" title="Status da instância Z-API — clique para ver/reconectar" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border2);border-radius:6px;font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px;color:var(--text2)">Instância <span class="inst-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);display:inline-block;flex-shrink:0"></span></span>
@@ -4360,7 +4360,7 @@ async function carregarVendedores(id) {
         : '<span style="font-size:11px;color:var(--text3)">Nenhum setor criado ainda. Crie setores no kanban primeiro.</span>';
       return `
       <div class="vendedor-item" style="flex-wrap:wrap;gap:8px">
-        <span class="vendedor-nome" style="flex:1">${v.nome}</span>
+        <span class="vendedor-nome" style="flex:1">${escapeHtml(v.nome)}</span>
         <button class="btn-remove" onclick="removerVendedor(${v.id})" title="Remover">×</button>
         <input type="text" class="fu-textarea" style="flex-basis:100%;min-height:auto;padding:8px 12px;resize:none;font-family:var(--mono);font-size:12px"
           id="vend-cmd-${v.id}" value="${v.comando || ''}" placeholder="Comando deste vendedor (ex: #joao)"
@@ -4498,7 +4498,7 @@ async function carregarRanking(id) {
       const cor  = i === 0 ? 'var(--green)' : i === 1 ? 'var(--accent)' : 'var(--amber)';
       return `<div style="margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;margin-bottom:4px">
-          <span style="font-size:13px;color:var(--text)">${v.nome}</span>
+          <span style="font-size:13px;color:var(--text)">${escapeHtml(v.nome)}</span>
           <span style="font-size:13px;font-weight:700;color:${cor}">${fech} ${fech === 1 ? 'venda' : 'vendas'}</span>
         </div>
         <div style="height:8px;background:var(--bg4);border-radius:4px;overflow:hidden">
@@ -4585,8 +4585,8 @@ async function carregarOperacao(id) {
         `).join('')}
       </div>
       <div style="font-size:12px;color:var(--text2);line-height:1.6">
-        <strong>Último lead:</strong> ${r.ultimo_lead ? `${r.ultimo_lead.nome || 'Sem nome'} · ${r.ultimo_lead.telefone} · ${fmtData(r.ultimo_lead.criado_em)}` : '—'}<br>
-        <strong>Próxima mensagem:</strong> ${r.proxima_mensagem ? `FU${r.proxima_mensagem.sequencia_fu} msg${r.proxima_mensagem.etapa_seq} · ${r.proxima_mensagem.telefone} · ${fmtData(r.proxima_mensagem.proximo_envio)}` : '—'}<br>
+        <strong>Último lead:</strong> ${r.ultimo_lead ? `${escapeHtml(r.ultimo_lead.nome || 'Sem nome')} · ${escapeHtml(r.ultimo_lead.telefone)} · ${fmtData(r.ultimo_lead.criado_em)}` : '—'}<br>
+        <strong>Próxima mensagem:</strong> ${r.proxima_mensagem ? `FU${r.proxima_mensagem.sequencia_fu} msg${r.proxima_mensagem.etapa_seq} · ${escapeHtml(r.proxima_mensagem.telefone)} · ${fmtData(r.proxima_mensagem.proximo_envio)}` : '—'}<br>
         <strong>Último envio:</strong> ${fmtData(fila.ultimo_envio_em)}<br>
         <strong>Último webhook:</strong> ${fmtData((r.cliente || {}).ultimo_webhook_em)}<br>
         <strong>Último erro Z-API:</strong> ${(r.cliente || {}).ultimo_erro_zapi ? `${(r.cliente || {}).ultimo_erro_zapi} · ${fmtData((r.cliente || {}).ultimo_erro_zapi_em)}` : '—'}<br>
@@ -4618,7 +4618,7 @@ async function carregarFilaFollowup(id) {
           <tbody>
             ${rows.map(r => `
               <tr>
-                <td><strong>${r.nome || 'Sem nome'}</strong><br><span class="td-mono">${r.telefone || ''}</span></td>
+                <td><strong>${escapeHtml(r.nome || 'Sem nome')}</strong><br><span class="td-mono">${escapeHtml(r.telefone || '')}</span></td>
                 <td class="td-mono">FU${r.sequencia_fu || 1} · msg${r.etapa_seq}</td>
                 <td class="td-mono">${fmtData(r.proximo_envio)}</td>
                 <td><span class="badge ${r.status === 'pendente' ? 'badge-green' : 'badge-gray'}">${r.status}</span></td>
@@ -4650,8 +4650,8 @@ async function carregarHistoricoLead(leadId) {
       <div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--bg2);margin-top:12px">
         <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:10px">
           <div>
-            <div style="font-size:13px;font-weight:700;color:var(--text)">${lead.nome || 'Sem nome'} · ${lead.telefone || ''}</div>
-            <div style="font-size:12px;color:var(--text2)">Etapa: ${lead.etapa || '—'} · Vendedor: ${lead.vendedor_nome || '—'}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text)">${escapeHtml(lead.nome || 'Sem nome')} · ${escapeHtml(lead.telefone || '')}</div>
+            <div style="font-size:12px;color:var(--text2)">Etapa: ${escapeHtml(lead.etapa || '—')} · Vendedor: ${escapeHtml(lead.vendedor_nome || '—')}</div>
           </div>
           <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
             <button class="btn-cancel" style="padding:6px 8px;font-size:11px" onclick="marcarLeadCliente(${lead.id})">Cliente</button>
@@ -6820,7 +6820,7 @@ function renderPainelPrioridades() {
       <button onclick="dispensarPrioridade(event, ${l.id})" title="Dispensar — mostra o próximo" style="position:absolute;top:8px;right:8px;background:none;border:none;color:var(--text3);font-size:15px;line-height:1;cursor:pointer;padding:2px 5px;border-radius:6px" onmouseover="this.style.color='var(--red)';this.style.background='var(--bg4)'" onmouseout="this.style.color='var(--text3)';this.style.background='none'">✕</button>
       <div onclick="atenderPrioridade(${l.id})" style="cursor:pointer;padding-right:20px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
-          <div style="font-weight:700;font-size:14px;color:var(--text)">${i + 1}. ${nome}</div>
+          <div style="font-weight:700;font-size:14px;color:var(--text)">${i + 1}. ${escapeHtml(nome)}</div>
           <div style="font-size:11px;font-weight:700;color:${cor}">${rotuloEspera(l)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--text2)">
@@ -6867,12 +6867,12 @@ function abrirDashboardSLA() {
   const nome = funilState.clienteNome || '';
   if (!id) return;
   const auth = (() => {
-    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    try { return sessionStorage.getItem(SENHA_KEY) || secret || ''; }
     catch(e) { return secret || ''; }
   })();
   if (auth) {
     try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
-    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+    /* [segurança] não persiste secret em localStorage */
   }
   const url = new URL(window.location.href);
   url.searchParams.delete('funil');
@@ -6885,7 +6885,7 @@ function abrirDashboardSLA() {
       if (auth) {
         win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
         win.sessionStorage.setItem(SENHA_KEY, auth);
-        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
+        /* [segurança] não replica secret para localStorage da janela filha */
       }
     } catch(e) {}
   } else {
@@ -6907,12 +6907,12 @@ function ehPaginaCaptacao() {
 
 function abrirCentralCaptacao() {
   const auth = (() => {
-    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    try { return sessionStorage.getItem(SENHA_KEY) || secret || ''; }
     catch(e) { return secret || ''; }
   })();
   if (auth) {
     try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
-    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+    /* [segurança] não persiste secret em localStorage */
   }
   const url = new URL(window.location.href);
   url.search = '';
@@ -6923,7 +6923,7 @@ function abrirCentralCaptacao() {
       if (auth) {
         win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
         win.sessionStorage.setItem(SENHA_KEY, auth);
-        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
+        /* [segurança] não replica secret para localStorage da janela filha */
       }
     } catch(e) {}
   } else {
@@ -7297,7 +7297,7 @@ function renderDashboardSLA(data) {
 
   const card = (titulo, valor, cor, sub) => `
     <div style="flex:1;min-width:140px;background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:16px 18px">
-      <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">${titulo}</div>
+      <div style="font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">${escapeHtml(titulo)}</div>
       <div style="font-size:28px;font-weight:800;color:${cor};line-height:1">${valor}</div>
       ${sub ? '<div style="font-size:11px;color:var(--text3);margin-top:4px">' + sub + '</div>' : ''}
     </div>`;
@@ -7717,7 +7717,7 @@ async function salvarMenuAtendimento() {
 
 async function abrirFunilAtendimento(id, nome) {
   const auth = (() => {
-    try { return sessionStorage.getItem(SENHA_KEY) || localStorage.getItem(SENHA_LOCAL_KEY) || secret || ''; }
+    try { return sessionStorage.getItem(SENHA_KEY) || secret || ''; }
     catch(e) { return secret || ''; }
   })();
 
@@ -7725,7 +7725,7 @@ async function abrirFunilAtendimento(id, nome) {
   // criando uma corrida: a aba podia carregar sem autenticação e não iniciava o funil.
   if (auth) {
     try { sessionStorage.setItem(SENHA_KEY, auth); } catch(e) {}
-    try { localStorage.setItem(SENHA_LOCAL_KEY, auth); } catch(e) {}
+    /* [segurança] não persiste secret em localStorage */
   }
 
   const url = new URL(window.location.href);
@@ -7739,7 +7739,7 @@ async function abrirFunilAtendimento(id, nome) {
       if (auth) {
         win.name = 'movatak_funil_auth:' + btoa(JSON.stringify({ secret: auth, ts: Date.now() }));
         win.sessionStorage.setItem(SENHA_KEY, auth);
-        win.localStorage.setItem(SENHA_LOCAL_KEY, auth);
+        /* [segurança] não replica secret para localStorage da janela filha */
       }
     } catch(e) {}
   } else {
@@ -8014,7 +8014,7 @@ function renderInboxFunil() {
       ? (prefixoVoce + String(lead.ultima_msg)).slice(0, 56)
       : (rotuloMidiaInbox(lead.ultima_msg_midia, prefixoVoce) || 'Sem mensagens ainda');
     const col = etapaDoLead(lead);
-    const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 40);
+    const nomeSeguro = escAttr(String(lead.nome || '').replace(/'/g, '').slice(0, 40));
     return `<div class="inbox-item${ativo}${naoLida ? ' unread' : ''}" data-lead-id="${lead.id}"
               onclick="selecionarLeadInbox(${lead.id}, '${nomeSeguro}')">
       <div class="inbox-avatar" style="background:${corAvatarLead(lead.nome)};overflow:hidden">${avatarConteudoLead(lead)}</div>
@@ -8355,7 +8355,7 @@ function renderFunilCardVendedor(lead, vendedorAtualId) {
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
     ${plano}${etapa}
     <div class="funil-card-actions">
-      <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
+      <button onclick="abrirMensagemRapidaLead(${lead.id}, '${escAttr(String(lead.nome||'').replace(/'/g,'').slice(0,20))}')">Mensagem</button>
       <button onclick="reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
       <select onchange="reatribuirVendedor(${lead.id},this.value)">${opts}</select>
     </div>
@@ -8457,7 +8457,7 @@ function renderFunilCard(lead, colunaAtualId) {
   const seletorSetor = (funilState.setores && funilState.setores.length)
     ? `<select title="Transferir para outro setor" onclick="event.stopPropagation()" onchange="transferirSetorLead(${lead.id}, this.value)" style="border-color:var(--accent)"><option value="">Setor...</option>${setoresOpts}</select>`
     : '';
-  const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 30);
+  const nomeSeguro = escAttr(String(lead.nome || '').replace(/'/g, '').slice(0, 30));
   const colAtualResumo = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaAtualId));
   const btnResumoIA = (colAtualResumo && colAtualResumo.ia_ativa)
     ? `<button onclick="event.stopPropagation();abrirResumoIA(${lead.id}, event)" title="Resumo da conversa por IA" style="color:var(--accent);border-color:var(--accent)">📝 Resumo</button>`
