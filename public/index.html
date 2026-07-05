@@ -744,8 +744,10 @@ async function fazerLogin() {
   const errEl = document.getElementById('login-err');
   if (!val) { errEl.textContent = 'Informe a senha.'; return; }
 
-  // Email preenchido → tenta login de VENDEDOR. Vazio → login de GESTOR (só senha).
+  // Com email: tenta VENDEDOR; se falhar, tenta GESTOR individual (Etapa A).
+  // Sem email: login de gestor pelo secret global legado (compatibilidade).
   if (email) {
+    // 1) tenta vendedor
     try {
       const r = await api('/movatak/vendedor/login', { method: 'POST', body: JSON.stringify({ email, senha: val }) }, true);
       _vendedorToken = r.token;
@@ -753,12 +755,24 @@ async function fazerLogin() {
       sessionStorage.setItem('mvtk_vend_token', r.token);
       sessionStorage.setItem('mvtk_vend_info', JSON.stringify(r.vendedor));
       iniciarAppVendedor();
-    } catch (e) {
+      return;
+    } catch (e) { /* não é vendedor — tenta gestor abaixo */ }
+    // 2) tenta gestor individual
+    try {
+      const g = await api('/movatak/gestor/login', { method: 'POST', body: JSON.stringify({ email, senha: val }) }, true);
+      // O token de sessão do gestor vai no mesmo header x-movatak-secret usado no resto do painel.
+      secret = g.token;
+      sessionStorage.setItem(SENHA_KEY, g.token);
+      try { sessionStorage.setItem('mvtk_gestor_info', JSON.stringify(g.gestor)); } catch(e) {}
+      iniciar();
+      return;
+    } catch (e2) {
       errEl.textContent = 'Email ou senha inválidos.';
     }
     return;
   }
 
+  // Sem email: secret global legado (mantido durante a migração).
   secret = val;
   sessionStorage.setItem(SENHA_KEY, val);
   // [segurança] secret do gestor NÃO é mais persistido em localStorage (só sessionStorage).
@@ -782,10 +796,15 @@ function sair() {
     window.location.href = 'portal.html';
     return;
   }
+  // Se o acesso é por sessão de gestor (Etapa A), invalida no servidor.
+  if (secret && String(secret).startsWith('gsess_')) {
+    try { fetch(API_BASE + '/movatak/gestor/logout', { method: 'POST', headers: { 'x-movatak-secret': secret } }); } catch (e) {}
+  }
   sessionStorage.removeItem(SENHA_KEY);
   localStorage.removeItem(SENHA_LOCAL_KEY);
   sessionStorage.removeItem('mvtk_vend_token');
   sessionStorage.removeItem('mvtk_vend_info');
+  sessionStorage.removeItem('mvtk_gestor_info');
   secret = '';
   _vendedorToken = '';
   _vendedorInfo = null;
