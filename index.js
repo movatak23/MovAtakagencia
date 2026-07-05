@@ -1981,6 +1981,18 @@ cron.schedule('*/15 * * * *', async () => {
 // Restart resolve queda de sessão sem QR; se o celular deslogou de vez, precisa do QR
 // (aí o cliente reconecta sozinho pela tela de Conexão). Throttle: 1 restart / 10 min / instância.
 const _ultimoRestartInstancia = new Map();
+// Instâncias com erro permanente (não existem mais na Z-API): não adianta tentar
+// religar toda hora nem poluir o log. Avisamos uma vez e só voltamos a checar de 6 em 6h.
+const _instanciaErroPermanente = new Map(); // zapi_instance -> timestamp do último aviso
+const ERRO_PERMANENTE_SILENCIO_MS = 6 * 60 * 60 * 1000; // 6 horas
+
+function ehErroPermanenteZapi(e) {
+  const status = e && e.response && e.response.status;
+  const msg = String((e && e.response && e.response.data && e.response.data.error) || (e && e.message) || '').toLowerCase();
+  // 404 ou mensagem de instância inexistente = credencial errada/instância removida.
+  return status === 404 || msg.includes('instance not found') || msg.includes('not found');
+}
+
 if (CRON_ATIVO) {
   cron.schedule('*/5 * * * *', async () => {
     await withPgAdvisoryLock('auto-reconexao', async () => {
@@ -1990,17 +2002,34 @@ if (CRON_ATIVO) {
           WHERE ativo = true AND zapi_instance IS NOT NULL AND zapi_token IS NOT NULL`
       );
       for (const c of r.rows) {
+        const rotulo = `${c.nome || 'sem nome'} (id ${c.id})`;
+        // Se essa instância já foi marcada como erro permanente há pouco, não insiste.
+        const avisadoEm = _instanciaErroPermanente.get(c.zapi_instance);
+        if (avisadoEm && (Date.now() - avisadoEm) < ERRO_PERMANENTE_SILENCIO_MS) continue;
         try {
           const st = await zapiStatus(c.zapi_instance, c.zapi_token, c.zapi_client_token || '');
-          if (st.connected === true) continue;
+          if (st.connected === true) {
+            // Voltou a funcionar: limpa a marca de erro permanente, se havia.
+            _instanciaErroPermanente.delete(c.zapi_instance);
+            continue;
+          }
           const agora = Date.now();
           const ultimo = _ultimoRestartInstancia.get(c.zapi_instance) || 0;
           if (agora - ultimo < 10 * 60 * 1000) continue;
           _ultimoRestartInstancia.set(c.zapi_instance, agora);
           await zapiRestart(c.zapi_instance, c.zapi_token, c.zapi_client_token || '');
-          console.log(JSON.stringify({ tipo: 'auto_reconexao', cliente_id: c.id, instancia: c.zapi_instance, acao: 'restart' }));
+          console.log(JSON.stringify({ tipo: 'auto_reconexao', cliente_id: c.id, cliente_nome: c.nome, instancia: c.zapi_instance, acao: 'restart' }));
         } catch (e) {
-          console.warn('[auto-reconexao] falha cliente', c.id, e.response?.data?.error || e.message);
+          if (ehErroPermanenteZapi(e)) {
+            // Instância não existe mais na Z-API. Avisa de forma clara UMA vez e silencia por 6h.
+            _instanciaErroPermanente.set(c.zapi_instance, Date.now());
+            console.warn(`[auto-reconexao] ATENÇÃO: instância Z-API do cliente ${rotulo} não existe mais (instance not found). ` +
+              `Verifique se a assinatura Z-API está ativa e se o Instance ID/Token no cadastro estão corretos. ` +
+              `Não vou tentar religar essa instância pelas próximas 6h.`);
+          } else {
+            // Falha transitória (rede, timeout): loga e tenta de novo no próximo ciclo.
+            console.warn(`[auto-reconexao] falha temporária no cliente ${rotulo}:`, e.response?.data?.error || e.message);
+          }
         }
       }
     });
