@@ -145,6 +145,7 @@ app.use((req, res, next) => {
   const origin = req.headers.origin;
   if (origin && ORIGENS_PERMITIDAS.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true'); // permite cookie de sessão cross-origin
     res.header('Vary', 'Origin');
   }
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token, x-vendedor-token');
@@ -161,15 +162,27 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ============================================================
 const httpServer = http.createServer(app);
 const io = new SocketIOServer(httpServer, {
-  cors: { origin: ORIGENS_PERMITIDAS, methods: ['GET', 'POST'] }
+  cors: { origin: ORIGENS_PERMITIDAS, methods: ['GET', 'POST'], credentials: true }
 });
 
 io.use(async (socket, next) => {
   const auth = socket.handshake.auth || {};
   const secret = auth.secret;
-  // Sessão de gestor individual (Etapa A).
-  if (secret && secret.startsWith('gsess_')) {
-    const gestor = await validarSessaoGestor(secret);
+  // Sessão de gestor: via cookie HttpOnly (handshake) ou via auth.secret (legado).
+  let tokenGestorSocket = null;
+  const cookieRaw = socket.handshake.headers && socket.handshake.headers.cookie;
+  if (cookieRaw) {
+    for (const parte of cookieRaw.split(';')) {
+      const i = parte.indexOf('=');
+      if (i !== -1 && parte.slice(0, i).trim() === COOKIE_GESTOR) {
+        tokenGestorSocket = decodeURIComponent(parte.slice(i + 1).trim());
+        break;
+      }
+    }
+  }
+  if (!tokenGestorSocket && secret && secret.startsWith('gsess_')) tokenGestorSocket = secret;
+  if (tokenGestorSocket) {
+    const gestor = await validarSessaoGestor(tokenGestorSocket);
     if (gestor) {
       socket.data.role = 'admin';
       socket.data.gestorId = gestor.id;
@@ -368,6 +381,45 @@ async function validarSessaoGestor(token) {
   } catch (e) { return null; }
 }
 
+// ── Etapa B — sessão em cookie HttpOnly ─────────────────────
+// Lê um cookie específico do cabeçalho Cookie (sem dependência externa).
+function lerCookie(req, nome) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const parte of raw.split(';')) {
+    const i = parte.indexOf('=');
+    if (i === -1) continue;
+    const k = parte.slice(0, i).trim();
+    if (k === nome) return decodeURIComponent(parte.slice(i + 1).trim());
+  }
+  return null;
+}
+
+const COOKIE_GESTOR = 'mvtk_gsess';
+
+// Monta o Set-Cookie do token de gestor: HttpOnly + Secure + SameSite=Strict.
+// SameSite=Strict é a defesa CSRF (o cookie não viaja em requisições vindas de
+// outros sites). Secure exige HTTPS — o app roda em https, então ok.
+function setCookieGestor(res, token) {
+  const maxAge = GESTOR_SESSAO_HORAS * 3600; // segundos
+  res.setHeader('Set-Cookie',
+    `${COOKIE_GESTOR}=${encodeURIComponent(token)}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAge}`);
+}
+
+function limparCookieGestor(res) {
+  res.setHeader('Set-Cookie',
+    `${COOKIE_GESTOR}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`);
+}
+
+// Extrai o token de gestor de uma requisição: cookie (preferencial) ou header legado.
+function tokenGestorDaReq(req) {
+  const doCookie = lerCookie(req, COOKIE_GESTOR);
+  if (doCookie) return doCookie;
+  const h = req.headers['x-movatak-secret'];
+  if (h && String(h).startsWith('gsess_')) return h;
+  return null;
+}
+
 
 // ============================================================
 // Banco de dados
@@ -431,10 +483,10 @@ async function garantirColunasVendedoresPortal() {
 // restrito à própria operação). Quando é cliente, força o cliente_id do token
 // e marca req.ehCliente para bloquear ações sensíveis e validar posse de recursos.
 async function authMovatakOuApp(req, res, next) {
-  const secret = req.headers['x-movatak-secret'];
-  // Caminho admin via sessão de gestor individual (Etapa A).
-  if (secret && secret.startsWith('gsess_')) {
-    const gestor = await validarSessaoGestor(secret);
+  // Caminho admin via sessão de gestor (cookie HttpOnly ou header legado).
+  const tokenGestor = tokenGestorDaReq(req);
+  if (tokenGestor) {
+    const gestor = await validarSessaoGestor(tokenGestor);
     if (gestor) {
       req.ehCliente = false;
       req.gestor = gestor;
@@ -442,6 +494,7 @@ async function authMovatakOuApp(req, res, next) {
     }
     return res.status(401).json({ error: 'Sessao expirada. Faca login novamente.' });
   }
+  const secret = req.headers['x-movatak-secret'];
   // Caminho admin: segredo global legado = acesso total (comportamento original).
   if (secret && safeEq(secret, process.env.MOVATAK_SECRET)) {
     req.ehCliente = false;
@@ -561,17 +614,18 @@ const forcaClienteIdNaUrl = [authMovatakOuApp, (req, res, next) => {
 }];
 
 async function authMovatak(req, res, next) {
-  const secret = req.headers['x-movatak-secret'];
-  // Caminho 1: sessão de gestor individual (Etapa A). Preferencial.
-  if (secret && secret.startsWith('gsess_')) {
-    const gestor = await validarSessaoGestor(secret);
+  // Caminho 1: sessão de gestor (Etapa A/B) — via cookie HttpOnly ou header legado.
+  const tokenGestor = tokenGestorDaReq(req);
+  if (tokenGestor) {
+    const gestor = await validarSessaoGestor(tokenGestor);
     if (gestor) {
-      req.gestor = gestor; // identifica quem está agindo
+      req.gestor = gestor;
       return next();
     }
     return res.status(401).json({ error: 'Sessao expirada. Faca login novamente.' });
   }
   // Caminho 2: secret global legado (mantido durante a migração).
+  const secret = req.headers['x-movatak-secret'];
   if (safeEq(secret, process.env.MOVATAK_SECRET)) {
     return next();
   }
@@ -4766,17 +4820,19 @@ app.post('/movatak/gestor/login', loginLimiter, async (req, res) => {
     }
     const token = await criarSessaoGestor(g.id);
     query('UPDATE movatak_gestores SET ultimo_login = NOW() WHERE id = $1', [g.id]).catch(() => null);
-    res.json({ token, gestor: { id: g.id, nome: g.nome, email: g.email } });
+    setCookieGestor(res, token); // Etapa B: sessão em cookie HttpOnly
+    res.json({ ok: true, gestor: { id: g.id, nome: g.nome, email: g.email } });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// Logout de gestor: invalida a sessão atual.
+// Logout de gestor: invalida a sessão atual e limpa o cookie.
 app.post('/movatak/gestor/logout', async (req, res) => {
   try {
-    const token = req.headers['x-movatak-secret'];
-    if (token && token.startsWith('gsess_')) {
+    const token = tokenGestorDaReq(req);
+    if (token) {
       await query('DELETE FROM movatak_gestor_sessoes WHERE token = $1', [token]).catch(() => null);
     }
+    limparCookieGestor(res);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
