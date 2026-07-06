@@ -4176,7 +4176,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
     // Retomar: vendedor usa o comando de followup ou convertido para reativar.
     if (lead && lead.automacao_pausada) {
-      logDebug('[zapi][lead] automacao pausada — mensagem gravada, automacao ignorada');
+      console.log(`[zapi][lead ${lead.id}] automação PAUSADA (pediu_atendente=${!!lead.pediu_atendente}) — mensagem gravada, IA/automação NÃO responde. Reative com o comando de ativar ou followup.`);
       return;
     }
 
@@ -6099,15 +6099,24 @@ async function gerarRespostaIALead(leadId) {
     `- Nesse caso, responda EXATAMENTE com o marcador: [TRANSFERIR_HUMANO]\n` +
     `- Use o marcador também se o cliente pedir para falar com uma pessoa, demonstrar irritação, ou se a conversa fugir do que você domina.\n` +
     `- Não escreva mais nada junto do marcador — só ele.\n\n` +
-    `ASSUNTOS PROIBIDOS — TRANSFIRA SEMPRE (regra ABSOLUTA, acima de qualquer outra):\n` +
-    `Você NÃO tem acesso a sistema de pedidos, pagamentos ou cadastro. Você NUNCA, em hipótese alguma, pode:\n` +
+    `ASSUNTOS PROIBIDOS — TRANSFIRA SEMPRE:\n` +
+    `Você NÃO tem acesso a sistema de pedidos, pagamentos ou cadastro. Você NUNCA pode:\n` +
     `- Criar, registrar, confirmar ou "fechar" um pedido ou compra, nem informar número, status ou conteúdo de pedido.\n` +
     `- Gerar, enviar ou prometer link de pagamento, chave PIX, boleto, código de barras ou qualquer forma de cobrança.\n` +
     `- Confirmar que um pagamento foi recebido, aprovado ou identificado, ou analisar comprovantes.\n` +
     `- Tratar de cancelamento, reembolso, estorno, nota fiscal, fatura ou alteração de dados cadastrais/financeiros.\n` +
     `- Enviar QUALQUER link ou URL, mesmo que pareça existir no material.\n` +
     `Se o cliente pedir QUALQUER item acima, responda EXATAMENTE com o marcador [TRANSFERIR_HUMANO] — nada mais. ` +
-    `Nunca simule, invente ou "faça de conta" que executou essas ações, nem como exemplo.\n\n` +
+    `Nunca simule ou faça de conta que executou essas ações.\n\n` +
+    `O QUE VOCÊ PODE E DEVE RESPONDER NORMALMENTE (não transfira à toa):\n` +
+    `- Dúvidas sobre produtos, materiais, tamanhos, modelos, especificações e disponibilidade que estejam no material oficial.\n` +
+    `- Preços e condições que CONSTAM no material oficial (tabelas, respostas rápidas, conhecimento da empresa) — pode informar; ` +
+    `só não pode inventar valores que não estão lá.\n` +
+    `- Prazos e informações de funcionamento que estejam no material oficial.\n` +
+    `- Cumprimentos, agradecimentos e conversa cotidiana de atendimento.\n` +
+    `- Você PODE mencionar as formas de pagamento aceitas se isso estiver no material (ex: "aceitamos pix e cartão") — ` +
+    `o que você não pode é gerar/enviar a cobrança em si.\n` +
+    `Na dúvida entre transferir e responder algo que ESTÁ no material oficial: responda.\n\n` +
     `Não invente preços, prazos ou condições fora do material. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
     `Responda APENAS com o texto da mensagem (ou só o marcador), sem aspas, sem rótulos, sem explicação.` +
     baseConhecimento +
@@ -6212,19 +6221,26 @@ function assuntoExigeHumano(textoLead) {
   return padroes.some(rx => rx.test(t));
 }
 
-// A resposta GERADA pela IA violou as travas? (link, pix, boleto, pedido/pagamento "confirmado")
+// A resposta GERADA pela IA violou as travas? Bloqueia apenas AÇÃO transacional
+// (link/URL, chave pix, geração de boleto, confirmação de pedido/pagamento).
+// ⚠️ NÃO bloqueia a simples menção a "pix"/"boleto" — "aceitamos pix e cartão"
+// é resposta informativa legítima do material oficial. Bloquear menção solta
+// causava efeito dominó: toda resposta era barrada → lead transferido e
+// pausado → IA silenciava para sempre.
 function respostaIAViolaTravas(textoIA) {
   const t = _normalizarTextoTrava(textoIA);
   if (!t) return false;
   const padroes = [
     /https?:\/\//, /\bwww\./, /\bwa\.me\b/, /\bbit\.ly\b/,           // qualquer URL
     /mercadopago|mpago\.|pag\.ae|pagseguro|picpay|infinitepay|stripe/,
-    /\blink\s+de\s+pagamento\b/,
-    /\bpix\b/, /\bboleto(s)?\b/, /\bc(o|ó)digo\s+de\s+barras\b/,
+    /\blink\s+(de\s+|do\s+|pra\s+|para\s+)?pagamento\b/,
     /\bchave\s+(pix|de\s+pagamento)\b/,
+    /\bpix\s+copia\s+e\s+cola\b/,
+    /\b(segue|mandei|enviei|te\s+mando|vou\s+(te\s+)?(mandar|enviar|gerar|passar))\s+(o\s+|a\s+|um\s+|uma\s+)?(pix|boleto|link|cobranca|fatura)\b/,
+    /\bc(o|ó)digo\s+de\s+barras\b/,
     /\bpedido\s*(n[ºo°]|#|numero|nº)\s*\d+/,                          // "pedido nº 1234"
-    /\b(seu\s+)?pedido\s+(foi\s+)?(confirmad|registrad|gerad|criad)/, // pedido confirmado/gerado
-    /\bpagamento\s+(foi\s+)?(confirmad|aprovad|recebid|identificad)/  // pagamento confirmado
+    /\b(seu\s+)?pedido\s+(foi\s+)?(confirmad|registrad|gerad|criad|aprovad)/,
+    /\bpagamento\s+(foi\s+)?(confirmad|aprovad|recebid|identificad)/
   ];
   return padroes.some(rx => rx.test(t));
 }
@@ -6250,6 +6266,7 @@ async function iaResponderAutomatico(cliente, lead, textoLead) {
       [lead.funil_coluna_id]
     ).catch(() => ({ rows: [] }));
     if (!colR.rows.length || !colR.rows[0].ia_ativa) return false;
+    console.log(`[ia-auto] lead ${lead.id}: coluna com IA ativa — avaliando resposta (texto: "${String(textoLead || '').slice(0, 80)}")`);
 
     // TRAVA 1 (pré-filtro): pedido, pagamento, pix, boleto, cancelamento etc.
     // são assuntos exclusivos de humano — nem chama a IA.
