@@ -919,20 +919,23 @@ async function iniciarAppVendedor() {
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
-                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:70px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
                   onpaste="painelColarArea(event)"
                   ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;justify-content:center">
-                  <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
-                    📎
-                    <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
-                  </label>
-                  <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
-                    style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
-                  
-                </div>
+                <!-- Linha única do compositor: anexo, áudio e etiqueta da coluna à esquerda;
+                     enviar, recursos, resposta rápida e IA à direita. Antes eram duas linhas —
+                     fundidas para a área de mensagens ganhar mais altura. O badge da etiqueta
+                     é injetado via JS dentro do grupo à esquerda (âncora: pai do btn-gravar-audio). -->
                 <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+                  <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
+                    <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0">
+                      📎
+                      <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                    </label>
+                    <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
+                      style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0">🎙️</button>
+                  </div>
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
@@ -7490,20 +7493,23 @@ async function iniciarPaginaFunilAtendimento() {
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
-                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:90px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
+                <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:70px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
                   onpaste="painelColarArea(event)"
                   ondragover="painelArquivoDragOver(event)" ondragleave="painelArquivoDragLeave(event)" ondrop="painelArquivoDrop(event)"></textarea>
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;justify-content:center">
-                  <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px">
-                    📎
-                    <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
-                  </label>
-                  <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
-                    style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text)">🎙️</button>
-                  
-                </div>
+                <!-- Linha única do compositor: anexo, áudio e etiqueta da coluna à esquerda;
+                     enviar, recursos, resposta rápida e IA à direita. Antes eram duas linhas —
+                     fundidas para a área de mensagens ganhar mais altura. O badge da etiqueta
+                     é injetado via JS dentro do grupo à esquerda (âncora: pai do btn-gravar-audio). -->
                 <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
+                  <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
+                    <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0">
+                      📎
+                      <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                    </label>
+                    <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
+                      style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0">🎙️</button>
+                  </div>
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
