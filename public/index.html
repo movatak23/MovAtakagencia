@@ -2666,6 +2666,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
     ]);
     const lead = histData.lead || {};
     document.getElementById('painel-lead-nome').textContent = lead.nome || nomeAbrev || 'Lead';
+    atualizarBadgePediuAtendente(lead);
     document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
     mostrarSetorLeadPainel(lead);
     renderConversaPainel(convData);
@@ -7845,6 +7846,7 @@ function filtrosInboxDefs() {
   return [
     { id: 'todos', label: 'Todos' },
     { id: 'nao_lidos', label: 'Não lidos' },
+    { id: 'pediu_atendente', label: '🙋 Atendente' },
     { id: 'arquivados', label: 'Arquivados' },
     { id: 'nao_atribuidos', label: 'Não atribuídos' }
   ];
@@ -7855,6 +7857,7 @@ function contagemInbox(tipo) {
   if (tipo === 'todos') return base.filter(l => !l.arquivado).length;
   if (tipo === 'arquivados') return base.filter(l => l.arquivado).length;
   if (tipo === 'nao_lidos') return base.filter(l => !l.arquivado && l.nao_lida).length;
+  if (tipo === 'pediu_atendente') return base.filter(l => !l.arquivado && l.pediu_atendente).length;
   if (tipo === 'nao_atribuidos') return base.filter(l => !l.arquivado && !l.vendedor_id).length;
   return 0;
 }
@@ -7895,6 +7898,7 @@ function leadsFiltradosInbox() {
   } else {
     lista = lista.filter(l => !l.arquivado);
     if (tipo === 'nao_lidos') lista = lista.filter(l => l.nao_lida);
+    if (tipo === 'pediu_atendente') lista = lista.filter(l => l.pediu_atendente);
     if (tipo === 'nao_atribuidos') lista = lista.filter(l => !l.vendedor_id);
   }
   if (termo) {
@@ -8038,12 +8042,31 @@ function renderInboxFunil() {
         <div class="inbox-tags">
           <span class="tag-whatsapp">WhatsApp</span>
           ${col ? `<span class="tag-etapa" style="color:${col.cor || '#9aa3b2'};border-color:${col.cor || '#6b7280'}66">${escapeHtml(col.nome)}</span>` : ''}
+          ${lead.pediu_atendente ? '<span class="tag-pediu-atendente">🙋 Pediu atendente</span>' : ''}
           ${lead.arquivado ? '<span class="tag-arquivado">Arquivado</span>' : ''}
         </div>
       </div>
       ${naoLida ? '<span class="inbox-dot" title="Não lida"></span>' : ''}
     </div>`;
   }).join('');
+}
+
+// Badge "Pediu atendente" ao lado do nome no cabeçalho da conversa aberta.
+// Criado/removido dinamicamente porque o HTML tem dois blocos de painel
+// duplicados — usamos o elemento do nome como âncora do bloco renderizado.
+function atualizarBadgePediuAtendente(lead) {
+  const nomeEl = document.getElementById('painel-lead-nome');
+  if (!nomeEl || !nomeEl.parentElement) return;
+  let b = nomeEl.parentElement.querySelector('.badge-pediu-atendente');
+  const pediu = !!(lead && lead.pediu_atendente);
+  if (!pediu) { if (b) b.remove(); return; }
+  if (!b) {
+    b = document.createElement('span');
+    b.className = 'badge-pediu-atendente';
+    b.title = 'Este lead pediu para falar com um atendente humano';
+    nomeEl.insertAdjacentElement('afterend', b);
+  }
+  b.textContent = '🙋 Pediu atendente';
 }
 
 function marcarItemInboxAtivo(leadId) {
@@ -9287,6 +9310,9 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .tag-whatsapp{font-size:9px;color:var(--green);border:1px solid rgba(0,208,132,.35);border-radius:8px;padding:1px 6px}
 .tag-etapa{font-size:9px;border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
 .tag-arquivado{font-size:9px;color:var(--text3);border:1px solid var(--border2);border-radius:8px;padding:1px 6px}
+.tag-pediu-atendente{font-size:9px;font-weight:700;color:#ff5c5c;border:1px solid rgba(255,92,92,.55);background:rgba(255,92,92,.12);border-radius:8px;padding:1px 6px;animation:pulsoAtendente 1.6s ease-in-out infinite}
+.badge-pediu-atendente{font-size:10px;font-weight:700;color:#ff5c5c;border:1px solid rgba(255,92,92,.55);background:rgba(255,92,92,.12);border-radius:8px;padding:2px 8px;white-space:nowrap;flex-shrink:0;margin-left:6px;animation:pulsoAtendente 1.6s ease-in-out infinite}
+@keyframes pulsoAtendente{0%,100%{opacity:1}50%{opacity:.55}}
 .inbox-dot{position:absolute;top:12px;right:10px;width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 2px var(--bg3)}
 
 .funil-kanban-col{overflow:hidden;display:flex;flex-direction:column;min-width:0;min-height:0}
