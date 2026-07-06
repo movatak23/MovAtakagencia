@@ -3243,6 +3243,15 @@ async function pararAtendimentoLead(clienteId, leadId, origem, comando) {
     `UPDATE movatak_leads SET automacao_pausada = true, atualizado_em = NOW() WHERE id = $1`,
     [leadId]
   );
+  // Se quem pediu foi o LEAD (comando dele ou transferência automática por
+  // respostas inválidas), sinaliza pro time: chip "Pediu atendente" no inbox
+  // e marca a conversa como não lida pra entrar no contador da aba.
+  if (origem !== 'vendedor') {
+    await query(
+      `UPDATE movatak_leads SET pediu_atendente = true, pediu_atendente_em = NOW(), nao_lida = true WHERE id = $1`,
+      [leadId]
+    ).catch(() => null);
+  }
   await query(
     `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
     [leadId]
@@ -3260,14 +3269,36 @@ async function pararAtendimentoLead(clienteId, leadId, origem, comando) {
 // atendimento (ex: #atendente). Avisa que em breve ele será atendido por um humano.
 // O texto é configurável no painel (Auto Atendimento); se vazio, usa o padrão.
 // Suporta o placeholder {nome} (primeiro nome do lead), igual às demais mensagens.
-const MSG_PARAR_PADRAO = 'Perfeito{nome}! Já registrei seu pedido. 😊 Em breve um dos nossos atendentes vai falar com você por aqui.';
+// Limpa o sinal de "pediu atendente" assim que um humano assume a conversa
+// (mensagem manual pelo painel, kanban, vendedor ou WhatsApp Web), ou quando a
+// automação é reativada. Condicional em pediu_atendente=true pra não gerar
+// writes desnecessários em todo envio.
+async function limparPedidoAtendente(leadId) {
+  if (!leadId) return;
+  await query(
+    `UPDATE movatak_leads SET pediu_atendente = false WHERE id = $1 AND pediu_atendente = true`,
+    [leadId]
+  ).catch(() => null);
+}
+
+const MSG_PARAR_PADRAO = 'Perfeito{nome}! Já registrei seu pedido. 😊 Em breve um dos nossos atendentes vai falar com você por aqui.';// Dedup em memória: evita mandar várias confirmações se o lead repetir o
+// comando em sequência (ex: digitou 3x seguidas achando que não foi).
+const _ultimaConfirmacaoAtendente = new Map();
 async function enviarConfirmacaoAtendente(cliente, lead) {
   if (!lead || !lead.telefone) return;
+  const agora = Date.now();
+  const ultima = _ultimaConfirmacaoAtendente.get(lead.id) || 0;
+  if (agora - ultima < 2 * 60 * 1000) {
+    console.log(`[zapi][msg-atendente] dedup — confirmação já enviada há menos de 2min pro lead ${lead.id}`);
+    return;
+  }
+  _ultimaConfirmacaoAtendente.set(lead.id, agora);
   const primeiroNome = lead.nome ? (' ' + String(lead.nome).trim().split(' ')[0]) : '';
   const base = String(cliente.questionario_msg_parar || '').trim() || MSG_PARAR_PADRAO;
   const texto = base.replace(/\{nome\}/gi, primeiroNome);
   // enviarMsgQuestionario já trava envio pra grupos/canais e registra a conversa.
   await enviarMsgQuestionario(cliente, lead.telefone, texto, null);
+  console.log(`[zapi][msg-atendente] confirmação enviada pro lead ${lead.id}`);
 }
 
 function textoBateComandoAtivar(texto, comandoAtivar) {
@@ -3301,7 +3332,7 @@ async function moverLeadPorComandoColuna(cliente, lead, texto) {
 // qualquer estado de questionário anterior e dispara o questionário novamente.
 async function reiniciarQuestionarioLead(cliente, lead, comando) {
   await query(
-    `UPDATE movatak_leads SET automacao_pausada = false, etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
+    `UPDATE movatak_leads SET automacao_pausada = false, pediu_atendente = false, etapa = 'followup', atualizado_em = NOW() WHERE id = $1`,
     [lead.id]
   );
   await query(
@@ -3944,6 +3975,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         if (!jaRegistrada) {
           const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
           await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web').catch(() => null);
+          // Mensagem humana (não é comando interno) → o atendente assumiu; limpa o sinal.
+          if (!ehComandoInterno) await limparPedidoAtendente(leadFromMe.id);
         } else {
           logDebug('[zapi][fromMe] mensagem já registrada pelo painel, ignorando duplicata');
         }
@@ -4122,22 +4155,28 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       await dispararAusenciaSeAplicavel(cliente, lead, telefone);
     }
 
+    // ===== COMANDO: PARAR ATENDIMENTO (cliente pede atendente humano) =====
+    // Funciona em qualquer ponto, inclusive durante o questionário.
+    // IMPORTANTE: roda ANTES da checagem de automação pausada — mesmo com o lead
+    // já pausado (ex: usou o comando antes), repetir o comando deve responder a
+    // confirmação de novo, em vez de cair no return silencioso da pausa.
+    if (lead && textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
+      console.log(`[zapi][comando-parar] lead ${lead.id} usou o comando (ja_pausado=${!!lead.automacao_pausada})`);
+      if (!lead.automacao_pausada) {
+        await pararAtendimentoLead(cliente.id, lead.id, 'cliente', texto);
+      }
+      // Confirmação automática pro lead: avisa que um atendente vai falar com ele.
+      // Texto configurável no painel (questionario_msg_parar); se vazio, usa o padrão.
+      // Enviada com a automação já pausada — o webhook fromMe desta mensagem não
+      // dispara nada. Tem dedup interno de 2 min pra comando repetido não spammar.
+      await enviarConfirmacaoAtendente(cliente, lead).catch(e => console.error('[zapi][msg-atendente]', e.message));
+      return;
+    }
+
     // Se automação pausada manualmente: apenas grava a mensagem, ignora toda lógica de automação.
     // Retomar: vendedor usa o comando de followup ou convertido para reativar.
     if (lead && lead.automacao_pausada) {
       logDebug('[zapi][lead] automacao pausada — mensagem gravada, automacao ignorada');
-      return;
-    }
-
-    // ===== COMANDO: PARAR ATENDIMENTO (cliente pede atendente humano) =====
-    // Funciona em qualquer ponto, inclusive durante o questionário.
-    if (lead && textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
-      await pararAtendimentoLead(cliente.id, lead.id, 'cliente', texto);
-      // Confirmação automática pro lead: avisa que um atendente vai falar com ele.
-      // Texto configurável no painel (questionario_msg_parar); se vazio, usa o padrão.
-      // Enviada DEPOIS de pausar a automação — o webhook fromMe desta mensagem não
-      // dispara nada, pois o lead já está com automacao_pausada = true.
-      await enviarConfirmacaoAtendente(cliente, lead).catch(e => console.error('[zapi][msg-atendente]', e.message));
       return;
     }
 
@@ -4221,7 +4260,7 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         }
         await query(
           `UPDATE movatak_leads
-             SET etapa = 'followup', nome = COALESCE($1, nome), automacao_pausada = false, atualizado_em = NOW()
+             SET etapa = 'followup', nome = COALESCE($1, nome), automacao_pausada = false, pediu_atendente = false, atualizado_em = NOW()
            WHERE id = $2`,
           [body.senderName || null, lead.id]
         );
@@ -4703,6 +4742,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
               COALESCE(l.nao_lida,false) AS nao_lida,
               COALESCE(l.arquivado,false) AS arquivado,
+              COALESCE(l.pediu_atendente,false) AS pediu_atendente, l.pediu_atendente_em,
               s.nome AS setor_nome, s.cor AS setor_cor,
               l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
               v.nome AS vendedor_nome,
@@ -4894,6 +4934,7 @@ app.post('/movatak/vendedor/leads/:id/mensagem-kanban', authVendedor, async (req
     }
     const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId).catch(() => null);
     await registrarEventoLead(lead.id, lead.cliente_id, 'mensagem_manual_kanban', 'Mensagem enviada pelo vendedor no kanban', { vendedor_id: req.vendedor.id, texto: (texto||'').slice(0,100), midia: !!midia_url });
+    await limparPedidoAtendente(lead.id);
     res.json({ ok: true, conversaId });
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });
@@ -5534,7 +5575,7 @@ app.post('/movatak/vendedor/leads/:id/iniciar-autoatendimento', authVendedor, as
     if (!templateId) return res.status(400).json({ error: 'template_id é obrigatório.' });
     const tpl = await query('SELECT id FROM movatak_questionario_templates WHERE id=$1 AND cliente_id=$2 AND ativo=true', [templateId, req.vendedor.cliente_id]);
     if (!tpl.rows.length) return res.status(404).json({ error: 'Template não encontrado para este cliente.' });
-    await query('UPDATE movatak_leads SET automacao_pausada=false WHERE id=$1', [leadPerm.id]).catch(() => null);
+    await query('UPDATE movatak_leads SET automacao_pausada=false, pediu_atendente=false WHERE id=$1', [leadPerm.id]).catch(() => null);
     const leadRow = await query('SELECT * FROM movatak_leads WHERE id=$1 AND cliente_id=$2', [leadPerm.id, req.vendedor.cliente_id]);
     const cliRow = await query('SELECT * FROM movatak_clientes WHERE id=$1', [req.vendedor.cliente_id]);
     const lead = leadRow.rows[0];
@@ -6956,6 +6997,10 @@ async function garantirEstruturaQuestionario() {
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS pos_followup_acao TEXT DEFAULT 'nenhum'`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS pos_followup_coluna_id INTEGER`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS pos_followup_finalizado BOOLEAN DEFAULT false`).catch(() => null);
+  // Sinalização visível de que o LEAD pediu pra falar com um atendente humano
+  // (comando de parar ou transferência automática por respostas inválidas).
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS pediu_atendente BOOLEAN DEFAULT false`).catch(() => null);
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS pediu_atendente_em TIMESTAMPTZ`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 
@@ -8724,7 +8769,7 @@ app.post('/movatak/admin/leads/:id/iniciar-autoatendimento', ...exigeLead, async
     if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
     // Despausa a automação deste lead: se estiver pausado, o webhook ignora as
     // respostas dele e o autoatendimento trava na primeira pergunta que espera resposta.
-    await query('UPDATE movatak_leads SET automacao_pausada = false WHERE id = $1', [req.params.id]).catch(() => null);
+    await query('UPDATE movatak_leads SET automacao_pausada = false, pediu_atendente = false WHERE id = $1', [req.params.id]).catch(() => null);
     // Separa lead e cliente do JOIN (ambos têm colunas; reconsultamos pra ter objetos limpos)
     const leadRow = await query('SELECT * FROM movatak_leads WHERE id = $1', [req.params.id]);
     const lead = leadRow.rows[0];
@@ -8768,6 +8813,7 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', ...exigeLead, async (req, r
     }
     const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
+    await limparPedidoAtendente(row.id); // atendente respondeu → apaga o chip "pediu atendente"
     // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
     if (texto) {
       query('UPDATE movatak_mensagens_rapidas SET vezes_usado = COALESCE(vezes_usado,0)+1 WHERE cliente_id=$1 AND texto=$2', [row.cliente_id, texto]).catch(() => null);
@@ -8799,6 +8845,7 @@ app.post('/movatak/admin/leads/:id/mensagem-kanban', ...exigeLead, async (req, r
 
     await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual_kanban', 'Mensagem enviada manualmente pelo Kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
+    await limparPedidoAtendente(row.id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -9543,6 +9590,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
                   l.nao_lida, l.arquivado, l.foto_url,
+                  COALESCE(l.pediu_atendente,false) AS pediu_atendente, l.pediu_atendente_em,
                   s.nome AS setor_nome, s.cor AS setor_cor,
                   l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
                   v.nome AS vendedor_nome,
@@ -10004,6 +10052,7 @@ app.post('/movatak/admin/leads/:id/mensagem-kanban', ...exigeLead, async (req, r
       'Mensagem manual enviada pelo Funil de Atendimento',
       { origem: 'funil_kanban', vendedor_id: lead.vendedor_id || null, tamanho: mensagem.length }
     );
+    await limparPedidoAtendente(lead.id);
     res.json({ ok: true });
   } catch (e) {
     console.error('[funil][mensagem-kanban]', e.message);
