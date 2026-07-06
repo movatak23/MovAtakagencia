@@ -4288,7 +4288,8 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
       }
 
       // IA automática: se a coluna do lead tem IA ativa, a IA responde sozinha.
-      await iaResponderAutomatico(cliente, lead);
+      // O texto do lead é passado para as travas transacionais (pré-filtro).
+      await iaResponderAutomatico(cliente, lead, texto);
       return;
     }
 
@@ -6098,6 +6099,15 @@ async function gerarRespostaIALead(leadId) {
     `- Nesse caso, responda EXATAMENTE com o marcador: [TRANSFERIR_HUMANO]\n` +
     `- Use o marcador também se o cliente pedir para falar com uma pessoa, demonstrar irritação, ou se a conversa fugir do que você domina.\n` +
     `- Não escreva mais nada junto do marcador — só ele.\n\n` +
+    `ASSUNTOS PROIBIDOS — TRANSFIRA SEMPRE (regra ABSOLUTA, acima de qualquer outra):\n` +
+    `Você NÃO tem acesso a sistema de pedidos, pagamentos ou cadastro. Você NUNCA, em hipótese alguma, pode:\n` +
+    `- Criar, registrar, confirmar ou "fechar" um pedido ou compra, nem informar número, status ou conteúdo de pedido.\n` +
+    `- Gerar, enviar ou prometer link de pagamento, chave PIX, boleto, código de barras ou qualquer forma de cobrança.\n` +
+    `- Confirmar que um pagamento foi recebido, aprovado ou identificado, ou analisar comprovantes.\n` +
+    `- Tratar de cancelamento, reembolso, estorno, nota fiscal, fatura ou alteração de dados cadastrais/financeiros.\n` +
+    `- Enviar QUALQUER link ou URL, mesmo que pareça existir no material.\n` +
+    `Se o cliente pedir QUALQUER item acima, responda EXATAMENTE com o marcador [TRANSFERIR_HUMANO] — nada mais. ` +
+    `Nunca simule, invente ou "faça de conta" que executou essas ações, nem como exemplo.\n\n` +
     `Não invente preços, prazos ou condições fora do material. Respeite sempre o que a empresa disse que NUNCA deve ser feito. ` +
     `Responda APENAS com o texto da mensagem (ou só o marcador), sem aspas, sem rótulos, sem explicação.` +
     baseConhecimento +
@@ -6165,7 +6175,74 @@ async function enviarComPausasHumanas(cliente, telefone, leadId, textoCompleto) 
   }
 }
 
-async function iaResponderAutomatico(cliente, lead) {
+// ───────────────────────────────────────────────────────────────
+// TRAVAS DA IA — assuntos transacionais são SEMPRE de humano.
+// A IA de atendimento não pode criar pedidos, gerar links de pagamento,
+// passar chave pix, confirmar pagamentos etc. Duas barreiras de código
+// (além da instrução no prompt):
+//   1. PRÉ-FILTRO: se a mensagem do lead é sobre pedido/pagamento,
+//      nem chama a IA — transfere direto pro humano.
+//   2. PÓS-FILTRO: se mesmo assim a resposta gerada contiver link,
+//      pix, boleto ou confirmação de pedido/pagamento, o envio é
+//      BLOQUEADO e o lead é transferido.
+// ───────────────────────────────────────────────────────────────
+function _normalizarTextoTrava(t) {
+  return String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
+// A pergunta do lead exige atendimento humano? (assuntos transacionais)
+function assuntoExigeHumano(textoLead) {
+  const t = _normalizarTextoTrava(textoLead);
+  if (!t) return false;
+  const padroes = [
+    /\bpedido(s)?\b/,                          // fazer/confirmar/status/nº do pedido
+    /\b(fechar|finalizar|confirmar)\s+(a\s+)?compra\b/,
+    /\bpag(ar|amento|o)\b/,                    // pagar, pagamento, "como pago"
+    /\bpix\b/,
+    /\bboleto(s)?\b/,
+    /\blink\s+de\s+pagamento\b/,
+    /\bcart(a|ã)o\s+(de\s+)?(cr(e|é)dito|d(e|é)bito)\b/,
+    /\bcomprovante(s)?\b/,
+    /\bnota\s+fiscal\b/, /\bnf-?e?\b/,
+    /\breembolso(s)?\b/, /\bestorno(s)?\b/,
+    /\bcancelar\b/, /\bcancelamento\b/,
+    /\brastre(io|amento|ar)\b/,
+    /\bfatura(s)?\b/, /\bcobran(c|ç)a(s)?\b/
+  ];
+  return padroes.some(rx => rx.test(t));
+}
+
+// A resposta GERADA pela IA violou as travas? (link, pix, boleto, pedido/pagamento "confirmado")
+function respostaIAViolaTravas(textoIA) {
+  const t = _normalizarTextoTrava(textoIA);
+  if (!t) return false;
+  const padroes = [
+    /https?:\/\//, /\bwww\./, /\bwa\.me\b/, /\bbit\.ly\b/,           // qualquer URL
+    /mercadopago|mpago\.|pag\.ae|pagseguro|picpay|infinitepay|stripe/,
+    /\blink\s+de\s+pagamento\b/,
+    /\bpix\b/, /\bboleto(s)?\b/, /\bc(o|ó)digo\s+de\s+barras\b/,
+    /\bchave\s+(pix|de\s+pagamento)\b/,
+    /\bpedido\s*(n[ºo°]|#|numero|nº)\s*\d+/,                          // "pedido nº 1234"
+    /\b(seu\s+)?pedido\s+(foi\s+)?(confirmad|registrad|gerad|criad)/, // pedido confirmado/gerado
+    /\bpagamento\s+(foi\s+)?(confirmad|aprovad|recebid|identificad)/  // pagamento confirmado
+  ];
+  return padroes.some(rx => rx.test(t));
+}
+
+// Handoff unificado da IA → humano: manda a mensagem de transição pro lead,
+// para a automação (followups + questionário via pararAtendimentoLead, que
+// também acende o chip "Pediu atendente" e marca como não lida) e registra
+// o motivo no histórico do lead.
+async function transferirIAParaHumano(cliente, lead, motivo, msgTransicao) {
+  const msg = msgTransicao || 'Deixa eu confirmar isso certinho pra você com um dos meus colegas aqui da equipe. Já te retorno com a resposta, tá? 🙂';
+  await enviarMsgQuestionario(cliente, lead.telefone, msg, null);
+  await registrarConversa(lead.id, cliente.id, 'saida', msg, null, null, null, null, 'ia').catch(() => null);
+  await pararAtendimentoLead(cliente.id, lead.id, 'ia', motivo);
+  await registrarEventoLead(lead.id, cliente.id, 'ia_transferiu_humano', 'IA transferiu o lead para um atendente humano', { motivo }).catch(() => null);
+  console.log(`[ia-auto] lead ${lead.id}: transferido para humano (${motivo})`);
+}
+
+async function iaResponderAutomatico(cliente, lead, textoLead) {
   try {
     if (!lead || !lead.funil_coluna_id) return false;
     const colR = await query(
@@ -6174,17 +6251,19 @@ async function iaResponderAutomatico(cliente, lead) {
     ).catch(() => ({ rows: [] }));
     if (!colR.rows.length || !colR.rows[0].ia_ativa) return false;
 
+    // TRAVA 1 (pré-filtro): pedido, pagamento, pix, boleto, cancelamento etc.
+    // são assuntos exclusivos de humano — nem chama a IA.
+    if (assuntoExigeHumano(textoLead)) {
+      await transferirIAParaHumano(cliente, lead, 'assunto_transacional',
+        'Boa! Esse tipo de solicitação quem cuida direto é a nossa equipe, pra garantir tudo certinho pra você. 😊 Já acionei um atendente aqui — em instantes ele te responde.');
+      return true;
+    }
+
     const gerada = await gerarRespostaIALead(lead.id);
 
     // Handoff: a IA não soube responder → transfere para um humano.
     if (gerada.transferir) {
-      const msgTransfer = 'Deixa eu confirmar isso certinho pra você com um dos meus colegas aqui da equipe. Já te retorno com a resposta, tá? 🙂';
-      await enviarMsgQuestionario(cliente, lead.telefone, msgTransfer, null);
-      await registrarConversa(lead.id, cliente.id, 'saida', msgTransfer, null, null, null, null, 'ia').catch(() => null);
-      // Sinaliza para a equipe e pausa a IA neste lead, pra não continuar respondendo sozinha.
-      await query('UPDATE movatak_leads SET nao_lida = true, automacao_pausada = true, atualizado_em = NOW() WHERE id = $1', [lead.id]).catch(() => null);
-      await registrarEventoLead(lead.id, cliente.id, 'ia_transferiu_humano', 'IA não soube responder e transferiu para um atendente humano', {}).catch(() => null);
-      console.log(`[ia-auto] lead ${lead.id}: transferido para humano`);
+      await transferirIAParaHumano(cliente, lead, 'ia_nao_soube_responder', null);
       return true;
     }
 
@@ -6192,6 +6271,17 @@ async function iaResponderAutomatico(cliente, lead) {
       console.log(`[ia-auto] lead ${lead.id}: sem resposta (${gerada.erro || 'vazia'})`);
       return false;
     }
+
+    // TRAVA 2 (pós-filtro): mesmo com o prompt travado, se a resposta gerada
+    // contiver link, pix, boleto ou "pedido/pagamento confirmado", o envio é
+    // BLOQUEADO — a resposta nunca chega no lead — e ele vai pro humano.
+    if (respostaIAViolaTravas(gerada.sugestao)) {
+      console.warn(`[ia-auto][TRAVA] lead ${lead.id}: resposta da IA bloqueada por conter conteúdo transacional. Preview: ${gerada.sugestao.slice(0, 160)}`);
+      await registrarEventoLead(lead.id, cliente.id, 'ia_resposta_bloqueada', 'Resposta da IA bloqueada pela trava de segurança (conteúdo transacional) — não foi enviada ao lead', { preview: gerada.sugestao.slice(0, 300) }).catch(() => null);
+      await transferirIAParaHumano(cliente, lead, 'resposta_bloqueada_trava', null);
+      return true;
+    }
+
     await enviarComPausasHumanas(cliente, lead.telefone, lead.id, gerada.sugestao);
     await registrarEventoLead(lead.id, cliente.id, 'ia_resposta_automatica', 'IA respondeu automaticamente (coluna com IA ativa)', { preview: gerada.sugestao.slice(0, 160) }).catch(() => null);
     console.log(`[ia-auto] lead ${lead.id}: IA respondeu automaticamente`);
