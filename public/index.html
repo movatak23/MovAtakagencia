@@ -2611,29 +2611,46 @@ function mostrarSetorLeadPainel(lead) {
   // O HTML tem dois blocos de painel duplicados; o navegador só mantém um no DOM.
   // Por isso, em vez de depender de IDs estáticos, localizamos âncoras reais e
   // injetamos o badge dinamicamente no bloco que de fato está renderizado.
-  const foneEl = document.getElementById('painel-lead-fone');
-  const painel = foneEl ? foneEl.closest('#funil-chat-conteudo') : null;
+  const painel = (document.getElementById('painel-lead-fone') || {}).closest
+    ? document.getElementById('painel-lead-fone').closest('#funil-chat-conteudo') : null;
   if (!painel) return;
 
-  // Badge no compositor (onde ficava a dica "arraste um arquivo").
-  let badgeComp = painel.querySelector('.painel-setor-badge-comp');
-  const areaAnexo = painel.querySelector('#btn-gravar-audio')?.parentElement;
-  if (!badgeComp && areaAnexo) {
-    badgeComp = document.createElement('span');
-    badgeComp.className = 'painel-setor-badge-comp';
-    badgeComp.style.cssText = 'font-size:11px;font-weight:600;padding:4px 10px;border-radius:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
-    areaAnexo.appendChild(badgeComp);
-  }
+  // Remove o badge antigo do compositor (ficava espremido na linha dos ícones).
+  painel.querySelectorAll('.painel-setor-badge-comp').forEach(e => e.remove());
 
-  const bg = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
-  if (badgeComp) {
-    if (!nomeCol) { badgeComp.style.display = 'none'; return; }
-    badgeComp.textContent = '📍 ' + nomeCol;
-    badgeComp.style.color = cor;
-    badgeComp.style.background = bg;
-    badgeComp.style.border = '1px solid ' + cor;
-    badgeComp.style.display = 'inline-block';
+  // Badge agora fica no CABEÇALHO da conversa, na linha de badges sob o telefone —
+  // sempre visível, sem disputar espaço com os botões do compositor.
+  const linha = linhaBadgesHeaderPainel();
+  if (!linha) return;
+  let badgeHdr = linha.querySelector('.painel-setor-badge-hdr');
+  if (!badgeHdr) {
+    badgeHdr = document.createElement('span');
+    badgeHdr.className = 'painel-setor-badge-hdr';
+    badgeHdr.style.cssText = 'font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;white-space:nowrap;max-width:180px;overflow:hidden;text-overflow:ellipsis';
+    linha.insertBefore(badgeHdr, linha.firstChild); // etiqueta da coluna sempre primeiro
   }
+  if (!nomeCol) { badgeHdr.style.display = 'none'; return; }
+  badgeHdr.textContent = '📍 ' + nomeCol;
+  badgeHdr.title = 'Etapa do lead no kanban: ' + nomeCol;
+  badgeHdr.style.color = cor;
+  badgeHdr.style.background = 'color-mix(in srgb, ' + cor + ' 15%, transparent)';
+  badgeHdr.style.border = '1px solid ' + cor;
+  badgeHdr.style.display = 'inline-block';
+}
+
+// Linha de badges do cabeçalho da conversa (etiqueta da coluna + pediu atendente).
+// Criada dinamicamente logo abaixo do telefone do lead, no bloco renderizado.
+function linhaBadgesHeaderPainel() {
+  const foneEl = document.getElementById('painel-lead-fone');
+  if (!foneEl || !foneEl.parentElement) return null;
+  let linha = foneEl.parentElement.querySelector('.painel-header-badges');
+  if (!linha) {
+    linha = document.createElement('div');
+    linha.className = 'painel-header-badges';
+    linha.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:3px;min-width:0';
+    foneEl.insertAdjacentElement('afterend', linha);
+  }
+  return linha;
 }
 
 async function abrirPainelLead(leadId, nomeAbrev) {
@@ -8055,16 +8072,17 @@ function renderInboxFunil() {
 // Criado/removido dinamicamente porque o HTML tem dois blocos de painel
 // duplicados — usamos o elemento do nome como âncora do bloco renderizado.
 function atualizarBadgePediuAtendente(lead) {
-  const nomeEl = document.getElementById('painel-lead-nome');
-  if (!nomeEl || !nomeEl.parentElement) return;
-  let b = nomeEl.parentElement.querySelector('.badge-pediu-atendente');
+  const linha = linhaBadgesHeaderPainel();
+  if (!linha) return;
+  let b = linha.querySelector('.badge-pediu-atendente');
   const pediu = !!(lead && lead.pediu_atendente);
   if (!pediu) { if (b) b.remove(); return; }
   if (!b) {
     b = document.createElement('span');
     b.className = 'badge-pediu-atendente';
     b.title = 'Este lead pediu para falar com um atendente humano';
-    nomeEl.insertAdjacentElement('afterend', b);
+    b.style.marginLeft = '0'; // o espaçamento vem do gap da linha de badges
+    linha.appendChild(b);
   }
   b.textContent = '🙋 Pediu atendente';
 }
