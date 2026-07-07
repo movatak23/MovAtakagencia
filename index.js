@@ -4177,9 +4177,11 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
     // confirmação de novo, em vez de cair no return silencioso da pausa.
     if (lead && textoBateComandoParar(texto, cliente.questionario_comando_parar)) {
       console.log(`[zapi][comando-parar] lead ${lead.id} usou o comando (ja_pausado=${!!lead.automacao_pausada})`);
-      if (!lead.automacao_pausada) {
-        await pararAtendimentoLead(cliente.id, lead.id, 'cliente', texto);
-      }
+      // Roda SEMPRE, mesmo com o lead já pausado: é aqui que o pediu_atendente
+      // é ligado, a conversa vira não lida e o socket avisa os painéis (chip 🙋).
+      // A função é idempotente — pausar de novo não tem efeito colateral, e o
+      // evento repetido no histórico é útil ("lead cobrou atendente de novo").
+      await pararAtendimentoLead(cliente.id, lead.id, 'cliente', texto);
       // Confirmação automática pro lead: avisa que um atendente vai falar com ele.
       // Texto configurável no painel (questionario_msg_parar); se vazio, usa o padrão.
       // Enviada com a automação já pausada — o webhook fromMe desta mensagem não
