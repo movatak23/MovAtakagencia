@@ -8387,7 +8387,12 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   if (direcao === 'entrada') {
     query(`UPDATE movatak_leads SET nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
   } else if (direcao === 'saida') {
-    query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1`, [leadId]).catch(() => null);
+    // Não marca como lida se o lead PEDIU atendente: enquanto ele aguarda um humano,
+    // a confirmação automática (e qualquer envio do bot) não pode tirar o contato da
+    // aba de não-lidas. Some só quando um humano assume (abre no painel = read, ou
+    // responde = limparPedidoAtendente). Leads normais (pediu_atendente=false) seguem
+    // igual: saída limpa o não-lido.
+    query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1 AND COALESCE(pediu_atendente, false) = false`, [leadId]).catch(() => null);
   }
 
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
