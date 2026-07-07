@@ -7862,6 +7862,21 @@ function toggleConfigColuna(colId, ev) {
   if (el) el.classList.toggle('config-aberta', s.has(id));
 }
 
+// Abre/fecha a linha de "criar etapa" (recolhida por padrao — acao rara).
+// Alterna em TODAS as toolbars porque o HTML tem blocos de layout duplicados.
+function toggleNovaEtapa(btn) {
+  const abrir = !document.querySelector('.funil-toolbar.aberta');
+  document.querySelectorAll('.funil-toolbar').forEach(t => t.classList.toggle('aberta', abrir));
+  document.querySelectorAll('.btn-nova-etapa-toggle').forEach(b => {
+    b.style.color = abrir ? 'var(--accent)' : 'var(--text2)';
+    b.style.borderColor = abrir ? 'var(--accent)' : 'var(--border2)';
+  });
+  if (abrir) {
+    const inp = document.getElementById('funil-nova-coluna');
+    if (inp) inp.focus();
+  }
+}
+
 function renderBarraSetores() {
   let barra = document.getElementById('funil-setores-barra');
   if (!barra) {
@@ -7892,8 +7907,12 @@ function renderBarraSetores() {
     '<span style="font-size:12px;color:var(--text2);margin-right:2px">Setor:</span>' +
     btn(null, 'Todos', null, funilState.totalGeral, funilState.totalNaoLidas) +
     setores.map(s => btn(s.id, s.nome, s.cor, s.leads_count, s.nao_lidas)).join('') +
+    `<button class="btn-nova-etapa-toggle" onclick="toggleNovaEtapa(this)" title="Criar nova etapa/lista no kanban"
+      style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">＋ Etapa</button>` +
+    `<button onclick="carregarFunilAtendimento()" title="Atualizar o funil agora"
+      style="background:transparent;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 10px;cursor:pointer;font-family:var(--sans)">🔄</button>` +
     (_vendedorToken ? '' : `<button onclick="abrirGerenciarSetores()" title="Criar, editar ou excluir setores"
-      style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans);margin-left:4px">⚙ Gerenciar setores</button>`);
+      style="background:transparent;border:1px dashed var(--border2);border-radius:8px;color:var(--text2);font-size:12px;padding:5px 12px;cursor:pointer;font-family:var(--sans)">⚙ Setores</button>`);
 }
 
 function selecionarSetorFunil(setorId) {
@@ -9341,6 +9360,10 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:20px 24px 4px;display:flex;flex-direction:column}
 .funil-page .funil-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 12px;flex-shrink:0}
 .funil-page .funil-toolbar input{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;padding:10px 12px;color:var(--text);font-family:var(--sans);min-width:200px;flex:1;outline:none}
+/* Criar etapa e acao rara: a linha inteira fica recolhida e so aparece via
+   botao "+ Etapa" na barra de setores. Cobre os DOIS escopos (pagina + modal). */
+.funil-page .funil-toolbar, #modal-funil-atendimento .funil-toolbar{display:none}
+.funil-page .funil-toolbar.aberta, #modal-funil-atendimento .funil-toolbar.aberta{display:flex}
 
 /* Grid de 3 colunas: inbox | kanban | chat — tudo travado à altura visível */
 .funil-3col-grid{display:grid;grid-template-columns:280px 1fr 380px;gap:16px;flex:1;min-height:0;overflow:hidden}
