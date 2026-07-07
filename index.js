@@ -7522,6 +7522,7 @@ async function processarQuestionariosParados() {
          JOIN movatak_clientes c ON c.id = q.cliente_id
          JOIN movatak_leads l ON l.id = q.lead_id
         WHERE q.status = 'em_andamento'
+          AND COALESCE(l.automacao_pausada, false) = false
           AND q.atualizado_em < NOW() - make_interval(mins =>
                 COALESCE(NULLIF(c.quest_lembrete_minutos, 0), $1::int))`,
       [MOVATAK_QUEST_LEMBRETE_HORAS * 60]
