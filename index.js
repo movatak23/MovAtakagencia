@@ -3779,13 +3779,15 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
         return;
       }
 
+      // jaRegistrada fica visível ao bloco de comandos mais abaixo: um eco fromMe de
+      // uma mensagem que o PRÓPRIO CRM enviou não deve ser interpretado como comando.
+      let jaRegistrada = false;
       if ((texto && String(texto).trim()) || midiaFromMe.url) {
         // Evita duplicar: se a mensagem foi enviada pelo PRÓPRIO painel, ela já foi
         // gravada no banco (com o mesmo messageId do Z-API) no momento do envio. O
         // webhook fromMe chega logo depois confirmando o mesmo envio — se já existe
         // uma conversa com esse messageId, não registra de novo.
         const msgIdFromMe = body.messageId || body.id || null;
-        let jaRegistrada = false;
         if (msgIdFromMe) {
           const dup = await query(
             'SELECT 1 FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
@@ -3819,6 +3821,17 @@ app.post('/movatak/webhook/zapi', async (req, res) => {
 
       if (!ehComandoInterno) {
         logDebug('[zapi][fromMe] mensagem normal registrada no histórico do Kanban');
+        return;
+      }
+
+      // Eco fromMe de um envio automático do PRÓPRIO CRM (questionário, IA, follow-up,
+      // boas-vindas, ausência): jaRegistrada=true significa que já gravamos esse envio.
+      // Mesmo que o texto contenha um token de comando — ex.: a intro do questionário
+      // que instrui o lead a digitar #ATENDENTE —, NÃO é um comando digitado por um
+      // humano. Ignora, senão o bot se auto-pausa. Comando real vem digitado no
+      // WhatsApp pelo atendente e não está pré-registrado (jaRegistrada=false).
+      if (jaRegistrada) {
+        logDebug('[zapi][fromMe] eco de envio automático contém texto de comando — ignorando (não é comando humano)');
         return;
       }
 
@@ -7300,6 +7313,15 @@ async function processarRespostaMenu(cliente, lead, estado, texto) {
 
 async function iniciarQuestionario(cliente, lead) {
   try {
+    // Defesa em profundidade: nunca inicia questionário para lead com automação
+    // pausada — senão nasce um estado zumbi (pausado + questionário em_andamento),
+    // cujo bot pergunta mas o webhook descarta as respostas. Relê do banco porque o
+    // objeto `lead` pode estar defasado (a pausa pode ter ocorrido em paralelo).
+    const pausaCheck = await query('SELECT automacao_pausada FROM movatak_leads WHERE id = $1', [lead.id]).catch(() => ({ rows: [] }));
+    if (pausaCheck.rows.length && pausaCheck.rows[0].automacao_pausada) {
+      console.log(`[questionario][iniciar] lead ${lead.id} com automação pausada — questionário NÃO iniciado`);
+      return;
+    }
     cliente = await resolverQuestionarioDoLead(cliente, lead);
     const passos = Array.isArray(cliente.questionario_passos) ? cliente.questionario_passos : [];
     if (!passos.length) {
