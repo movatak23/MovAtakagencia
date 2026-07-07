@@ -71,7 +71,7 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 
 ## Progresso
 
-- [ ] Fase 1 — config + db
+- [x] Fase 1 — config + db
 - [ ] Fase 2 — zapi + realtime
 - [ ] Fase 3a — leads
 - [ ] Fase 3b — questionario
