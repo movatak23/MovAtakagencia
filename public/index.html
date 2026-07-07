@@ -7842,6 +7842,19 @@ async function carregarFunilAtendimento() {
 }
 
 // Barra de seleção de setor no topo do funil (Opção 2: "entrar" num setor)
+// Configuracao das etapas do kanban fica recolhida atras da engrenagem.
+// O estado aberto/fechado vive num Set em memoria para sobreviver aos
+// re-renders do board (que acontecem a cada mensagem nova, via socket).
+window._funilCfgAbertas = window._funilCfgAbertas || new Set();
+function toggleConfigColuna(colId, ev) {
+  if (ev) ev.stopPropagation();
+  const s = window._funilCfgAbertas;
+  const id = Number(colId);
+  if (s.has(id)) { s.delete(id); } else { s.add(id); }
+  const el = document.querySelector('.funil-col[data-coluna="' + colId + '"]');
+  if (el) el.classList.toggle('config-aberta', s.has(id));
+}
+
 function renderBarraSetores() {
   let barra = document.getElementById('funil-setores-barra');
   if (!barra) {
@@ -7854,9 +7867,11 @@ function renderBarraSetores() {
   }
   const setores = funilState.setores || [];
   const ativo = funilState.setorAtivo || null;
+  // Nao lidas: pill vermelho SO quando existe pendencia. Zero = silencio visual
+  // (antes mostrava "5 0" colado, que confundia total com nao lidas).
   const badgeNaoLidas = (n) => n > 0
-    ? `<span style="color:#ff5a5a;font-weight:700;margin-left:4px">${n}</span>`
-    : `<span style="color:var(--green);margin-left:4px">${n}</span>`;
+    ? `<span style="background:rgba(255,90,90,.14);color:#ff5a5a;font-weight:700;font-size:11px;border-radius:10px;padding:1px 7px;margin-left:5px">${n}</span>`
+    : ``;
   const btn = (id, nome, cor, count, naoLidas) => {
     const on = (id === ativo) || (id === null && !ativo);
     const corBorda = on ? (cor || 'var(--accent)') : 'var(--border2)';
@@ -8304,7 +8319,8 @@ function renderFunilAtendimento() {
     // vendedor são renderizadas em outro fluxo e não passam por aqui, então não ganham botão.
     const btnExcluir = `<button onclick="abrirModalExcluirColuna(${col.id}, '${escapeHtml(col.nome).replace(/'/g, "\\'")}')" title="Excluir etapa"
             style="background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--red);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;margin-left:6px">🗑</button>`;
-    return `<div class="funil-col" data-coluna="${col.id}" data-col-index="${col.__idx}"
+    const cfgAberta = window._funilCfgAbertas && window._funilCfgAbertas.has(Number(col.id));
+    return `<div class="funil-col${cfgAberta ? ' config-aberta' : ''}" data-coluna="${col.id}" data-col-index="${col.__idx}"
               style="border-top:3px solid ${cor}"
               ondragover="funilColunaDragOver(event)" ondrop="funilColunaOuLeadDrop(event, ${col.id})" ondragleave="funilDragLeave(event)">
       <div class="funil-col-head">
@@ -8320,8 +8336,12 @@ function renderFunilAtendimento() {
             <span>${leads.length} lead${leads.length === 1 ? '' : 's'}</span>
           </div>
         </div>
-        <div style="display:flex;align-items:center;gap:4px">${sync}${btnExcluir}</div>
+        <div style="display:flex;align-items:center;gap:4px">
+          <button class="btn-config-col" onclick="toggleConfigColuna(${col.id}, event)" title="Configuracoes da etapa (setor, comando, ausencia, IA...)">⚙️</button>
+          ${sync}${btnExcluir}
+        </div>
       </div>
+      <div class="funil-col-config">
       <div class="funil-col-setor" style="margin-bottom:8px">
         <select title="Setor desta etapa — define em quais abas ela aparece" onchange="atribuirSetorColuna(${col.id}, this.value)"
           style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid var(--border2);border-radius:7px;color:var(--text);font-family:var(--sans)">
@@ -8350,6 +8370,7 @@ function renderFunilAtendimento() {
           <input type="checkbox" ${col.ia_ativa ? 'checked' : ''} onchange="toggleIAColuna(${col.id}, this.checked)" style="cursor:pointer"> 🤖 AI
         </label>
       </div>
+      </div><!-- /funil-col-config -->
       <div class="funil-cards">
         ${leads.length ? leads.map(lead => renderFunilCard(lead, col.id)).join('') : '<div class="funil-empty">Sem leads nesta etapa.</div>'}
       </div>
@@ -8533,7 +8554,7 @@ function renderFunilCard(lead, colunaAtualId) {
   const nomeSeguro = String(lead.nome || '').replace(/'/g, '').slice(0, 30);
   const colAtualResumo = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaAtualId));
   const btnResumoIA = (colAtualResumo && colAtualResumo.ia_ativa)
-    ? `<button onclick="event.stopPropagation();abrirResumoIA(${lead.id}, event)" title="Resumo da conversa por IA" style="color:var(--accent);border-color:var(--accent)">📝 Resumo</button>`
+    ? `<button onclick="event.stopPropagation();abrirResumoIA(${lead.id}, event)" title="Resumo da conversa por IA">📝 Resumo</button>`
     : '';
   const prefixoVoce = lead.ultima_msg_direcao === 'saida' ? 'Você: ' : '';
   const preview = lead.ultima_msg
@@ -8555,10 +8576,10 @@ function renderFunilCard(lead, colunaAtualId) {
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
     ${preview}
     ${plano}${vendedor}
-    <div class="funil-card-line">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
+    <div class="funil-card-line funil-card-updated">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
     <div class="funil-card-actions">
       <button onclick="event.stopPropagation();abrirMensagemRapidaLead(${lead.id}, '${nomeSeguro}')">Mensagem</button>
-      <button onclick="event.stopPropagation();reativarFollowupManual(${lead.id})" title="Colocar no Follow-up" style="color:var(--amber);border-color:var(--amber)">+ FU</button>
+      <button onclick="event.stopPropagation();reativarFollowupManual(${lead.id})" title="Colocar no Follow-up">+ FU</button>
       ${btnResumoIA}
       <select onclick="event.stopPropagation()" onchange="moverLeadFunil(${lead.id}, this.value)">${options}</select>
       ${seletorSetor}
@@ -9273,6 +9294,33 @@ async function sincronizarColunaWhatsapp(colunaId) {
 #modal-funil-atendimento .funil-empty{font-size:12px;color:var(--text3);padding:12px;border:1px dashed var(--border2);border-radius:10px;text-align:center}
 #funil-status{min-height:18px;font-size:12px;color:var(--text2);margin-top:10px}
 
+/* ─── Refino visual do kanban ─────────────────────────────────
+   Hierarquia nos cards: nome forte > preview legivel > metadados apagados.
+   Cores fortes ficam reservadas para ESTADO (nao lida, pediu atendente, FU);
+   acoes usam neutro e ganham destaque so no hover. */
+#modal-funil-atendimento .funil-card{transition:border-color .15s, box-shadow .15s}
+#modal-funil-atendimento .funil-card:hover{border-color:var(--border2);box-shadow:0 2px 10px rgba(0,0,0,.07)}
+#modal-funil-atendimento .funil-card-top strong{font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#modal-funil-atendimento .funil-card-phone{color:var(--text3);font-size:11px;margin-bottom:4px}
+#modal-funil-atendimento .funil-card-preview{font-size:12px;color:var(--text);line-height:1.35;margin:2px 0}
+#modal-funil-atendimento .funil-card-updated{font-size:10px;color:var(--text3)}
+
+/* Acoes do card so no hover (desktop). Em telas de toque, onde nao existe
+   hover, os botoes permanecem sempre visiveis. Card selecionado tambem
+   mantem as acoes a mostra. */
+@media (hover:hover){
+  #modal-funil-atendimento .funil-card .funil-card-actions{display:none}
+  #modal-funil-atendimento .funil-card:hover .funil-card-actions,
+  #modal-funil-atendimento .funil-card.funil-card-selecionado .funil-card-actions{display:flex}
+}
+
+/* Configuracao da etapa recolhida atras da engrenagem */
+#modal-funil-atendimento .funil-col-config{display:none}
+#modal-funil-atendimento .funil-col.config-aberta .funil-col-config{display:block;padding:8px;margin:0 0 8px;background:var(--bg2);border:1px solid var(--border2);border-radius:10px}
+#modal-funil-atendimento .btn-config-col{background:transparent;border:1px solid var(--border2);border-radius:5px;color:var(--text2);font-size:11px;padding:2px 6px;cursor:pointer;flex-shrink:0;line-height:1.4}
+#modal-funil-atendimento .btn-config-col:hover{color:var(--text);border-color:var(--accent)}
+#modal-funil-atendimento .funil-col.config-aberta .btn-config-col{color:var(--accent);border-color:var(--accent);background:rgba(91,127,255,.10)}
+
 main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-main-3col .funil-page{height:100%;min-height:0}
 .funil-page{background:var(--bg2);border:1px solid var(--border);border-radius:18px;padding:20px 24px 4px;display:flex;flex-direction:column}
@@ -9342,7 +9390,7 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .inbox-info{flex:1;min-width:0}
 .inbox-top-row{display:flex;justify-content:space-between;gap:6px;align-items:baseline}
 .inbox-top-row strong{font-size:13px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.inbox-time{font-size:10px;color:var(--text);flex-shrink:0}
+.inbox-time{font-size:10px;color:var(--text3);flex-shrink:0;white-space:nowrap}
 .inbox-preview{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
 .inbox-item.unread .inbox-preview{font-weight:700}
 .inbox-tags{display:flex;gap:5px;align-items:center;margin-top:5px;flex-wrap:wrap}
