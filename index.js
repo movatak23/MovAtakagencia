@@ -2526,12 +2526,36 @@ app.patch('/movatak/admin/leads/:id/setor', ...exigeLead, async (req, res) => {
   }
 });
 
+// Reflete no WhatsApp (Z-API) a leitura feita no CRM: marca o chat do lead como
+// lido no WhatsApp Web/app. Best-effort e em background (fire-and-forget): não
+// atrasa a resposta do painel e engole qualquer erro (Z-API fora, lead sem
+// telefone, grupo/canal). Chamado quando uma conversa é marcada como LIDA no CRM.
+async function marcarChatLidoNoZap(leadId) {
+  try {
+    const r = await query(
+      `SELECT l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
+         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
+        WHERE l.id = $1`,
+      [leadId]
+    );
+    const row = r.rows[0];
+    if (!row || !row.telefone || !row.zapi_instance) return;
+    if (ehGrupoOuCanal(row.telefone)) return;
+    await zapiModificarChat(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, 'read');
+  } catch (e) {
+    console.error('[marcar-lida][zapi] falha ao marcar chat como lido no WhatsApp:', e.message);
+  }
+}
+
 // Marca o lead como lido (padrão) ou não lido (body: { nao_lida: true }) —
 // chamado ao abrir o painel de conversa, ou manualmente via "Marcar como não lida".
 app.patch('/movatak/admin/leads/:id/marcar-lida', ...exigeLead, async (req, res) => {
   try {
     const naoLida = !!(req.body && req.body.nao_lida);
-    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, req.params.id]);
+    const upd = await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2 AND nao_lida IS DISTINCT FROM $1 RETURNING id`, [naoLida, req.params.id]);
+    // Reflete no WhatsApp só quando REALMENTE mudou de não-lido -> lido, para não
+    // chamar a Z-API à toa ao reabrir conversas que já estavam lidas.
+    if (!naoLida && upd.rows.length) marcarChatLidoNoZap(req.params.id);
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4860,7 +4884,9 @@ app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, r
     const lead = await vendedorPodeLead(req, req.params.id);
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const naoLida = !!(req.body && req.body.nao_lida);
-    await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2`, [naoLida, lead.id]);
+    const upd = await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2 AND nao_lida IS DISTINCT FROM $1 RETURNING id`, [naoLida, lead.id]);
+    // Reflete no WhatsApp só quando REALMENTE mudou de não-lido -> lido.
+    if (!naoLida && upd.rows.length) marcarChatLidoNoZap(lead.id);
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
