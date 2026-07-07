@@ -171,6 +171,14 @@ function emitirStatusMensagem(clienteId, leadId, conversaId, status) {
   io.to(`cliente-${clienteId}`).emit('mensagem:status', { leadId, conversaId, status });
 }
 
+// Avisa os painéis abertos, em tempo real, que flags de um lead mudaram
+// (ex: pediu_atendente, nao_lida, automacao_pausada). O front aplica no
+// estado em memória e re-renderiza inbox/badges sem esperar o reload.
+function emitirLeadFlags(clienteId, leadId, flags) {
+  if (!clienteId || !leadId) return;
+  io.to(`cliente-${clienteId}`).emit('lead:flags', { leadId, flags: flags || {} });
+}
+
 // Logs completos somente quando necessário. Em produção, deixe MOVATAK_DEBUG=false
 // para não poluir o Railway com payloads grandes da Z-API/Rastreiobot.
 const MOVATAK_DEBUG = String(process.env.MOVATAK_DEBUG || '').toLowerCase() === 'true';
@@ -3251,6 +3259,9 @@ async function pararAtendimentoLead(clienteId, leadId, origem, comando) {
       `UPDATE movatak_leads SET pediu_atendente = true, pediu_atendente_em = NOW(), nao_lida = true WHERE id = $1`,
       [leadId]
     ).catch(() => null);
+    // Tempo real: acende o chip 🙋 no inbox e o badge no cabeçalho na hora,
+    // sem depender do reload do funil.
+    emitirLeadFlags(clienteId, leadId, { pediu_atendente: true, nao_lida: true, automacao_pausada: true });
   }
   await query(
     `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
@@ -3275,10 +3286,14 @@ async function pararAtendimentoLead(clienteId, leadId, origem, comando) {
 // writes desnecessários em todo envio.
 async function limparPedidoAtendente(leadId) {
   if (!leadId) return;
-  await query(
-    `UPDATE movatak_leads SET pediu_atendente = false WHERE id = $1 AND pediu_atendente = true`,
+  const r = await query(
+    `UPDATE movatak_leads SET pediu_atendente = false WHERE id = $1 AND pediu_atendente = true RETURNING id, cliente_id`,
     [leadId]
   ).catch(() => null);
+  // Só emite se realmente mudou (o UPDATE condicional retorna linha só nesse caso).
+  if (r && r.rows && r.rows.length) {
+    emitirLeadFlags(r.rows[0].cliente_id, r.rows[0].id, { pediu_atendente: false });
+  }
 }
 
 const MSG_PARAR_PADRAO = 'Perfeito{nome}! Já registrei seu pedido. 😊 Em breve um dos nossos atendentes vai falar com você por aqui.';// Dedup em memória: evita mandar várias confirmações se o lead repetir o
