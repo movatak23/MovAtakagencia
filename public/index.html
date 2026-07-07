@@ -6062,6 +6062,27 @@ function iniciarSocketFunil(clienteId) {
       const bolha = document.querySelector('#painel-conversa [data-conversa-id="' + conversaId + '"]');
       if (bolha) bolha.remove();
     });
+
+    // Flags de lead mudaram (ex: pediu atendente, não lida) — aplica no estado
+    // em memória e re-renderiza NA HORA: chip 🙋 no inbox, contadores dos
+    // filtros e badge no cabeçalho da conversa aberta. Sem esperar reload.
+    _socketFunil.on('lead:flags', (payload) => {
+      const leadId = payload && payload.leadId;
+      const flags = (payload && payload.flags) || {};
+      if (!leadId) return;
+      const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId));
+      if (lead) {
+        Object.assign(lead, flags);
+        renderInboxFunil(); // já refaz filtros + contadores + badge da aba
+      } else {
+        // Lead ainda não está no estado local (ex: lead novo) — recarrega o funil.
+        agendarReloadKanban();
+      }
+      // Conversa desse lead aberta no painel? Atualiza o badge do cabeçalho.
+      if (window._painelLeadId && String(leadId) === String(window._painelLeadId)) {
+        atualizarBadgePediuAtendente(lead || flags);
+      }
+    });
   } catch (e) {
     // Falha de socket nunca pode derrubar a tela; o polling continua valendo.
     console.warn('[socket] não conectou:', e.message);
