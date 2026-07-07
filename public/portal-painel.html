@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel — Portal do Cliente</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%235b7fff'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='central' text-anchor='middle' font-family='Arial,sans-serif' font-size='40' font-weight='800' fill='white'%3EM%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0f1118; --bg2: #161922; --bg3: #1c2030; --bg4: #232838;
+  --border: #252a3a; --border2: #333a4f;
+  --text: #eef1f8; --text2: #9aa3b8; --text3: #5f6982;
+  --accent: #5b7fff; --green: #00d084; --amber: #f5a623; --red: #ff5a5a;
+  --sans: 'Inter', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--sans); background: var(--bg); color: var(--text); min-height: 100vh; }
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 16px 28px; border-bottom: 1px solid var(--border); background: var(--bg2);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: center; gap: 12px; }
+.brand .logo {
+  width: 40px; height: 40px; border-radius: 10px; background: var(--accent);
+  display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800; color: #fff;
+}
+.brand h1 { font-size: 16px; font-weight: 800; }
+.brand .sub { font-size: 12px; color: var(--text2); }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
+.btn-ghost {
+  background: transparent; border: 1px solid var(--border2); color: var(--text2);
+  border-radius: 8px; padding: 8px 14px; font-size: 13px; cursor: pointer; font-family: var(--sans);
+}
+.btn-ghost:hover { border-color: var(--accent); color: var(--text); }
+.wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px; }
+.page-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
+.page-title { font-size: 22px; font-weight: 800; }
+.periodo-btns { display: flex; gap: 6px; }
+.periodo-btns button {
+  background: var(--bg3); border: 1px solid var(--border2); color: var(--text2);
+  border-radius: 8px; padding: 7px 14px; font-size: 13px; cursor: pointer; font-family: var(--sans); font-weight: 600;
+}
+.periodo-btns button.ativo { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 28px; }
+.card { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+.card .label { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 10px; }
+.card .valor { font-size: 30px; font-weight: 800; line-height: 1; }
+.card .sub { font-size: 12px; color: var(--text3); margin-top: 6px; }
+.secao { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; padding: 20px; margin-bottom: 20px; }
+.secao h2 { font-size: 14px; font-weight: 800; margin-bottom: 16px; }
+.tabs { display: flex; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; }
+.tab {
+  background: var(--bg2); border: 1px solid var(--border2); color: var(--text2);
+  border-radius: 10px; padding: 9px 16px; font-size: 13px; cursor: pointer; font-family: var(--sans); font-weight: 600;
+}
+.tab.ativo { background: var(--accent); color: #fff; border-color: var(--accent); }
+.chart-bars { display: flex; align-items: flex-end; gap: 6px; height: 140px; padding-top: 10px; }
+.chart-bars .bar { width: 28px; flex: 0 0 28px; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 3px; position: relative; opacity: .85; }
+.chart-bars .bar:hover { opacity: 1; }
+.loading { text-align: center; color: var(--text2); padding: 40px; font-size: 14px; }
+.hidden { display: none; }
+.fld-label { font-size: 12px; color: var(--text2); font-weight: 600; display: block; margin-bottom: 6px; margin-top: 14px; }
+.fld {
+  width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 10px;
+  padding: 11px 14px; color: var(--text); font-family: var(--sans); font-size: 14px; resize: vertical;
+}
+.fld:focus { outline: none; border-color: var(--accent); }
+.fld:disabled { opacity: .6; cursor: not-allowed; }
+.btn-save {
+  background: var(--accent); color: #fff; border: none; border-radius: 10px;
+  padding: 11px 20px; font-size: 14px; font-weight: 700; font-family: var(--sans); cursor: pointer;
+}
+.btn-save:hover { opacity: .92; }
+.btn-save:disabled { opacity: .6; cursor: default; }
+.aviso-perm { font-size: 12px; color: var(--amber); margin-top: 8px; }
+.cfg-msg { font-size: 13px; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <div class="logo">M</div>
+      <div>
+        <h1 id="empresa-nome">Carregando...</h1>
+        <div class="sub">Portal do Cliente</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn-ghost" onclick="sair()">Sair</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <div class="tabs">
+      <button class="tab ativo" id="tab-dashboard" onclick="trocarAba('dashboard')">📊 Dashboard</button>
+      <button class="tab" id="tab-config" onclick="trocarAba('config')">⚙️ Configurações</button>
+      <button class="tab" id="tab-funil" onclick="abrirFunilCliente()">🗂️ Funil de Atendimento</button>
+    </div>
+
+    <!-- ABA DASHBOARD -->
+    <div id="aba-dashboard">
+      <div class="page-head">
+        <div class="page-title">Visão geral</div>
+        <div class="periodo-btns" id="periodo-btns">
+          <button data-dias="1" onclick="setPeriodo(1)">Hoje</button>
+          <button data-dias="7" onclick="setPeriodo(7)">7 dias</button>
+          <button data-dias="30" class="ativo" onclick="setPeriodo(30)">30 dias</button>
+          <button data-dias="90" onclick="setPeriodo(90)">90 dias</button>
+        </div>
+      </div>
+      <div id="dash-conteudo"><div class="loading">Carregando métricas...</div></div>
+    </div>
+
+    <!-- ABA CONFIGURAÇÕES -->
+    <div id="aba-config" class="hidden">
+      <div id="config-conteudo"><div class="loading">Carregando configurações...</div></div>
+    </div>
+  </div>
+
+<script>
+const API_BASE = 'https://movatakagencia-production.up.railway.app';
+const TOKEN_KEY = 'movatak-portal-token';
+const NOME_KEY = 'movatak-portal-nome';
+let _periodo = 30;
+
+// Proteção: sem token, volta pro login.
+const token = localStorage.getItem(TOKEN_KEY);
+if (!token) { window.location.href = 'portal.html'; }
+
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('empresa-nome').textContent = localStorage.getItem(NOME_KEY) || 'Minha empresa';
+  carregarDashboard();
+});
+
+async function apiPortal(rota, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Content-Type': 'application/json', 'x-app-token': token }, opts.headers || {});
+  const resp = await fetch(API_BASE + rota, opts);
+  if (resp.status === 401) { sair(); throw new Error('Sessão expirada.'); }
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error || 'Erro na requisição.');
+  return data;
+}
+
+function trocarAba(qual) {
+  document.getElementById('aba-dashboard').classList.toggle('hidden', qual !== 'dashboard');
+  document.getElementById('aba-config').classList.toggle('hidden', qual !== 'config');
+  document.getElementById('tab-dashboard').classList.toggle('ativo', qual === 'dashboard');
+  document.getElementById('tab-config').classList.toggle('ativo', qual === 'config');
+  if (qual === 'config' && !_configCarregada) carregarConfig();
+}
+
+let _configCarregada = false;
+let _configPerms = {};
+
+async function carregarConfig() {
+  const box = document.getElementById('config-conteudo');
+  box.innerHTML = '<div class="loading">Carregando configurações...</div>';
+  try {
+    const d = await apiPortal('/movatak/app/configuracoes');
+    _configPerms = d.permissoes || {};
+    renderConfig(d);
+    _configCarregada = true;
+  } catch (e) {
+    box.innerHTML = '<div class="loading" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function renderConfig(d) {
+  const c = d.cliente || {};
+  const fu = c.followup_msgs_v2 || {};
+  const fu1 = fu.fu1 || {}; const fu2 = fu.fu2 || {};
+  const podeEditar = !!d.permissoes.editar_followup;
+  const dis = podeEditar ? '' : 'disabled';
+
+  const box = document.getElementById('config-conteudo');
+  box.innerHTML = `
+    <div class="secao">
+      <h2>👋 Mensagem de boas-vindas</h2>
+      ${!podeEditar ? '<div class="aviso-perm">Somente leitura — peça ao seu gestor para liberar a edição.</div>' : ''}
+      <label class="fld-label">Saudação enviada ao novo lead</label>
+      <textarea class="fld" id="cfg-boasvindas" rows="2" ${dis} placeholder="Ex: Olá! Seja bem-vindo...">${esc(c.boas_vindas_msg)}</textarea>
+    </div>
+
+    <div class="secao">
+      <h2>💬 Follow-up 1 (imediato)</h2>
+      <label class="fld-label">Mensagem 1</label>
+      <textarea class="fld" id="cfg-fu1-msg1" rows="2" ${dis}>${esc(fu1.msg1)}</textarea>
+      <label class="fld-label">Mensagem 2</label>
+      <textarea class="fld" id="cfg-fu1-msg2" rows="2" ${dis}>${esc(fu1.msg2)}</textarea>
+    </div>
+
+    <div class="secao">
+      <h2>🔁 Follow-up 2 (reativação)</h2>
+      <label class="fld-label">Mensagem 1 (imediata)</label>
+      <textarea class="fld" id="cfg-fu2-msg1" rows="2" ${dis}>${esc(fu2.msg1)}</textarea>
+      <label class="fld-label">Mensagem 2 (D+1)</label>
+      <textarea class="fld" id="cfg-fu2-msg2" rows="2" ${dis}>${esc(fu2.msg2)}</textarea>
+      <label class="fld-label">Mensagem 3 (D+3)</label>
+      <textarea class="fld" id="cfg-fu2-msg3" rows="2" ${dis}>${esc(fu2.msg3)}</textarea>
+      ${podeEditar ? '<div style="display:flex;align-items:center;gap:12px;margin-top:16px"><button class="btn-save" id="btn-cfg-save" onclick="salvarConfig()">💾 Salvar mensagens</button><span class="cfg-msg" id="cfg-msg"></span></div>' : ''}
+    </div>
+
+    <div class="secao">
+      <h2>🔐 Trocar minha senha</h2>
+      <label class="fld-label">Senha atual</label>
+      <input type="password" class="fld" id="sn-atual" placeholder="Sua senha atual">
+      <label class="fld-label">Nova senha</label>
+      <input type="password" class="fld" id="sn-nova" placeholder="Mínimo 4 caracteres">
+      <label class="fld-label">Confirmar nova senha</label>
+      <input type="password" class="fld" id="sn-conf" placeholder="Repita a nova senha">
+      <div style="display:flex;align-items:center;gap:12px;margin-top:16px">
+        <button class="btn-save" id="btn-senha-save" onclick="trocarSenha()">Trocar senha</button>
+        <span class="cfg-msg" id="senha-msg"></span>
+      </div>
+    </div>`;
+}
+
+async function salvarConfig() {
+  const msg = document.getElementById('cfg-msg');
+  const btn = document.getElementById('btn-cfg-save');
+  const followup_v2 = {
+    fu1: { msg1: val('cfg-fu1-msg1'), msg2: val('cfg-fu1-msg2') },
+    fu2: { msg1: val('cfg-fu2-msg1'), msg2: val('cfg-fu2-msg2'), msg3: val('cfg-fu2-msg3') }
+  };
+  const boas_vindas_msg = val('cfg-boasvindas');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+  msg.style.color = 'var(--text2)'; msg.textContent = '';
+  try {
+    await apiPortal('/movatak/app/followup', { method: 'PATCH', body: JSON.stringify({ followup_v2, boas_vindas_msg }) });
+    msg.style.color = 'var(--green)'; msg.textContent = '✓ Salvo!';
+    setTimeout(() => { msg.textContent = ''; }, 4000);
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = '💾 Salvar mensagens';
+  }
+}
+
+async function trocarSenha() {
+  const msg = document.getElementById('senha-msg');
+  const btn = document.getElementById('btn-senha-save');
+  const atual = val('sn-atual'), nova = val('sn-nova'), conf = val('sn-conf');
+  if (!nova || nova.length < 4) { msg.style.color = 'var(--red)'; msg.textContent = 'A nova senha precisa de ao menos 4 caracteres.'; return; }
+  if (nova !== conf) { msg.style.color = 'var(--red)'; msg.textContent = 'As senhas não conferem.'; return; }
+  btn.disabled = true; btn.textContent = 'Trocando...';
+  msg.style.color = 'var(--text2)'; msg.textContent = '';
+  try {
+    await apiPortal('/movatak/app/trocar-senha', { method: 'PATCH', body: JSON.stringify({ senha_atual: atual, senha_nova: nova }) });
+    msg.style.color = 'var(--green)'; msg.textContent = '✓ Senha alterada com sucesso!';
+    document.getElementById('sn-atual').value = '';
+    document.getElementById('sn-nova').value = '';
+    document.getElementById('sn-conf').value = '';
+  } catch (e) {
+    msg.style.color = 'var(--red)'; msg.textContent = e.message;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Trocar senha';
+  }
+}
+
+function val(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; }
+
+function setPeriodo(dias) {
+  _periodo = dias;
+  document.querySelectorAll('#periodo-btns button').forEach(b => {
+    b.classList.toggle('ativo', Number(b.dataset.dias) === dias);
+  });
+  carregarDashboard();
+}
+
+async function carregarDashboard() {
+  const box = document.getElementById('dash-conteudo');
+  box.innerHTML = '<div class="loading">Carregando métricas...</div>';
+  try {
+    const d = await apiPortal('/movatak/app/dashboard?dias=' + _periodo);
+    renderDashboard(d);
+  } catch (e) {
+    box.innerHTML = '<div class="loading" style="color:var(--red)">Erro: ' + e.message + '</div>';
+  }
+}
+
+function renderDashboard(d) {
+  const box = document.getElementById('dash-conteudo');
+  const taxa = (d.taxa_conversao != null ? d.taxa_conversao : 0) + '%';
+  const cpl = d.cpl_calculado ? ('R$ ' + d.cpl_calculado) : '—';
+  const cards = `
+    <div class="cards">
+      <div class="card"><div class="label">Total de leads</div><div class="valor" style="color:var(--accent)">${d.total_leads || 0}</div><div class="sub">leads hoje: ${d.leads_hoje || 0}</div></div>
+      <div class="card"><div class="label">Convertidos</div><div class="valor" style="color:var(--green)">${d.convertidos || 0}</div><div class="sub">vendas hoje: ${d.vendas_hoje || 0}</div></div>
+      <div class="card"><div class="label">Em follow-up</div><div class="valor" style="color:var(--amber)">${d.em_followup || 0}</div><div class="sub">sequência ativa</div></div>
+      <div class="card"><div class="label">Taxa de conversão</div><div class="valor" style="color:${(d.taxa_conversao||0) >= 10 ? 'var(--green)' : 'var(--amber)'}">${taxa}</div><div class="sub">fechamento</div></div>
+      <div class="card"><div class="label">CPL${d.alerta_cpl ? ' ⚠️' : ''}</div><div class="valor" style="color:${d.alerta_cpl ? 'var(--red)' : 'var(--text)'};font-size:24px">${cpl}</div><div class="sub">${d.teto_cpl ? 'teto: R$ ' + d.teto_cpl : 'custo por lead'}</div></div>
+    </div>`;
+
+  // Gráfico de leads por dia
+  const dias = d.leads_por_dia || [];
+  let grafico = '';
+  if (dias.length) {
+    const max = Math.max(...dias.map(x => Number(x.leads) || 0), 1);
+    grafico = `<div class="secao"><h2>📈 Leads por dia</h2><div class="chart-bars">` +
+      dias.map(x => {
+        const h = Math.max(3, (Number(x.leads) / max) * 130);
+        const dataFmt = new Date(x.dia).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+        return `<div class="bar" style="height:${h}px" title="${dataFmt}: ${x.leads} leads"></div>`;
+      }).join('') +
+      `</div></div>`;
+  }
+
+  const plano = d.plano_top
+    ? `<div class="secao"><h2>🏆 Plano mais vendido</h2><div style="font-size:16px;font-weight:700">${d.plano_top.nome} <span style="color:var(--text2);font-weight:400">— ${d.plano_top.total} vendas</span></div></div>`
+    : '';
+
+  box.innerHTML = cards + grafico + plano;
+}
+
+function sair() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(NOME_KEY);
+  window.location.href = 'portal.html';
+}
+
+// Abre o funil de atendimento (a mesma tela do admin, em modo cliente isolado).
+// Passa o app_token na URL; o index.html detecta e carrega só a operação do cliente.
+function abrirFunilCliente() {
+  window.location.href = 'index.html?funil=1&portal_token=' + encodeURIComponent(token);
+}
+</script>
+</body>
+</html>
