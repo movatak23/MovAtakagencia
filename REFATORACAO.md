@@ -75,7 +75,7 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 - [x] Fase 2 — zapi + realtime
 - [x] Fase 3a — leads
 - [x] Fase 3b — questionario
-- [ ] Fase 3c — ia
+- [x] Fase 3c — ia
 - [x] Fase 3d — followups
 - [ ] Fase 4 — webhook
 - [ ] Fase 5 — rotas (admin/vendedor/portal/publico)
@@ -130,3 +130,20 @@ no index e chamam o módulo), a const `TEMPLATES_FOLLOWUP` (usada por
 campanhas/rotas), o cluster anti-spam (`contarMensagensAutomaticasHoje`,
 `reentradaFU1Permitida`, `leadRespondeuRecentemente`) e os helpers de ausência
 (`avaliarAusencia`, `clienteRowEmAusencia`).
+
+### Fase 3c — ia (`src/ia.js`)
+
+9 funções movidas verbatim: `localizarCampanhaPorIA`, `chamarHaiku` (núcleo
+Anthropic via `fetch` — modelo `claude-haiku-4-5-20251001`), `gerarRespostaIALead`,
+`enviarComPausasHumanas`, `_normalizarTextoTrava` (privada), `assuntoExigeHumano`,
+`respostaIAViolaTravas`, `transferirIAParaHumano`, `iaResponderAutomatico`.
+
+**Sem injeção** (a fase mais limpa) — só imports: `query`/`garantirEstruturaConversas`
+(db), `registrarEventoLead`/`registrarConversa`/`pararAtendimentoLead` (leads),
+`zapiEnviar` (zapi), `enviarMsgQuestionario` (questionario). Globais: `fetch`,
+`process.env`. Layering: `db → zapi → leads → questionario → ia` (ia → questionario
+é unidirecional, sem ciclo).
+
+**Ficaram no index.js:** 4 rotas entremeadas no cluster que chamam as funções
+movidas — `transcrever-audio` (Whisper/OpenAI), `dispensar-prioridade`,
+`resumo-ia`, `sugerir-resposta`. index.js importa as funções por destructuring.
