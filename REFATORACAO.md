@@ -74,8 +74,36 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 - [x] Fase 1 — config + db
 - [x] Fase 2 — zapi + realtime
 - [x] Fase 3a — leads
-- [ ] Fase 3b — questionario
+- [x] Fase 3b — questionario
 - [ ] Fase 3c — ia
 - [ ] Fase 3d — followups
 - [ ] Fase 4 — webhook
 - [ ] Fase 5 — rotas (admin/vendedor/portal/publico)
+
+### Fase 3b — questionario (`src/questionario.js`)
+
+16 funções do motor de questionário/autoatendimento movidas verbatim:
+`reiniciarQuestionarioLead`, `enviarMsgQuestionario`, `cepTemCobertura`,
+`montarTextoPergunta`, `interpretarResposta`, `resolverSaltoQuestionario`,
+`calcularPontuacao`, `calcularRecomendacao`, `avancarQuestionario`,
+`iniciarQuestionarioPorTemplate`, `resolverQuestionarioPorTemplateId`,
+`resolverQuestionarioDoLead`, `iniciarQuestionario`, `processarRespostaQuestionario`,
+`finalizarQuestionario`, `processarQuestionariosParados`.
+
+**Não há ciclo com followups**: a dependência é unidirecional (questionario →
+followups). As funções de followup não chamam nenhuma de questionario.
+
+**Injeção temporária** (`questionario.init(deps)` no boot): o módulo depende de
+símbolos que ainda vivem no `index.js` e saem em fases futuras — followups
+(`agendarFollowupV2`, `enviarFollowupsPendentesDoLead`, → 3d), funil/vendedor
+(`atribuirVendedorBalanceado`, `moverLeadParaFunilSlug`), o menu
+(`enviarMenuAtendimento`) e helpers compartilhados (`ehGrupoOuCanal`, `sleep`,
+`normalizarDelayQuestionario`, `normalizarCep`, `tipoMidia`). Como as funções
+movidas referenciam esses nomes por variável de escopo do módulo, o corpo movido
+ficou byte-a-byte idêntico. A fiação de injeção é removida à medida que essas
+deps forem extraídas.
+
+**Ficaram no index.js** (não são questionario): `uploadSupabase` e `tipoMidia`
+(helpers compartilhados), e o bloco de Menu de Atendimento
+(`enviarBoasVindasLead`, `enviarMenuAtendimento`, `processarRespostaMenu`) —
+candidato a uma fase 3b-menu própria depois.
