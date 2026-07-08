@@ -76,7 +76,7 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 - [x] Fase 3a — leads
 - [x] Fase 3b — questionario
 - [ ] Fase 3c — ia
-- [ ] Fase 3d — followups
+- [x] Fase 3d — followups
 - [ ] Fase 4 — webhook
 - [ ] Fase 5 — rotas (admin/vendedor/portal/publico)
 
@@ -107,3 +107,26 @@ deps forem extraídas.
 (helpers compartilhados), e o bloco de Menu de Atendimento
 (`enviarBoasVindasLead`, `enviarMenuAtendimento`, `processarRespostaMenu`) —
 candidato a uma fase 3b-menu própria depois.
+
+### Fase 3d — followups (`src/followups.js`)
+
+5 funções + 1 const movidas verbatim: `followupDataDaLinha`, `agendarFollowupV2`,
+`enviarFollowupsPendentesDoLead`, `migrarFU1ParaFU2`, `finalizarFollowupsEsgotados`
+e `DIAS_FOLLOWUP_V2` (privada do módulo). Layering: `db → zapi → leads →
+followups → questionario` (sem ciclo).
+
+**Imports:** `query` (db), `registrarEventoLead`/`registrarConversa` (leads),
+`zapiEnviar` (zapi). **Injetadas** via `followups.init()` (ainda no index.js):
+`ehGrupoOuCanal`, `clienteRowEmAusencia` (ausência), `moverLeadParaColunaFunil`
+(funil), `podeEnviarMensagemAutomatica` (cluster anti-spam) e `registrarErroZapi`.
+
+**Payoff:** a injeção da 3b encolheu — `agendarFollowupV2` e
+`enviarFollowupsPendentesDoLead` agora vêm de `require('./src/followups')` no
+index.js e são só encaminhadas ao `questionario.init()` (que ficou intocado).
+
+**Ficaram no index.js** (não são followups extraíveis agora): os blocos
+`cron.schedule` (o pump `*/10` e o pós-followup `*/30` — decisão: crons ficam
+no index e chamam o módulo), a const `TEMPLATES_FOLLOWUP` (usada por
+campanhas/rotas), o cluster anti-spam (`contarMensagensAutomaticasHoje`,
+`reentradaFU1Permitida`, `leadRespondeuRecentemente`) e os helpers de ausência
+(`avaliarAusencia`, `clienteRowEmAusencia`).
