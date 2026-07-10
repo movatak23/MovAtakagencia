@@ -175,8 +175,12 @@ followups/questionario/ia, que passam a importar direto):
      `leadRespondeuRecentemente`. **Feito** (`v2.7.26-lateral-antispam`, index.js
      8269→8224). Sem injeção (importa db+config). followups recebe
      `podeEnviarMensagemAutomatica` forwardeado (arquivo dele intocado).
-   - `src/funil.js` — `moverLeadParaFunilSlug`, `moverLeadParaColunaFunil`,
-     `atribuirVendedorBalanceado`.
+   - [x] `src/funil.js` — `moverLeadParaFunilSlug`, `moverLeadParaColunaFunil`,
+     `atribuirVendedorBalanceado`. **Feito** (`v2.7.27-lateral-funil`, index.js
+     8224→8123). Importa db+leads+zapi; **injeta** 3 sub-helpers que ficam no index
+     (`garantirFunilPadraoCliente`, `etapaSistemaPorSlug`,
+     `sincronizarColunaComWhatsapp` — dependem de nicho/zapi-extractors, saem
+     depois). questionario/followups recebem as fns de funil forwardeadas.
    - `src/menu.js` — `enviarBoasVindasLead`, `enviarMenuAtendimento`,
      `processarRespostaMenu`.
 2. **Fase 4 — webhook** (`src/webhook.js`, ~920 linhas): extrair o corpo do handler
