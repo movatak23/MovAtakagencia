@@ -77,8 +77,11 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 - [x] Fase 3b — questionario
 - [x] Fase 3c — ia
 - [x] Fase 3d — followups
-- [ ] Fase 4 — webhook
+- [x] Fase 4 — webhook
 - [ ] Fase 5 — rotas (admin/vendedor/portal/publico)
+  - [x] Fase 5a — admin (142 rotas → `src/routes/admin.js`)
+  - [ ] Fase 5b — vendedor
+  - [ ] Fase 5c — portal/publico
 
 ### Fase 3b — questionario (`src/questionario.js`)
 
@@ -201,8 +204,34 @@ followups/questionario/ia, que passam a importar direto):
      `textoBateGatilho`). webhook.js importa de 13 módulos. Reconstrução byte-a-byte
      + symbol-check (só falso-positivo) + smoke. Os 5 handlers da 4a preservados verbatim.
 3. **Fase 5 — rotas** (`src/routes/*.js`, ~4.882 linhas): agrupar por domínio, cada
-   arquivo exporta `register(app)`. Sub-fases 5a admin · 5b vendedor · 5c portal ·
+   arquivo exporta `register(app, deps)`. Sub-fases 5a admin · 5b vendedor · 5c portal ·
    5d publico (uma fase = um commit = um deploy). Depende dos laterais.
+   - [x] **5a admin** (`src/routes/admin.js`, `v2.8.2-fase5a-admin`, index.js
+     6849→3335): as **142 rotas `/movatak/admin/*`** movidas VERBATIM para dentro de
+     `register(app, deps)`. Padrão: os blocos `app.M('/movatak/admin/...', ...)` inteiros
+     foram para o módulo, byte-a-byte, na ordem original (col-0, sem reindentar). O
+     index.js requer `./src/routes/admin` no topo e chama `rotasAdmin.register(app, {...})`
+     **no fim do boot** (antes do `httpServer.listen`), quando todos os middlewares,
+     helpers e módulos já estão definidos. **111 deps injetadas** — middlewares de auth
+     compartilhados que ficam no index.js (`authMovatak`, `authMovatakOuApp`,
+     `forcaClienteIdNaUrl` e os `exige*`, usados também por 5b/5c), ~40 helpers ainda no
+     index.js, e funções dos módulos já extraídos. Como os corpos referenciam tudo por
+     nome desestruturado de `deps`, os call sites ficaram idênticos.
+     **Sem catch-all/`app.get('*')`** e prefixos de rota distintos (`/admin` vs
+     `/app`/`/vendedor`/`/webhook`) → registrar as admin no fim não muda o matching do
+     Express. Duas rotas admin duplicadas pré-existentes (`PATCH .../leads/:id/vendedor`,
+     `POST .../leads/:id/mensagem-kanban`) preservadas na ordem original (Express usa a 1ª).
+     Provas: reconstrução byte-a-byte contra `git show HEAD:index.js` (A: 142 blocos
+     idênticos; B: index.js == original menos os ranges + adições documentadas) +
+     `node --check` + `npm run smoke` (boot roda o `register` com as 111 deps) + checagem
+     funcional ao vivo (401 sem auth / 404 em rota inexistente) + diff estático do conjunto
+     de 212 rotas registradas (HEAD == pós-5a, idêntico).
+     **BUG PRÉ-EXISTENTE achado (não introduzido pela 5a, NÃO corrigido aqui p/ manter
+     verbatim):** a rota `GET /movatak/admin/clientes/:id/leads.csv` referencia `csvEscape`,
+     que a Fase 4b moveu para `src/webhook.js` sem exportar/reimportar — logo essa rota
+     lança `ReferenceError: csvEscape is not defined` desde `v2.8.1` (só ao ser chamada,
+     pós-auth). Corrigir em commit separado (exportar `csvEscape` do webhook ou movê-lo p/
+     `src/util.js` e injetar).
 
 Estimativa do `index.js` no fim: só 4+5 → ~2.000–2.500 linhas; 4+5 + laterais
 (+ crons num scheduler) → ~800–1.200 linhas.
