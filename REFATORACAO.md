@@ -166,8 +166,10 @@ followups/questionario/ia, que passam a importar direto):
      importa só db+zapi (+axios/crypto), sem injeção. questionario/followups seguem
      recebendo os helpers via `init()`, agora forwardeados do util (arquivos deles
      intocados).
-   - `src/ausencia.js` — `avaliarAusencia`, `clienteRowEmAusencia`,
-     `dispararAusenciaSeAplicavel`.
+   - [x] `src/ausencia.js` — `avaliarAusencia`, `clienteRowEmAusencia`,
+     `dispararAusenciaSeAplicavel`. **Feito** (`v2.7.25-lateral-ausencia`, index.js
+     8400→8269). Sem injeção (importa db+zapi+leads+util). followups recebe
+     `clienteRowEmAusencia` forwardeado do ausencia (arquivo dele intocado).
    - `src/antispam.js` — `contarMensagensAutomaticasHoje`,
      `podeEnviarMensagemAutomatica`, `reentradaFU1Permitida`,
      `leadRespondeuRecentemente`.
