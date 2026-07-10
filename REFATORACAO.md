@@ -181,8 +181,11 @@ followups/questionario/ia, que passam a importar direto):
      (`garantirFunilPadraoCliente`, `etapaSistemaPorSlug`,
      `sincronizarColunaComWhatsapp` — dependem de nicho/zapi-extractors, saem
      depois). questionario/followups recebem as fns de funil forwardeadas.
-   - `src/menu.js` — `enviarBoasVindasLead`, `enviarMenuAtendimento`,
-     `processarRespostaMenu`.
+   - [x] `src/menu.js` — `enviarBoasVindasLead`, `enviarMenuAtendimento`,
+     `processarRespostaMenu`. **Feito** (`v2.7.28-lateral-menu`, index.js
+     8123→8039). Sem injeção — importa db+zapi+leads+util+questionario. menu requer
+     questionario (sem ciclo: questionario recebe `enviarMenuAtendimento` por
+     injeção, não por require). questionario recebe-o forwardeado do menu.
 2. **Fase 4 — webhook** (`src/webhook.js`, ~920 linhas): extrair o corpo do handler
    para `handleMensagem(req,res)`/`handleResposta(req,res)`; deixar `app.post` fino
    no index. Topo do call graph. Caminho mais crítico do sistema — rigor extra.
