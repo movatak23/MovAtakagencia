@@ -193,10 +193,13 @@ followups/questionario/ia, que passam a importar direto):
      `handleResposta`, `handleStatus`, `handleZapiStatus`; ~224 linhas de corpo).
      **Feito** (`v2.7.29-fase4a-webhook`, index.js 8039→7818). Importa
      db/leads/followups/util/realtime/zapi; injeta só `textoBateGatilho`.
-   - [ ] **4b** — `/webhook/zapi` (686 linhas, o orquestrador). Move o corpo +
-     ~10 helpers exclusivos (extractors de payload etc.); injeta ~9 helpers
-     compartilhados (`contemComando`, `resolverReplyInfoLead`, `normalizarGatilho`,
-     `vendedorBateComando`...). Isolado num deploy próprio.
+   - [x] **4b** — `/webhook/zapi` (o orquestrador). **Feito** (`v2.8.1-fase4b-webhook`,
+     index.js 7822→6849). `handleZapi` (corpo de 684 linhas) + **22 helpers exclusivos**
+     (payload/comando, 0 usos fora do webhook) movidos pro `src/webhook.js`; **6
+     compartilhados injetados** (`comandosDoVendedor`, `contemComando`,
+     `localizarCampanhaPorGatilho`, `normalizarGatilho`, `resolverReplyInfoLead`,
+     `textoBateGatilho`). webhook.js importa de 13 módulos. Reconstrução byte-a-byte
+     + symbol-check (só falso-positivo) + smoke. Os 5 handlers da 4a preservados verbatim.
 3. **Fase 5 — rotas** (`src/routes/*.js`, ~4.882 linhas): agrupar por domínio, cada
    arquivo exporta `register(app)`. Sub-fases 5a admin · 5b vendedor · 5c portal ·
    5d publico (uma fase = um commit = um deploy). Depende dos laterais.
