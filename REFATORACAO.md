@@ -147,3 +147,46 @@ Anthropic via `fetch` — modelo `claude-haiku-4-5-20251001`), `gerarRespostaIAL
 **Ficaram no index.js:** 4 rotas entremeadas no cluster que chamam as funções
 movidas — `transcrever-audio` (Whisper/OpenAI), `dispensar-prioridade`,
 `resumo-ia`, `sugerir-resposta`. index.js importa as funções por destructuring.
+
+## Roadmap — o que falta (ordem recomendada)
+
+Fase 3 completa. `index.js` em 8.492 linhas. Composição do que resta (medida):
+rotas Express ~4.882 · webhook ~920 · funções soltas/helpers ~1.472 ·
+cron.schedule ~139 · imports/boot/middleware ~1.079.
+
+**Ordem sugerida** (extrair folhas primeiro reduz a dívida de injeção — ao criar
+cada módulo lateral, remover as linhas correspondentes dos `init()` de
+followups/questionario/ia, que passam a importar direto):
+
+1. **Laterais (folhas):**
+   - [x] `src/util.js` — telefone/mídia/misc: `variantesTelefone`,
+     `extrairDigitosTelefone`, `telefonesEquivalentes`, `ehGrupoOuCanal`,
+     `tipoMidia`, `normalizarCep`, `sleep`, `uploadSupabase`, `registrarErroZapi`,
+     `enviarAlerta`. **Feito** (`v2.7.24-lateral-util`, index.js 8492→8400). Folha:
+     importa só db+zapi (+axios/crypto), sem injeção. questionario/followups seguem
+     recebendo os helpers via `init()`, agora forwardeados do util (arquivos deles
+     intocados).
+   - `src/ausencia.js` — `avaliarAusencia`, `clienteRowEmAusencia`,
+     `dispararAusenciaSeAplicavel`.
+   - `src/antispam.js` — `contarMensagensAutomaticasHoje`,
+     `podeEnviarMensagemAutomatica`, `reentradaFU1Permitida`,
+     `leadRespondeuRecentemente`.
+   - `src/funil.js` — `moverLeadParaFunilSlug`, `moverLeadParaColunaFunil`,
+     `atribuirVendedorBalanceado`.
+   - `src/menu.js` — `enviarBoasVindasLead`, `enviarMenuAtendimento`,
+     `processarRespostaMenu`.
+2. **Fase 4 — webhook** (`src/webhook.js`, ~920 linhas): extrair o corpo do handler
+   para `handleMensagem(req,res)`/`handleResposta(req,res)`; deixar `app.post` fino
+   no index. Topo do call graph. Caminho mais crítico do sistema — rigor extra.
+3. **Fase 5 — rotas** (`src/routes/*.js`, ~4.882 linhas): agrupar por domínio, cada
+   arquivo exporta `register(app)`. Sub-fases 5a admin · 5b vendedor · 5c portal ·
+   5d publico (uma fase = um commit = um deploy). Depende dos laterais.
+
+Estimativa do `index.js` no fim: só 4+5 → ~2.000–2.500 linhas; 4+5 + laterais
+(+ crons num scheduler) → ~800–1.200 linhas.
+
+**Trilha paralela (opcional, separada da refatoração) — performance.** Mover
+código verbatim NÃO acelera nada. Ganhos reais exigem outra trilha, com medição
+antes/depois: tirar `garantirEstrutura*` do hot path (boot/memoize); prompt
+caching em `chamarHaiku`; revisar índices do cron pump `*/10`. Não misturar com
+commits de refatoração.
