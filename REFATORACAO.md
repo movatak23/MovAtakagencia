@@ -186,9 +186,17 @@ followups/questionario/ia, que passam a importar direto):
      8123→8039). Sem injeção — importa db+zapi+leads+util+questionario. menu requer
      questionario (sem ciclo: questionario recebe `enviarMenuAtendimento` por
      injeção, não por require). questionario recebe-o forwardeado do menu.
-2. **Fase 4 — webhook** (`src/webhook.js`, ~920 linhas): extrair o corpo do handler
-   para `handleMensagem(req,res)`/`handleResposta(req,res)`; deixar `app.post` fino
-   no index. Topo do call graph. Caminho mais crítico do sistema — rigor extra.
+2. **Fase 4 — webhook** (`src/webhook.js`): 6 handlers. Padrão: corpo do handler
+   → `async function handleX(req,res)`; index.js registra `app.M(path, handleX)`.
+   Split em 2 deploys (decisão do dono, isolar o crítico):
+   - [x] **4a** — 5 handlers menores (`handleMensagem`, `handleEtiqueta`,
+     `handleResposta`, `handleStatus`, `handleZapiStatus`; ~224 linhas de corpo).
+     **Feito** (`v2.7.29-fase4a-webhook`, index.js 8039→7818). Importa
+     db/leads/followups/util/realtime/zapi; injeta só `textoBateGatilho`.
+   - [ ] **4b** — `/webhook/zapi` (686 linhas, o orquestrador). Move o corpo +
+     ~10 helpers exclusivos (extractors de payload etc.); injeta ~9 helpers
+     compartilhados (`contemComando`, `resolverReplyInfoLead`, `normalizarGatilho`,
+     `vendedorBateComando`...). Isolado num deploy próprio.
 3. **Fase 5 — rotas** (`src/routes/*.js`, ~4.882 linhas): agrupar por domínio, cada
    arquivo exporta `register(app)`. Sub-fases 5a admin · 5b vendedor · 5c portal ·
    5d publico (uma fase = um commit = um deploy). Depende dos laterais.
