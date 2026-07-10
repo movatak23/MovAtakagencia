@@ -456,6 +456,38 @@ async function garantirEstruturaCaptacao() {
   )`).catch(() => null);
 }
 
+// Assinatura/mensalidade da MovAtak (SaaS). Colunas defaultam para NAO-bloqueante:
+// clientes existentes ficam status='ativa' e vence_em=NULL, e NUNCA sao bloqueados
+// (vence_em NULL = cliente nao gerido por assinatura). Ver ASSINATURAS.md.
+async function garantirEstruturaAssinaturas() {
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS assinatura_status TEXT DEFAULT 'ativa',
+    ADD COLUMN IF NOT EXISTS assinatura_vence_em DATE,
+    ADD COLUMN IF NOT EXISTS assinatura_valor NUMERIC(10,2),
+    ADD COLUMN IF NOT EXISTS assinatura_forma TEXT,
+    ADD COLUMN IF NOT EXISTS assinatura_ciclo_dias INTEGER DEFAULT 30,
+    ADD COLUMN IF NOT EXISTS mp_customer_id TEXT,
+    ADD COLUMN IF NOT EXISTS mp_preapproval_id TEXT,
+    ADD COLUMN IF NOT EXISTS ultimo_aviso_marco INTEGER,
+    ADD COLUMN IF NOT EXISTS bloqueado_em TIMESTAMPTZ`).catch(() => null);
+
+  await query(`CREATE TABLE IF NOT EXISTS movatak_pagamentos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    valor NUMERIC(10,2),
+    status TEXT DEFAULT 'pendente',
+    metodo TEXT,
+    mp_payment_id TEXT,
+    referencia TEXT,
+    pago_em TIMESTAMPTZ,
+    vence_em DATE,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+
+  await query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_cliente ON movatak_pagamentos (cliente_id)`).catch(() => null);
+}
+
 module.exports = {
   pool,
   query,
@@ -471,4 +503,5 @@ module.exports = {
   garantirEstruturaFunil,
   garantirEstruturaAgenda,
   garantirEstruturaCaptacao,
+  garantirEstruturaAssinaturas,
 };

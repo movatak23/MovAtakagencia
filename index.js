@@ -16,7 +16,7 @@ const {
   withPgAdvisoryLock,
   garantirEstruturaCampanhasTemplates, garantirEstruturaQuestionario, garantirEstruturaPlanos,
   garantirEstruturaConversas, garantirEstruturaMensagensRapidas, garantirEstruturaFunil,
-  garantirEstruturaAgenda, garantirEstruturaCaptacao
+  garantirEstruturaAgenda, garantirEstruturaCaptacao, garantirEstruturaAssinaturas
 } = db;
 
 const {
@@ -116,6 +116,10 @@ inicializarRealtime(httpServer);
 
 // Injeta no webhook (4a) as deps ainda no index.js. Hoisted.
 webhook.init({ textoBateGatilho });
+
+// Materializa o schema de assinaturas/mensalidade no boot (idempotente,
+// defaults nao-bloqueantes). Fase A da feature de mensalidade. Ver ASSINATURAS.md.
+garantirEstruturaAssinaturas().catch(() => null);
 
 // Injeta no funil os sub-helpers que ainda vivem no index.js
 // (dependem de nicho/zapi-extractors). Function declarations sao hoisted.
