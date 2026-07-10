@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.7.25-lateral-ausencia';
+const MOVATAK_VERSION = 'v2.7.26-lateral-antispam';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib

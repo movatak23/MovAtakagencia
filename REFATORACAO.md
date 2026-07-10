@@ -170,9 +170,11 @@ followups/questionario/ia, que passam a importar direto):
      `dispararAusenciaSeAplicavel`. **Feito** (`v2.7.25-lateral-ausencia`, index.js
      8400→8269). Sem injeção (importa db+zapi+leads+util). followups recebe
      `clienteRowEmAusencia` forwardeado do ausencia (arquivo dele intocado).
-   - `src/antispam.js` — `contarMensagensAutomaticasHoje`,
+   - [x] `src/antispam.js` — `contarMensagensAutomaticasHoje`,
      `podeEnviarMensagemAutomatica`, `reentradaFU1Permitida`,
-     `leadRespondeuRecentemente`.
+     `leadRespondeuRecentemente`. **Feito** (`v2.7.26-lateral-antispam`, index.js
+     8269→8224). Sem injeção (importa db+config). followups recebe
+     `podeEnviarMensagemAutomatica` forwardeado (arquivo dele intocado).
    - `src/funil.js` — `moverLeadParaFunilSlug`, `moverLeadParaColunaFunil`,
      `atribuirVendedorBalanceado`.
    - `src/menu.js` — `enviarBoasVindasLead`, `enviarMenuAtendimento`,
