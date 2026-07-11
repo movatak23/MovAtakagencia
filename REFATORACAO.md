@@ -80,7 +80,7 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 - [x] Fase 4 — webhook
 - [ ] Fase 5 — rotas (admin/vendedor/portal/publico)
   - [x] Fase 5a — admin (142 rotas → `src/routes/admin.js`)
-  - [ ] Fase 5b — vendedor
+  - [x] Fase 5b — vendedor (47 rotas → `src/routes/vendedor.js`)
   - [ ] Fase 5c — portal/publico
 
 ### Fase 3b — questionario (`src/questionario.js`)
@@ -232,6 +232,16 @@ followups/questionario/ia, que passam a importar direto):
      lança `ReferenceError: csvEscape is not defined` desde `v2.8.1` (só ao ser chamada,
      pós-auth). Corrigir em commit separado (exportar `csvEscape` do webhook ou movê-lo p/
      `src/util.js` e injetar).
+   - [x] **5b vendedor** (`src/routes/vendedor.js`, `v2.8.3-fase5b-vendedor`, index.js
+     3335→2451): as **47 rotas `/movatak/vendedor/*`** movidas VERBATIM para
+     `register(app, deps)`, mesmo padrão da 5a. **52 deps injetadas** — `authVendedor` e
+     os `vendedorPode*` (`Setor`/`Lead`/`Conversa`/`Coluna`/`Agendamento`, ficam no
+     index.js), helpers ainda no index.js e fns de módulos já extraídos. Provas: mesmo
+     conjunto da 5a — reconstrução byte-a-byte vs HEAD (47 blocos idênticos + index.js ==
+     original menos ranges) + `node --check` + `npm run smoke` + diff de rotas (212==212
+     contra o commit pré-5a) + funcional 401/404. Sem bug pré-existente desta vez
+     (symbol-check só falso-positivo de regex/local). Scripts genéricos parametrizados por
+     `cfg-vendedor.js` no scratchpad (reutilizáveis na 5c trocando o prefixo/config).
 
 Estimativa do `index.js` no fim: só 4+5 → ~2.000–2.500 linhas; 4+5 + laterais
 (+ crons num scheduler) → ~800–1.200 linhas.

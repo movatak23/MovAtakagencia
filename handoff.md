@@ -4,18 +4,20 @@ Passagem de bastão. Estado em **2026-07-10** (substitui o de 2026-07-08).
 
 ## Estado atual
 
-- Produção (`app.movatak.com.br`, serviço Railway `outstanding-radiance`) rodando
-  **`v2.8.1-fase4b-webhook`**. `main` sincronizado com `origin/main`.
-- **Fase 5a (rotas admin) pronta no working tree, AGUARDANDO commit/push (=deploy).**
-  Nova versão em `src/config.js`: **`v2.8.2-fase5a-admin`**. Passou em todas as provas
-  (reconstrução byte-a-byte, node --check, smoke, checagem funcional, diff de rotas).
-- Working tree não commitado: `index.js` (encolhido), `src/routes/admin.js` (novo),
-  `src/config.js` (bump de versão), `REFATORACAO.md`, `handoff.md`, `ASSINATURAS.md`.
-- **Fase 3 + laterais + Fase 4 (webhook) + Fase 5a (admin) concluídos.** `index.js` de
-  ~10.500 → **3.335 linhas** (era 6.849 antes da 5a).
+- Produção (`app.movatak.com.br`, serviço Railway `outstanding-radiance`): **5a já
+  deployada** (`v2.8.2-fase5a-admin` confirmada no ar). `main` = commit `35e89b5`.
+- **Fase 5b (rotas vendedor) pronta no working tree, AGUARDANDO commit/push (=deploy).**
+  Nova versão em `src/config.js`: **`v2.8.3-fase5b-vendedor`**. Passou em todas as provas
+  (reconstrução byte-a-byte, node --check, smoke, checagem funcional 401/404, diff de rotas
+  212==212 vs pré-5a).
+- Working tree não commitado (5b): `index.js` (encolhido), `src/routes/vendedor.js` (novo),
+  `src/config.js` (bump), `REFATORACAO.md`, `handoff.md`. (`ASSINATURAS.md` segue com
+  mudança pré-existente não commitada, não é da refatoração.)
+- **Fase 3 + laterais + Fase 4 + 5a + 5b concluídos.** `index.js` de ~10.500 →
+  **2.451 linhas** (era 3.335 antes da 5b).
 - Módulos em `src/`: `config`, `db`, `zapi`, `realtime`, `leads`, `questionario`,
   `followups`, `ia`, `util`, `ausencia`, `antispam`, `funil`, `menu`, `webhook`,
-  `routes/admin` (15).
+  `routes/admin`, `routes/vendedor` (16).
 - Layering consolidado, **sem ciclos**:
   `db → zapi/realtime → leads/util → ausencia/antispam/funil/followups/questionario → ia/menu`.
 - Helpers que ainda vivem no index.js: **66** (era 89 antes dos laterais).
@@ -33,11 +35,13 @@ Passagem de bastão. Estado em **2026-07-10** (substitui o de 2026-07-08).
   → `src/webhook.js` (7822→6849; injeta 6 compartilhados; validado ao vivo:
   processou msg real pós-deploy, 0 erro)
 - [x] **Fase 5a** — 142 rotas `/movatak/admin/*` → `src/routes/admin.js` via
-  `register(app, deps)` (index.js 6849→3335; 111 deps injetadas). **AGUARDANDO
-  commit/push.** Achou bug pré-existente da 4b: `leads.csv` usa `csvEscape` (foi p/
+  `register(app, deps)` (index.js 6849→3335; 111 deps injetadas). **Deployada
+  (`v2.8.2`).** Achou bug pré-existente da 4b: `leads.csv` usa `csvEscape` (foi p/
   webhook.js sem export) — corrigir separado.
-- [ ] Fase 5b — rotas vendedor (47 rotas, `authVendedor`) ← **próximo**
-- [ ] Fase 5c — rotas portal/público (`/movatak/app/*` + sem auth)
+- [x] **Fase 5b** — 47 rotas `/movatak/vendedor/*` → `src/routes/vendedor.js`
+  (index.js 3335→2451; 52 deps injetadas, incl. `authVendedor` + `vendedorPode*`).
+  **AGUARDANDO commit/push.**
+- [ ] Fase 5c — rotas portal/público (`/movatak/app/*` [15 rotas] + sem auth) ← **próximo**
 
 ## Método validado (usar de novo — não reinventar)
 
@@ -127,22 +131,21 @@ Ler este handoff + `REFATORACAO.md` (seção "Roadmap", fonte da verdade) +
 memórias `movatak-refatoracao` e `movatak-infra-deploy` (em
 `~/.claude/projects/-Users-ronaldo-Downloads-Nfim/memory/`).
 
-**PRÓXIMO = commit/push da Fase 5a** (aguardando autorização; push no main = deploy).
+**PRÓXIMO = commit/push da Fase 5b** (aguardando autorização; push no main = deploy).
 Depois: `curl -s https://app.movatak.com.br/movatak/version` até virar
-`v2.8.2-fase5a-admin`. Verificar ao vivo uma rota admin real (ex.: abrir o painel e
-carregar leads/funil de um cliente). **Depois disso, corrigir o bug pré-existente do
-`csvEscape`** (rota `admin/clientes/:id/leads.csv` — ver REFATORACAO.md 5a) num commit
-separado.
+`v2.8.3-fase5b-vendedor` e checar uma rota vendedor real (app do vendedor: login +
+funil). Pendente ainda: corrigir o bug pré-existente do `csvEscape` (rota
+`admin/clientes/:id/leads.csv` — ver REFATORACAO.md 5a) em commit separado.
 
-**Depois: Fase 5b (rotas vendedor)** — 47 rotas `/movatak/vendedor/*` (middleware
-`authVendedor` + `vendedorPodeSetor/Lead/...`). Mesmo padrão da 5a: mover os blocos
-`app.M('/movatak/vendedor/...', authVendedor, async(req,res)=>{...})` inteiros e verbatim
-para `src/routes/vendedor.js` dentro de `register(app, deps)`; index.js chama
-`rotasVendedor.register(app, {...})` no fim do boot. Reaproveitar os scripts do
-scratchpad da 5a (`analyze-admin.js`/`build-admin.js`/`reconstruct.js`/`route-diff`),
-trocando o prefixo `/movatak/admin/` por `/movatak/vendedor/`.
+**Depois: Fase 5c (rotas portal/público)** — as 15 rotas `/movatak/app/*` (middleware
+`authCliente`) + as rotas sem auth (`/movatak/health`, `/movatak/version`, webhooks já
+extraídos). Sobra o esqueleto do index.js (imports, setup Express, middlewares de auth,
+~40 helpers, crons, boot). Mesmo padrão: `src/routes/portal.js` (e talvez
+`src/routes/publico.js`) com `register(app, deps)`. Reaproveitar os scripts genéricos do
+scratchpad (`analyze.js`/`build.js`/`reconstruct.js`/`symbol-check.js` + um `cfg-*.js` novo,
+espelhando `cfg-vendedor.js`, trocando `prefixRe`/nomes de arquivo/módulo/var).
 
-Método de extração da 5a (validado): script node (1) enumera os nomes top-level
+Método de extração (validado na 5a e 5b): script node (1) enumera os nomes top-level
 "providáveis" do index.js; (2) acha os blocos de rota por assinatura (`app.M('/prefixo/`
 col-0 → primeiro `});` col-0); (3) deps = providáveis ∩ referenciados nos blocos —
 **cuidado: tratar `...spread` como referência real, não acesso a propriedade** (foi o
