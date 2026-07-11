@@ -81,7 +81,7 @@ contrário (ex.: `db.js` não pode importar de `leads.js`).
 - [ ] Fase 5 — rotas (admin/vendedor/portal/publico)
   - [x] Fase 5a — admin (142 rotas → `src/routes/admin.js`)
   - [x] Fase 5b — vendedor (47 rotas → `src/routes/vendedor.js`)
-  - [ ] Fase 5c — portal/publico
+  - [x] Fase 5c — portal (15 rotas `/movatak/app/*` → `src/routes/portal.js`)
 
 ### Fase 3b — questionario (`src/questionario.js`)
 
@@ -242,6 +242,19 @@ followups/questionario/ia, que passam a importar direto):
      contra o commit pré-5a) + funcional 401/404. Sem bug pré-existente desta vez
      (symbol-check só falso-positivo de regex/local). Scripts genéricos parametrizados por
      `cfg-vendedor.js` no scratchpad (reutilizáveis na 5c trocando o prefixo/config).
+   - [x] **5c portal** (`src/routes/portal.js`, `v2.8.4-fase5c-portal`, index.js
+     2451→2036): as **15 rotas `/movatak/app/*`** (portal do cliente, `authCliente`;
+     `/app/login` é pública) movidas VERBATIM para `register(app, deps)`. Superfície de
+     deps mínima — **6 deps** (`authCliente`, `query`, `hashSenha`, `normalizarPermissoes`,
+     `garantirEstruturaCampanhasTemplates`, `erroEstruturaBanco`). A rota `app/exportar-leads`
+     usa um `esc` CSV **local** (não o `csvEscape` do bug da 5a) — self-contained, sem
+     bug. **Deixado como glue no index.js** (não virou módulo): os 6 registros finos de
+     webhook (`app.post('/movatak/webhook/...', handleX)` — só fiação p/ handlers já em
+     `src/webhook.js`) e `health`/`version` (handlers de 2 linhas). Provas: reconstrução
+     byte-a-byte + node --check + smoke + diff de rotas (212==212 vs `e41380c`) + funcional
+     (401 sem token / 400 no login / 404). **Fase 5 concluída** — index.js reduzido de
+     ~10.500 para ~2.036 linhas (esqueleto: imports, setup Express, middlewares de auth,
+     ~40 helpers, crons, boot, e a fiação fina de rotas).
 
 Estimativa do `index.js` no fim: só 4+5 → ~2.000–2.500 linhas; 4+5 + laterais
 (+ crons num scheduler) → ~800–1.200 linhas.
