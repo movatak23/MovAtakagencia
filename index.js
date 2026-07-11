@@ -58,7 +58,8 @@ const {
 const util = require('./src/util');
 const {
   variantesTelefone, extrairDigitosTelefone, telefonesEquivalentes, ehGrupoOuCanal,
-  tipoMidia, normalizarCep, sleep, uploadSupabase, registrarErroZapi, enviarAlerta
+  tipoMidia, normalizarCep, sleep, uploadSupabase, registrarErroZapi, enviarAlerta,
+  csvEscape
 } = util;
 
 const followups = require('./src/followups');
@@ -368,7 +369,7 @@ async function vendedorPodeLead(req, leadId) {
 
 // [refatoracao util] registrarErroZapi() -> src/util.js
 
-// [refatoracao 4b] csvEscape() -> src/webhook.js
+// [refatoracao util] csvEscape() -> src/util.js
 
 // [refatoracao antispam] contarMensagensAutomaticasHoje() -> src/antispam.js
 
@@ -1981,7 +1982,7 @@ rotasAdmin.register(app, {
   MOVATAK_DEBUG, MOVATAK_VERSION, NICHO_TEMPLATES, R2_BUCKET, R2_ListBucketsCommand,
   R2_PRONTO, TEMPLATES_FOLLOWUP, ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, aplicarTemplateNichoCliente,
   authMovatak, authMovatakOuApp, axios, buscarColunaAgenda, buscarGooglePlaces,
-  chamarHaiku, config, conflitoAgenda, emitirMensagemApagada, emitirMensagemLead,
+  chamarHaiku, config, conflitoAgenda, csvEscape, emitirMensagemApagada, emitirMensagemLead,
   enviarFollowupsPendentesDoLead, erroEstruturaBanco, etapaSistemaPorSlug, exigeAgendamento, exigeCampanha,
   exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
   exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,

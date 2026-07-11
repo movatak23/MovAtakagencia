@@ -966,11 +966,6 @@ async function registrarWebhookCliente(clienteId, resumo = {}) {
   }
 }
 
-function csvEscape(v) {
-  const s = v == null ? '' : String(v);
-  return '"' + s.replace(/"/g, '""') + '"';
-}
-
 function vendedorBateComando(vendedor, texto) {
   return contemComando(texto, comandosDoVendedor(vendedor));
 }

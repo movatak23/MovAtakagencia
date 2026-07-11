@@ -113,6 +113,11 @@ async function uploadSupabase(buffer, contentType, ext) {
   return `${base.replace(/\/$/, '')}/storage/v1/object/public/${bucket}/${nome}`;
 }
 
+function csvEscape(v) {
+  const s = v == null ? '' : String(v);
+  return '"' + s.replace(/"/g, '""') + '"';
+}
+
 
 module.exports = {
   enviarAlerta,
@@ -125,4 +130,5 @@ module.exports = {
   normalizarCep,
   tipoMidia,
   uploadSupabase,
+  csvEscape,
 };

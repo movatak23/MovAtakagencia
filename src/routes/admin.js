@@ -17,7 +17,7 @@ function register(app, deps) {
     MOVATAK_DEBUG, MOVATAK_VERSION, NICHO_TEMPLATES, R2_BUCKET, R2_ListBucketsCommand,
     R2_PRONTO, TEMPLATES_FOLLOWUP, ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, aplicarTemplateNichoCliente,
     authMovatak, authMovatakOuApp, axios, buscarColunaAgenda, buscarGooglePlaces,
-    chamarHaiku, config, conflitoAgenda, emitirMensagemApagada, emitirMensagemLead,
+    chamarHaiku, config, conflitoAgenda, csvEscape, emitirMensagemApagada, emitirMensagemLead,
     enviarFollowupsPendentesDoLead, erroEstruturaBanco, etapaSistemaPorSlug, exigeAgendamento, exigeCampanha,
     exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
     exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
