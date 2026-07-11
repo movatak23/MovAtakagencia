@@ -141,6 +141,14 @@ Depois: `curl -s https://app.movatak.com.br/movatak/version` até virar
 `v2.8.4-fase5c-portal` e checar uma rota do portal real (login do cliente + dashboard).
 **Com isso a refatoração do index.js (Fases 1–5) está COMPLETA.**
 
+**Perf 1 (feito, `v2.8.5-perf-migracoes-memoizadas`):** memoizei as 11
+`garantirEstrutura*`/`garantirColunas*` em `src/db.js` (via `umaVez()`) — tirou 23
+queries DDL por mensagem do hot path (`registrarConversa`). Índice do cron pump é
+não-problema (EXPLAIN 0,969 ms, já indexado). Prompt caching no `chamarHaiku`
+diagnosticado mas **adiado** (o prompt tem bytes voláteis + trecho estável < 4096 tokens
+do Haiku → precisa reestruturar a montagem, ganho incerto, medir). Faxina do index.js:
+sem fatia limpa (helpers nicho/funil/zapi interdependentes). Detalhes em REFATORACAO.md.
+
 **O que sobra depois da 5c (não é mais refatoração de rotas):**
 - Corrigir o bug pré-existente do `csvEscape` (rota `admin/clientes/:id/leads.csv` — ver
   REFATORACAO.md 5a). **Já delegado a outra sessão** (task_3654b72e) — conferir se entrou.

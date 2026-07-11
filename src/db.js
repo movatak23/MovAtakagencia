@@ -488,20 +488,34 @@ async function garantirEstruturaAssinaturas() {
   await query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_cliente ON movatak_pagamentos (cliente_id)`).catch(() => null);
 }
 
+// [perf] Executa uma migracao idempotente no maximo UMA vez por processo. As
+// garantirEstrutura*/garantirColunas* rodam CREATE/ALTER ... IF NOT EXISTS, que
+// so precisam acontecer uma vez; sem isso rodavam a cada chamada — inclusive no
+// hot path (garantirEstruturaConversas em toda registrarConversa/webhook), o que
+// eram ~6+ round-trips DDL por mensagem. Se a 1a execucao falhar, limpa o cache
+// para retentar na proxima chamada (preserva a resiliencia do comportamento antigo).
+function umaVez(fn) {
+  let pendente = null;
+  return function () {
+    if (!pendente) pendente = Promise.resolve().then(fn).catch((e) => { pendente = null; throw e; });
+    return pendente;
+  };
+}
+
 module.exports = {
   pool,
   query,
   hashStringToInt,
   withPgAdvisoryLock,
-  garantirColunasClientesPortal,
-  garantirColunasVendedoresPortal,
-  garantirEstruturaCampanhasTemplates,
-  garantirEstruturaQuestionario,
-  garantirEstruturaPlanos,
-  garantirEstruturaConversas,
-  garantirEstruturaMensagensRapidas,
-  garantirEstruturaFunil,
-  garantirEstruturaAgenda,
-  garantirEstruturaCaptacao,
-  garantirEstruturaAssinaturas,
+  garantirColunasClientesPortal: umaVez(garantirColunasClientesPortal),
+  garantirColunasVendedoresPortal: umaVez(garantirColunasVendedoresPortal),
+  garantirEstruturaCampanhasTemplates: umaVez(garantirEstruturaCampanhasTemplates),
+  garantirEstruturaQuestionario: umaVez(garantirEstruturaQuestionario),
+  garantirEstruturaPlanos: umaVez(garantirEstruturaPlanos),
+  garantirEstruturaConversas: umaVez(garantirEstruturaConversas),
+  garantirEstruturaMensagensRapidas: umaVez(garantirEstruturaMensagensRapidas),
+  garantirEstruturaFunil: umaVez(garantirEstruturaFunil),
+  garantirEstruturaAgenda: umaVez(garantirEstruturaAgenda),
+  garantirEstruturaCaptacao: umaVez(garantirEstruturaCaptacao),
+  garantirEstruturaAssinaturas: umaVez(garantirEstruturaAssinaturas),
 };

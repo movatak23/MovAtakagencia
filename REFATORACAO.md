@@ -264,3 +264,28 @@ código verbatim NÃO acelera nada. Ganhos reais exigem outra trilha, com mediç
 antes/depois: tirar `garantirEstrutura*` do hot path (boot/memoize); prompt
 caching em `chamarHaiku`; revisar índices do cron pump `*/10`. Não misturar com
 commits de refatoração.
+
+### Perf 1 — migrações memoizadas (`v2.8.5-perf-migracoes-memoizadas`) — FEITO
+Diagnóstico + correção (jul/2026, com medição):
+- **`garantirEstrutura*` no hot path → memoizado.** `garantirEstruturaConversas`
+  rodava **23 queries DDL por mensagem** (`registrarConversa` em todo webhook/IA).
+  Envolvido em `umaVez(fn)` no `module.exports` de `src/db.js` (roda 1× por processo;
+  reseta o cache em falha p/ preservar a resiliência). Medido: 2ª chamada em diante =
+  0 queries. As 11 funções `garantirEstrutura*`/`garantirColunas*` (todas arg-less)
+  passaram a ser memoizadas. Behavior-preserving (DDL idempotente ainda roda 1×).
+- **Índice do cron pump `*/10` → nada a fazer.** `EXPLAIN ANALYZE` em produção:
+  **0,969 ms**, usando índice parcial existente `idx_followup_envio`. Tabela pequena
+  (~1.600 linhas) e já com 7 índices (alguns redundantes: `idx_followup_status` ==
+  `idx_movatak_followup_status_envio`). Não é gargalo.
+- **Prompt caching em `chamarHaiku` → ADIADO (não é ganho limpo).** O `system` é montado
+  por request do banco com bytes voláteis (respostas rápidas ordenadas por `vezes_usado
+  DESC`, roteiro/followups por lead). Cache é prefix-match exato → quebra a cada chamada.
+  Haiku 4.5 exige prefixo ≥4096 tokens p/ cachear; o trecho estável provavelmente fica
+  abaixo. Exige reestruturar a montagem do prompt (prefixo estável vs volátil) — trabalho
+  de verdade em código de IA, ganho incerto, medir antes/depois. Não fazer especulativo.
+
+### Faxina do index.js — sem fatia limpa de baixo risco
+Os ~40 helpers restantes são interdependentes (nicho ↔ funil ↔ zapi-extractors). Os 3
+helpers de funil que sobraram estão injetados via `funil.init` justamente porque dependem
+de nicho/zapi-extractors ainda no index — movê-los arrasta a cadeia e arrisca ciclos. Não
+há "mover N funções verbatim e pronto"; é um untangling maior. Deixar por ora (menor diff).
