@@ -1668,6 +1668,88 @@ app.put('/movatak/admin/leads/:id/anexos/:anexoId/comentario', ...exigeLead, asy
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Salva o anexo de UMA mensagem da conversa direto nos Documentos do histórico,
+// sem o usuário precisar baixar e reanexar: o servidor busca a mídia na URL da
+// Z-API/WhatsApp e a espelha no R2, criando um movatak_lead_anexos (que já ganha
+// o botão "Comentar" existente na aba Histórico).
+app.post('/movatak/admin/leads/:id/anexos/da-conversa', ...exigeLead, async (req, res) => {
+  try {
+    if (!r2Client) return res.status(503).json({ error: 'Armazenamento de anexos indisponível.' });
+    const leadId = req.params.id;
+    const conversaId = (req.body && (req.body.conversa_id || req.body.conversaId)) || null;
+    if (!conversaId) return res.status(400).json({ error: 'conversa_id é obrigatório.' });
+
+    // Carrega a mensagem e confirma que pertence a ESTE lead (defesa extra além do exigeLead).
+    const msg = await obterMensagemComZapi(conversaId);
+    if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada.' });
+    if (String(msg.lead_id) !== String(leadId)) {
+      return res.status(403).json({ error: 'Esta mensagem não pertence a este lead.' });
+    }
+    if (!msg.midia_url) return res.status(400).json({ error: 'Esta mensagem não tem anexo.' });
+
+    // Baixa a mídia server-side (o usuário não precisa baixar/reanexar).
+    let resp;
+    try {
+      resp = await axios.get(msg.midia_url, {
+        responseType: 'arraybuffer',
+        maxContentLength: ANEXO_MAX_BYTES,
+        maxBodyLength: ANEXO_MAX_BYTES,
+        timeout: 20000
+      });
+    } catch (e) {
+      const detalhe = /maxContentLength|exceeded/i.test(e.message || '')
+        ? 'Arquivo muito grande (máx. 10MB).'
+        : ('Não foi possível baixar o anexo da conversa: ' + (e.message || 'erro'));
+      return res.status(502).json({ error: detalhe });
+    }
+    const buffer = Buffer.from(resp.data);
+    if (!buffer.length) return res.status(400).json({ error: 'Anexo vazio.' });
+    if (buffer.length > ANEXO_MAX_BYTES) {
+      return res.status(400).json({ error: 'Arquivo muito grande (máx. 10MB).' });
+    }
+
+    // Content-type: prioriza o header HTTP; cai pra um palpite pela categoria interna.
+    const catParaMime = { imagem: 'image/jpeg', audio: 'audio/ogg', video: 'video/mp4', documento: 'application/octet-stream' };
+    const ctHeader = String(resp.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
+    const contentType = ctHeader || catParaMime[msg.midia_tipo] || 'application/octet-stream';
+
+    // Nome do arquivo: tenta o basename da URL; senão monta um nome amigável com a data.
+    const mimeExt = {
+      'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif',
+      'audio/ogg': 'ogg', 'audio/opus': 'ogg', 'audio/mpeg': 'mp3', 'audio/mp4': 'm4a', 'audio/aac': 'aac',
+      'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+      'application/pdf': 'pdf'
+    };
+    let nomeOriginal = '';
+    try {
+      const semQuery = String(msg.midia_url).split('?')[0].split('#')[0];
+      const base = decodeURIComponent(semQuery.substring(semQuery.lastIndexOf('/') + 1) || '');
+      if (base && /\.[a-z0-9]{2,5}$/i.test(base)) nomeOriginal = base;
+    } catch (e) { /* URL exótica: cai no nome montado abaixo */ }
+    if (!nomeOriginal) {
+      const rotulo = { imagem: 'Foto', audio: 'Áudio', video: 'Vídeo', documento: 'Documento' }[msg.midia_tipo] || 'Anexo';
+      const ext = mimeExt[contentType] || 'bin';
+      const carimbo = new Date().toLocaleString('pt-BR', {
+        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      }).replace(/[/:]/g, '-').replace(', ', '_');
+      nomeOriginal = `${rotulo} da conversa ${carimbo}.${ext}`;
+    }
+    nomeOriginal = (nomeOriginal.replace(/[\/\\\x00-\x1f]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 200)) || 'arquivo';
+
+    const clienteId = msg.cliente_id;
+    const nomeChaveSafe = nomeOriginal.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w.\- ]/g, '_').slice(0, 120);
+    const chave = `anexos/cliente_${clienteId}/lead_${leadId}/${Date.now()}_${nomeChaveSafe}`;
+    await r2Upload(chave, buffer, contentType);
+    const autor = (req.vendedor && req.vendedor.nome) ? req.vendedor.nome : 'Gestor';
+    const ins = await query(
+      `INSERT INTO movatak_lead_anexos (lead_id, cliente_id, nome_arquivo, tipo, tamanho, r2_chave, autor)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, nome_arquivo, tipo, tamanho, autor, criado_em, comentario`,
+      [leadId, clienteId, nomeOriginal, contentType, buffer.length, chave, autor]
+    );
+    res.json({ ok: true, anexo: ins.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/movatak/admin/leads/:id/anotacao', ...exigeLead, async (req, res) => {
   try {
     const leadId = req.params.id;
