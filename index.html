@@ -2371,6 +2371,25 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// Remove caracteres inválidos de nome de arquivo (cross-OS) e espaços duplicados.
+function _sanitizeNomeArquivoLead(s) {
+  return String(s || '').replace(/[\/\\:*?"<>|\x00-\x1f]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Prefixa o nome do arquivo baixado com o lead do painel aberto:
+// "Nome do lead 8888 - original.ext" — facilita achar de quem é o anexo depois.
+// Usa o nome/telefone exibidos no cabeçalho do painel; sem esses dados, mantém o original.
+function nomeArquivoComLead(nomeOriginal) {
+  const orig = _sanitizeNomeArquivoLead(nomeOriginal) || 'arquivo';
+  const nome = _sanitizeNomeArquivoLead((document.getElementById('painel-lead-nome') || {}).textContent || '');
+  const digitos = String((document.getElementById('painel-lead-fone') || {}).textContent || '').replace(/\D/g, '');
+  const finalNum = digitos ? digitos.slice(-4) : '';
+  const prefixo = [nome, finalNum].filter(Boolean).join(' ').trim();
+  if (!prefixo) return orig;                      // sem dados do lead: não mexe
+  if (orig.indexOf(prefixo) === 0) return orig;   // já prefixado (re-download): não duplica
+  return prefixo + ' - ' + orig;
+}
+
 // Baixa a mídia. Como o arquivo está em outro domínio (Supabase), um <a download>
 // simples às vezes só abre em vez de baixar — então buscamos como blob e forçamos
 // o download com o nome de arquivo original.
@@ -2382,7 +2401,7 @@ async function baixarMidia(url, ev) {
     const nome = (url.split('/').pop() || 'midia').split('?')[0] || 'midia';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = nome;
+    a.download = nomeArquivoComLead(nome);
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -3759,7 +3778,7 @@ async function baixarAnexoLead(leadId, anexoId, nomeArquivo) {
     // Reusa o blob já carregado pela miniatura/lightbox quando houver; senão busca.
     const url = await _blobUrlAnexo(leadId, anexoId);
     const a = document.createElement('a');
-    a.href = url; a.download = nomeArquivo || 'documento';
+    a.href = url; a.download = nomeArquivoComLead(nomeArquivo || 'documento');
     document.body.appendChild(a); a.click(); a.remove();
     // Não revoga: o objectURL fica em cache (_anexoBlobUrls) e é liberado no próximo carregarAnexosLead.
   } catch (e) {
