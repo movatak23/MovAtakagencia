@@ -2507,6 +2507,10 @@ function renderBolhaMensagemPainel(m) {
   const btnEncaminhar = (m.id && m.msg_id)
     ? `<button onclick="encaminharMensagemPainel(${Number(m.id)})" title="Encaminhar mensagem" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">↪</button>`
     : '';
+  // Salva o anexo desta mensagem direto nos Documentos do histórico (sem baixar/reanexar).
+  const btnSalvarHist = (m.id && m.midia_url)
+    ? `<button onclick="salvarAnexoNoHistorico(${Number(m.id)})" title="Salvar anexo no histórico" style="background:none;border:none;color:${saida ? 'var(--msg-acao-out)' : 'var(--msg-acao-in)'};cursor:pointer;font-size:13px;padding:0 3px;margin-left:6px">📌</button>`
+    : '';
   const btnEditar = (saida && m.id && m.msg_id && !m.midia_url)
     ? `<button onclick="editarMensagemPainel(${Number(m.id)})" title="Editar mensagem enviada" style="background:none;border:none;color:var(--msg-acao-out);cursor:pointer;font-size:12px;padding:0 3px;margin-left:6px">✎</button>`
     : '';
@@ -2524,7 +2528,7 @@ function renderBolhaMensagemPainel(m) {
       ${texto ? `<div style="font-size:13px;line-height:1.4;color:${saida ? 'var(--msg-text-out)' : 'var(--msg-text-in)'};white-space:pre-wrap">${texto}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
         <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : 'var(--msg-time-in)'}">${hora}</span>
-        ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnEditar}${btnLidaZap}${btnApagar}
+        ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnSalvarHist}${btnEditar}${btnLidaZap}${btnApagar}
       </div>
     </div>
   </div>`;
@@ -3180,6 +3184,27 @@ async function encaminharMensagemPainel(conversaId) {
     await api('/movatak/admin/conversas/' + conversaId + '/encaminhar', { method:'POST', body: JSON.stringify({ destino }) });
     setStatusPainel('✓ Mensagem encaminhada.', 'var(--green)');
   } catch(e) { setStatusPainel('Erro ao encaminhar: ' + e.message, 'var(--red)'); }
+}
+
+// Manda o anexo desta mensagem direto pros Documentos do histórico (o servidor
+// espelha a mídia da conversa no R2 — nada de baixar e reanexar). Ao virar
+// documento, o anexo já ganha o botão "Comentar" existente na aba Histórico.
+async function salvarAnexoNoHistorico(conversaId) {
+  const leadId = window._painelLeadId;
+  if (!leadId) return;
+  try {
+    setStatusPainel('Salvando anexo no histórico...', 'var(--text2)');
+    await api('/movatak/admin/leads/' + leadId + '/anexos/da-conversa', {
+      method: 'POST', body: JSON.stringify({ conversa_id: conversaId })
+    });
+    setStatusPainel('✓ Anexo salvo no histórico.', 'var(--green)');
+    mostrarToast('Anexo salvo no histórico! Comente nele na aba Histórico › Documentos.', 'sucesso');
+    // Se a aba Histórico já foi renderizada, atualiza a lista de Documentos na hora.
+    if (document.getElementById('lista-anexos-lead')) carregarAnexosLead(leadId);
+  } catch (e) {
+    setStatusPainel('Erro ao salvar no histórico: ' + e.message, 'var(--red)');
+    mostrarToast('Erro ao salvar no histórico: ' + e.message, 'erro');
+  }
 }
 
 async function editarMensagemPainel(conversaId) {
