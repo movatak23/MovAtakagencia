@@ -2666,6 +2666,7 @@ function linhaBadgesHeaderPainel() {
 
 async function abrirPainelLead(leadId, nomeAbrev) {
   window._painelLeadId = leadId;
+  ativarColarGlobalPainel(); // habilita colar print (Ctrl+V) na conversa e no histórico
   garantirColunaFunilVisivel('chat');
   document.getElementById('painel-lead-nome').textContent = nomeAbrev || 'Lead';
   document.getElementById('painel-lead-fone').textContent = '';
@@ -2976,6 +2977,69 @@ function painelColarArea(ev) {
     }
   }
   // Sem imagem: deixa o texto colar normalmente (não chama preventDefault).
+}
+
+// Cola imagem (print da área de transferência) salvando direto nos Documentos do
+// histórico do lead. Reusa o mesmo upload base64 do botão "📎 Anexar".
+async function enviarImagemColadaHistorico(leadId, file) {
+  if (!leadId || !file) return;
+  if (file.size > 10 * 1024 * 1024) { mostrarToast('Imagem muito grande (máx. 10MB).', 'erro'); return; }
+  const box = document.getElementById('lista-anexos-lead');
+  if (box) box.innerHTML = '<div class="fu-hint" style="font-size:11px">Salvando imagem colada...</div>';
+  try {
+    const base64 = await new Promise((res, rej) => {
+      const reader = new FileReader();
+      reader.onload = () => res(reader.result);
+      reader.onerror = rej;
+      reader.readAsDataURL(file);
+    });
+    const ext = (file.type && file.type.split('/')[1]) ? file.type.split('/')[1].replace('jpeg', 'jpg') : 'png';
+    const carimbo = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/[/:]/g, '-').replace(', ', '_');
+    await api('/movatak/admin/leads/' + leadId + '/anexos', {
+      method: 'POST', body: JSON.stringify({ nome_arquivo: 'Print ' + carimbo + '.' + ext, tipo: file.type || 'image/png', base64 })
+    });
+    if (typeof carregarAnexosLead === 'function') carregarAnexosLead(leadId);
+    mostrarToast('Print salvo no histórico!', 'sucesso');
+  } catch (e) {
+    mostrarToast('Erro ao salvar print: ' + e.message, 'erro');
+    if (typeof carregarAnexosLead === 'function') carregarAnexosLead(leadId);
+  }
+}
+
+// true se algum elemento que casa com o seletor está de fato renderizado na tela
+// (cobre as cópias duplicadas painel/modal — vale a que estiver visível).
+function _algumElVisivel(sel) {
+  return Array.prototype.some.call(document.querySelectorAll(sel), el => el && el.getClientRects().length > 0);
+}
+
+// Liga (uma única vez) o "colar em qualquer lugar" do painel do lead:
+//  - Ctrl+V com imagem e a aba Histórico visível → salva nos Documentos.
+//  - Ctrl+V com imagem na Conversa               → encaixa no compositor (revisar e enviar).
+//  - Ctrl+V com texto / sem imagem               → comportamento nativo (não interfere).
+// A textarea da conversa já trata o próprio paste (painelColarArea + preventDefault);
+// aqui pulamos quando o evento já foi tratado, pra não duplicar.
+let _colarPainelLigado = false;
+function ativarColarGlobalPainel() {
+  if (_colarPainelLigado) return;
+  _colarPainelLigado = true;
+  document.addEventListener('paste', function (ev) {
+    if (ev.defaultPrevented) return;              // já tratado (ex: textarea da conversa)
+    const leadId = window._painelLeadId;
+    if (!leadId) return;                          // nenhum lead aberto
+    const itens = (ev.clipboardData && ev.clipboardData.items) ? ev.clipboardData.items : [];
+    let file = null;
+    for (let i = 0; i < itens.length; i++) {
+      const it = itens[i];
+      if (it.kind === 'file' && it.type && it.type.indexOf('image/') === 0) { file = it.getAsFile(); break; }
+    }
+    if (!file) return;                            // sem imagem: deixa colar normal
+    const histVisivel = _algumElVisivel('[id="painel-body-historico"]');
+    const convVisivel = _algumElVisivel('[id="painel-body-conversa"]');
+    if (!histVisivel && !convVisivel) return;     // painel do lead não está à mostra
+    ev.preventDefault();
+    if (histVisivel) enviarImagemColadaHistorico(leadId, file);
+    else uploadArquivoPainel(file);               // conversa: encaixa no compositor
+  });
 }
 
 // Grava áudio do microfone (clique pra começar, clique de novo pra parar e anexar).
@@ -3415,6 +3479,7 @@ function renderHistoricoPainel(data) {
             accept=".pdf,.jpg,.jpeg,.png,.webp,.gif,.doc,.docx,.xls,.xlsx,.txt,.csv">
         </label>
       </div>
+      <div class="fu-hint" style="font-size:10px;margin:-2px 0 8px">📋 Dica: copie um print e cole com Ctrl+V pra salvar aqui.</div>
       <div id="lista-anexos-lead"><div class="fu-hint" style="font-size:11px">Carregando documentos...</div></div>
     </div>`;
 
