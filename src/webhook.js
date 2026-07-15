@@ -321,8 +321,10 @@ async function handleZapi(req, res) {
     const phoneRaw   = String(body.phone || '');
     // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
     let telefone     = extrairTelefonePayload(body);
-    const texto      = (body.text && body.text.message) ? body.text.message
-                       : (typeof body.text === 'string' ? body.text : '');
+    // Usa o helper que também captura a LEGENDA de mídia (image/video/document.caption
+    // e body.caption). Antes ficava só em body.text, então mídia com legenda perdia o
+    // texto — só o anexo era gravado.
+    const texto      = extrairTextoPayloadZapi(body);
     const replyPayload = extrairReplyPayloadZapi(body);
 
 
