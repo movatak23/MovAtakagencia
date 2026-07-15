@@ -2356,7 +2356,8 @@ function abrirLightbox(url) {
   const baixar = document.getElementById('lightbox-baixar');
   if (!lb || !img) return;
   img.src = url;
-  if (baixar) baixar.href = url;
+  window._lightboxUrl = url;
+  if (baixar) baixar.href = url; // fallback p/ "salvar como" (botão direito)
   lb.style.display = 'flex';
 }
 function fecharLightbox() {
@@ -9826,7 +9827,7 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 
 <div id="lightbox-img" onclick="fecharLightbox()" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.92);align-items:center;justify-content:center;cursor:zoom-out">
   <button onclick="fecharLightbox()" title="Fechar" style="position:absolute;top:18px;right:22px;background:rgba(255,255,255,.15);border:none;color:#fff;font-size:22px;width:42px;height:42px;border-radius:50%;cursor:pointer;line-height:1">✕</button>
-  <a id="lightbox-baixar" href="#" download onclick="event.stopPropagation()" title="Baixar imagem" style="position:absolute;top:18px;right:74px;background:rgba(255,255,255,.15);color:#fff;font-size:18px;width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
+  <a id="lightbox-baixar" href="#" download onclick="event.stopPropagation();event.preventDefault();baixarMidia(window._lightboxUrl, event)" title="Baixar imagem" style="position:absolute;top:18px;right:74px;background:rgba(255,255,255,.15);color:#fff;font-size:18px;width:42px;height:42px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;text-decoration:none">⬇</a>
   <img id="lightbox-img-el" src="" onclick="event.stopPropagation()" style="max-width:92vw;max-height:88vh;border-radius:8px;box-shadow:0 10px 50px rgba(0,0,0,.6);object-fit:contain">
 </div>
 
