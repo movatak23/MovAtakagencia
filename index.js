@@ -1982,7 +1982,7 @@ rotasAdmin.register(app, {
   MOVATAK_DEBUG, MOVATAK_VERSION, NICHO_TEMPLATES, R2_BUCKET, R2_ListBucketsCommand,
   R2_PRONTO, TEMPLATES_FOLLOWUP, ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, aplicarTemplateNichoCliente,
   authMovatak, authMovatakOuApp, axios, buscarColunaAgenda, buscarGooglePlaces,
-  chamarHaiku, config, conflitoAgenda, csvEscape, emitirMensagemApagada, emitirMensagemLead,
+  chamarHaiku, config, conflitoAgenda, csvEscape, emitirLeadFlags, emitirMensagemApagada, emitirMensagemLead,
   enviarFollowupsPendentesDoLead, erroEstruturaBanco, etapaSistemaPorSlug, exigeAgendamento, exigeCampanha,
   exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
   exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
@@ -2008,7 +2008,7 @@ rotasAdmin.register(app, {
 // referenciam e que ainda vive no index.js ou em modulos ja extraidos.
 rotasVendedor.register(app, {
   ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, authVendedor, axios, buscarColunaAgenda,
-  conflitoAgenda, emitirMensagemApagada, emitirMensagemLead, enviarFollowupsPendentesDoLead, etapaSistemaPorSlug,
+  conflitoAgenda, emitirLeadFlags, emitirMensagemApagada, emitirMensagemLead, enviarFollowupsPendentesDoLead, etapaSistemaPorSlug,
   garantirColunasVendedoresPortal, garantirEstruturaAgenda, garantirEstruturaFunil, garantirEstruturaMensagensRapidas, garantirEstruturaQuestionario,
   hashSenha, iniciarQuestionarioPorTemplate, limparPayloadAvancado, limparPedidoAtendente, marcarChatLidoNoZap,
   montarPayloadRespostaZapi, moverLeadParaColunaFunil, query, registrarConversa, registrarEventoLead,

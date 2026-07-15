@@ -17,7 +17,7 @@ function register(app, deps) {
     MOVATAK_DEBUG, MOVATAK_VERSION, NICHO_TEMPLATES, R2_BUCKET, R2_ListBucketsCommand,
     R2_PRONTO, TEMPLATES_FOLLOWUP, ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, aplicarTemplateNichoCliente,
     authMovatak, authMovatakOuApp, axios, buscarColunaAgenda, buscarGooglePlaces,
-    chamarHaiku, config, conflitoAgenda, csvEscape, emitirMensagemApagada, emitirMensagemLead,
+    chamarHaiku, config, conflitoAgenda, csvEscape, emitirLeadFlags, emitirMensagemApagada, emitirMensagemLead,
     enviarFollowupsPendentesDoLead, erroEstruturaBanco, etapaSistemaPorSlug, exigeAgendamento, exigeCampanha,
     exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
     exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
@@ -675,6 +675,14 @@ app.patch('/movatak/admin/leads/:id/setor', ...exigeLead, async (req, res) => {
         `UPDATE movatak_leads SET funil_coluna_id = $1, atualizado_em = NOW() WHERE id = $2`,
         [colunaDestino.id, req.params.id]
       );
+    }
+
+    // Ao chegar num setor DIFERENTE, marca como não lida pra equipe do destino ver
+    // que há um lead novo aguardando (mesma marcação de "mensagem não lida" do inbox).
+    // Emite lead:flags pra aparecer na hora nos painéis abertos do destino.
+    if (Number(leadAtual.setor_id) !== setorDestinoId) {
+      await query(`UPDATE movatak_leads SET nao_lida = true WHERE id = $1`, [req.params.id]).catch(() => null);
+      emitirLeadFlags(leadAtual.cliente_id, Number(req.params.id), { nao_lida: true });
     }
 
     await registrarEventoLead(

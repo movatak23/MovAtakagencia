@@ -14,7 +14,7 @@
 function register(app, deps) {
   const {
     ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, authVendedor, axios, buscarColunaAgenda,
-    conflitoAgenda, emitirMensagemApagada, emitirMensagemLead, enviarFollowupsPendentesDoLead, etapaSistemaPorSlug,
+    conflitoAgenda, emitirLeadFlags, emitirMensagemApagada, emitirMensagemLead, enviarFollowupsPendentesDoLead, etapaSistemaPorSlug,
     garantirColunasVendedoresPortal, garantirEstruturaAgenda, garantirEstruturaFunil, garantirEstruturaMensagensRapidas, garantirEstruturaQuestionario,
     hashSenha, iniciarQuestionarioPorTemplate, limparPayloadAvancado, limparPedidoAtendente, marcarChatLidoNoZap,
     montarPayloadRespostaZapi, moverLeadParaColunaFunil, query, registrarConversa, registrarEventoLead,
@@ -418,6 +418,11 @@ app.patch('/movatak/vendedor/leads/:id/setor', authVendedor, async (req, res) =>
     );
     const colunaDestino = colunaR.rows[0] || null;
     await query(`UPDATE movatak_leads SET setor_id=$1, funil_coluna_id=COALESCE($2, funil_coluna_id), atualizado_em=NOW() WHERE id=$3`, [setorDestinoId, colunaDestino ? colunaDestino.id : null, lead.id]);
+    // Setor diferente: marca não lida pra equipe do destino ver o lead novo aguardando.
+    if (Number(lead.setor_id) !== setorDestinoId) {
+      await query(`UPDATE movatak_leads SET nao_lida = true WHERE id = $1`, [lead.id]).catch(() => null);
+      emitirLeadFlags(lead.cliente_id, Number(lead.id), { nao_lida: true });
+    }
     await registrarEventoLead(lead.id, lead.cliente_id, 'transferencia_setor_vendedor', 'Atendimento transferido pelo vendedor', { setor_destino_id: setorDestinoId, coluna_destino_id: colunaDestino ? colunaDestino.id : null, vendedor_id: req.vendedor.id }).catch(() => null);
     res.json({ ok: true, setor_id: setorDestinoId, coluna_destino: colunaDestino ? colunaDestino.nome : null });
   } catch (e) { res.status(500).json({ error: e.message }); }
