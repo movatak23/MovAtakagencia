@@ -7161,11 +7161,6 @@ function iniciarPaginaCaptacao() {
   main.className = '';
   main.innerHTML = `
     <div style="max-width:1100px;margin:0 auto;padding:24px 16px">
-      <div id="cap-funil-painel" class="panel" style="margin-bottom:16px">
-        <div class="panel-title">Funil de captação</div>
-        <div id="cap-funil-corpo" class="fu-hint" style="margin-top:10px">Carregando…</div>
-      </div>
-
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-title">🎯 Número de prospecção</div>
         <div class="fu-hint" style="margin-top:4px">A prospecção pode sair de uma instância dedicada (recomendado) ou do número principal do cliente. Configure por cliente.</div>
@@ -7203,6 +7198,11 @@ function iniciarPaginaCaptacao() {
           </div>
         </div>
       </div>
+      <div id="cap-funil-painel" class="panel" style="margin-bottom:16px">
+        <div class="panel-title">Funil de captação</div>
+        <div id="cap-funil-corpo" class="fu-hint" style="margin-top:10px">Carregando…</div>
+      </div>
+
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-title">Buscar leads</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
