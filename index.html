@@ -7836,6 +7836,7 @@ async function iniciarPaginaFunilAtendimento() {
   }
   restaurarLayoutFunil();
   try { restaurarSomMensagem(); } catch (e) { console.warn('[som] init:', e.message); }
+  await carregarClientesDestinoFunil();
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
   montarBotaoFunilView(); // injeta o botao Clean/Completo na toolbar deste funil (modal)
@@ -8649,6 +8650,13 @@ function renderFunilAtendimento() {
           <input type="checkbox" ${col.ia_ativa ? 'checked' : ''} onchange="toggleIAColuna(${col.id}, this.checked)" style="cursor:pointer"> 🤖 AI
         </label>
       </div>
+      <div class="funil-col-transfer" style="margin-top:8px">
+        <select title="Ao entrar nesta coluna, o lead qualificado é transferido para o cliente escolhido (Prospecção → CRM principal)" onchange="salvarTransferColuna(${col.id}, this.value)"
+          style="width:100%;font-size:11px;padding:6px 8px;background:var(--bg4);border:1px solid ${col.transfere_para_cliente_id ? 'var(--green)' : 'var(--border2)'};border-radius:7px;color:var(--text);font-family:var(--sans)">
+          <option value="">↪️ Não transferir</option>
+          ${(_funilClientesDestino || []).filter(c => Number(c.id) !== Number(funilState.clienteId)).map(c => `<option value="${c.id}" ${Number(c.id) === Number(col.transfere_para_cliente_id) ? 'selected' : ''}>↪️ Transferir p/ ${escapeHtml(c.nome || ('Cliente ' + c.id))}</option>`).join('')}
+        </select>
+      </div>
       </div><!-- /funil-col-config -->
       <div class="funil-cards">
         ${leads.length ? leads.map(lead => renderFunilCard(lead, col.id)).join('') : '<div class="funil-empty">Sem leads nesta etapa.</div>'}
@@ -9147,6 +9155,32 @@ async function toggleAusenciaColuna(colunaId, ativa) {
 // Liga/desliga a IA de automação nesta coluna. Quando ligada, a IA interpreta
 // a mensagem de tráfego do lead e encaixa na campanha/automação certa (fallback
 // do casamento por gatilho). Se não tiver certeza, passa para humano.
+// [prospeccao] Lista de clientes-destino para o seletor de transferencia da coluna.
+// Carregada uma vez no boot do funil; o render le deste cache.
+let _funilClientesDestino = [];
+async function carregarClientesDestinoFunil() {
+  try {
+    const r = await api('/movatak/admin/clientes');
+    _funilClientesDestino = Array.isArray(r) ? r : (r.clientes || []);
+  } catch (e) { _funilClientesDestino = []; }
+}
+
+// Marca/desmarca a coluna como gatilho de transferencia para um cliente destino.
+async function salvarTransferColuna(colunaId, clienteId) {
+  const status = document.getElementById('funil-status');
+  try {
+    await api('/movatak/admin/funil/colunas/' + colunaId + '/transferir', {
+      method: 'PATCH',
+      body: JSON.stringify({ transfere_para_cliente_id: clienteId || null })
+    });
+    const col = (funilState.colunas || []).find(c => Number(c.id) === Number(colunaId));
+    if (col) col.transfere_para_cliente_id = clienteId ? Number(clienteId) : null;
+    if (status) { status.style.color = 'var(--green)'; status.textContent = clienteId ? '↪️ Coluna marcada: leads qualificados serão transferidos.' : 'Transferência desativada nesta coluna.'; }
+  } catch (e) {
+    if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao salvar transferência: ' + (e.message || e); }
+  }
+}
+
 async function toggleIAColuna(colunaId, ativa) {
   const status = document.getElementById('funil-status');
   try {

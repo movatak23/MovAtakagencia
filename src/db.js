@@ -355,7 +355,8 @@ async function garantirEstruturaFunil() {
     ADD COLUMN IF NOT EXISTS agenda_tipo TEXT,
     ADD COLUMN IF NOT EXISTS agenda_status TEXT,
     ADD COLUMN IF NOT EXISTS criado_em TIMESTAMPTZ DEFAULT NOW(),
-    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW()`).catch(() => null);
+    ADD COLUMN IF NOT EXISTS atualizado_em TIMESTAMPTZ DEFAULT NOW(),
+    ADD COLUMN IF NOT EXISTS transfere_para_cliente_id INTEGER`).catch(() => null);
 
   // Configuração de ausência do cliente:
   //   ausencia_msg_padrao  → mensagem disparada nos horários recorrentes de ausência
@@ -383,6 +384,11 @@ async function garantirEstruturaFunil() {
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads
     ADD COLUMN IF NOT EXISTS funil_coluna_id INTEGER`).catch(() => null);
+  // [prospeccao] Transferencia de lead qualificado entre clientes: marca no lead de
+  // ORIGEM (idempotencia + rastro). Nullable/default NULL = nao muda nada no que ja existe.
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS transferido_em TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS transferido_para_lead_id INTEGER`).catch(() => null);
 
   await query(`ALTER TABLE movatak_leads
     ADD COLUMN IF NOT EXISTS convertido_em TIMESTAMPTZ`).catch(() => null);

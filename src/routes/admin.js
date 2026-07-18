@@ -3026,7 +3026,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
       filtroColunaSetorSql = ' AND setor_id = $2';
     }
     const colunasRes = await query(
-      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, ia_ativa, nicho_template, agenda_tipo, agenda_status
+      `SELECT id, nome, slug, ordem, cor, etapa_sistema, sincronizar_whatsapp, zapi_tag_id, zapi_sync_erro, comando, setor_id, ausencia_ativa, ia_ativa, nicho_template, agenda_tipo, agenda_status, transfere_para_cliente_id
          FROM movatak_funil_colunas
         WHERE cliente_id=$1 AND ativo=true${filtroColunaSetorSql}
         ORDER BY ordem ASC, id ASC`,
@@ -3381,6 +3381,26 @@ app.patch('/movatak/admin/funil/colunas/:id/ia', ...exigeColuna, async (req, res
     const r = await query(
       `UPDATE movatak_funil_colunas SET ia_ativa = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
       [ativa, req.params.id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// [prospeccao] Marca (ou desmarca) uma coluna como "gatilho de transferencia":
+// leads que entram nela sao transferidos para o cliente destino. NULL = desligado.
+app.patch('/movatak/admin/funil/colunas/:id/transferir', ...exigeColuna, async (req, res) => {
+  try {
+    const raw = req.body ? req.body.transfere_para_cliente_id : null;
+    const destino = (raw === '' || raw == null) ? null : Number(raw);
+    if (destino != null && !Number.isFinite(destino)) return res.status(400).json({ error: 'Cliente destino inválido.' });
+    if (destino != null) {
+      const c = await query('SELECT id FROM movatak_clientes WHERE id=$1', [destino]);
+      if (!c.rows.length) return res.status(400).json({ error: 'Cliente destino não existe.' });
+    }
+    const r = await query(
+      `UPDATE movatak_funil_colunas SET transfere_para_cliente_id = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
+      [destino, req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
