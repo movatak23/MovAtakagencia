@@ -1901,22 +1901,89 @@ async function sincronizarColunaComWhatsapp(colunaId) {
 // Admin only. Não dispara mensagem automática — promoção é sempre manual.
 // ============================================================
 
+// [prospeccao] Expande UM nicho em várias variantes de busca de alta cobertura via IA
+// (sinônimos + categorias adjacentes + gírias do setor). Ex.: "provedor" ->
+// ["provedor", "provedor de internet", "internet fibra óptica", "banda larga", ...].
+// Reusa o motor Haiku EXISTENTE (chamarHaiku). Sempre inclui o nicho original como
+// 1ª variante e degrada p/ [nicho] em qualquer falta/erro (IA é OPCIONAL — sem
+// ANTHROPIC_API_KEY a captação segue funcionando, só sem o leque de sinônimos).
+async function expandirNichoIA(nicho, cidade) {
+  const base = String(nicho || '').trim();
+  if (!base) return [];
+  if (!process.env.ANTHROPIC_API_KEY) return [base];
+  try {
+    const system = 'Você expande um nicho de negócio em termos de busca para o Google Maps no Brasil. '
+      + 'Devolva SOMENTE um array JSON de 4 a 6 strings curtas: sinônimos, categorias adjacentes e gírias do setor '
+      + 'que ajudem a achar MAIS empresas desse mesmo nicho. Sem cidade, sem explicação, sem markdown. '
+      + 'Ex.: para "provedor" -> ["provedor de internet","internet fibra óptica","banda larga","internet via rádio","telecom"].';
+    const user = `Nicho: ${base}${cidade ? ` (cidade: ${cidade})` : ''}`;
+    const bruto = await chamarHaiku(system, user);
+    let arr = [];
+    try {
+      const m = String(bruto).match(/\[[\s\S]*\]/); // isola o array mesmo se vier com texto em volta
+      arr = JSON.parse(m ? m[0] : bruto);
+    } catch (e) {
+      arr = String(bruto).split('\n').map(s => s.replace(/^[\s\-*\d.]+/, '').replace(/^["']|["'],?$/g, '').trim());
+    }
+    const vistos = new Set();
+    const variantes = [];
+    for (const t of [base, ...(Array.isArray(arr) ? arr : [])]) {
+      const v = String(t || '').trim();
+      const chave = v.toLowerCase();
+      if (v && !vistos.has(chave)) { vistos.add(chave); variantes.push(v); }
+      if (variantes.length >= 6) break;
+    }
+    return variantes.length ? variantes : [base];
+  } catch (e) {
+    console.error('[captacao] expandirNichoIA falhou, usando nicho puro:', e.message);
+    return [base];
+  }
+}
+
 // Busca no Google Places (Text Search) e enriquece cada resultado com telefone via Place Details.
 // Retorna { itens, textSearchCalls, placeDetailsCalls } para contabilizar consumo da cota.
+// POTENCIALIZAÇÃO (v2.13): (1) a IA expande o nicho em várias buscas; (2) cada busca
+// pagina (next_page_token, até 3 páginas = 60 vs 20 antes); (3) deduplica place_id ANTES
+// do Place Details (o SKU caro) p/ não pagar detalhe repetido. Teto de detalhes por busca
+// protege a cota. INERTE se a IA/paginação não retornarem nada além do de sempre.
 async function buscarGooglePlaces(nicho, cidade) {
   const key = process.env.GOOGLE_PLACES_API_KEY;
   if (!key) throw new Error('GOOGLE_PLACES_API_KEY não configurada no Railway.');
-  const termo = `${nicho} em ${cidade}`;
-  const textUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(termo)}&language=pt-BR&region=br&key=${key}`;
+  const variantes = await expandirNichoIA(nicho, cidade);
+  const tetoDetalhes = Math.max(20, Number(process.env.CAPTACAO_MAX_DETALHES_BUSCA || 120));
   let textSearchCalls = 0, placeDetailsCalls = 0;
-  const textResp = await axios.get(textUrl);
-  textSearchCalls++;
-  if (textResp.data.status && textResp.data.status !== 'OK' && textResp.data.status !== 'ZERO_RESULTS') {
-    throw new Error('Google Places: ' + textResp.data.status + (textResp.data.error_message ? ' — ' + textResp.data.error_message : ''));
+  // Fase A (barata): Text Search de cada variante, com paginação, juntando place_ids únicos.
+  const unicos = new Map(); // place_id -> resultado básico do text search
+  for (const termo of variantes) {
+    let pageToken = null, pagina = 0;
+    do {
+      const q = `${termo} em ${cidade}`;
+      const textUrl = pageToken
+        ? `https://maps.googleapis.com/maps/api/place/textsearch/json?pagetoken=${pageToken}&key=${key}`
+        : `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(q)}&language=pt-BR&region=br&key=${key}`;
+      const textResp = await axios.get(textUrl);
+      textSearchCalls++;
+      const st = textResp.data.status;
+      if (st && st !== 'OK' && st !== 'ZERO_RESULTS') {
+        // 1ª variante sem token: erro real (quota/chave). Nas demais, não derruba a busca toda.
+        if (!pageToken && termo === variantes[0]) {
+          throw new Error('Google Places: ' + st + (textResp.data.error_message ? ' — ' + textResp.data.error_message : ''));
+        }
+        break;
+      }
+      for (const r of textResp.data.results || []) {
+        if (r.place_id && !unicos.has(r.place_id)) unicos.set(r.place_id, r);
+      }
+      pageToken = textResp.data.next_page_token || null;
+      pagina++;
+      if (pageToken && pagina < 3) await sleep(2000); // token só fica válido após ~2s
+    } while (pageToken && pagina < 3);
+    if (unicos.size >= tetoDetalhes) break; // já temos place_ids suficientes p/ o teto
   }
-  const results = textResp.data.results || [];
+  // Fase B (cara): Place Details só dos place_ids únicos, respeitando o teto de cota.
+  const alvos = [...unicos.values()].slice(0, tetoDetalhes);
   const detalhados = [];
-  for (const r of results.slice(0, 20)) {
+  for (const r of alvos) {
     try {
       const detUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${r.place_id}&fields=name,formatted_phone_number,international_phone_number,formatted_address&language=pt-BR&key=${key}`;
       const detResp = await axios.get(detUrl);
@@ -1933,7 +2000,7 @@ async function buscarGooglePlaces(nicho, cidade) {
       });
     } catch (e) { /* ignora item individual com erro, segue os demais */ }
   }
-  return { itens: detalhados, textSearchCalls, placeDetailsCalls };
+  return { itens: detalhados, textSearchCalls, placeDetailsCalls, variantes };
 }
 
 // Cota grátis mensal ESTIMADA por SKU (Google mudou p/ cotas por SKU em 2025).

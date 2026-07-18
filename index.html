@@ -7502,6 +7502,7 @@ async function captacaoBuscar() {
       timeoutMs: 60000
     });
     let txt = `Encontrados: ${r.encontrados} · Novos: ${r.novos} · Já existiam: ${r.existentes}` + (r.semTelefone ? ` · Sem telefone: ${r.semTelefone}` : '');
+    if (r.variantes && r.variantes.length > 1) txt += ` · IA buscou ${r.variantes.length} variações do nicho`;
     if (r.verificandoWhats) txt += ' · Verificando WhatsApp em segundo plano…';
     if (status) status.textContent = txt;
     document.getElementById('cap-filtro-promovido').value = '0';

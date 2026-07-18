@@ -3637,7 +3637,7 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
     }
     const nichoT = String(nicho).trim();
     const cidadeT = String(cidade).trim();
-    const { itens: encontrados, textSearchCalls, placeDetailsCalls } = await buscarGooglePlaces(nichoT, cidadeT);
+    const { itens: encontrados, textSearchCalls, placeDetailsCalls, variantes } = await buscarGooglePlaces(nichoT, cidadeT);
     let novos = 0, semTelefone = 0, existentes = 0;
     const novosIds = [];
     for (const item of encontrados) {
@@ -3668,7 +3668,7 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
     // fallback p/ os que ficarem indefinidos. Só roda se a instância de captação
     // estiver configurada no Railway; senão fica NULL e a verificação segue opcional.
     const autoVerificar = !!(process.env.ZAPI_CAPTACAO_INSTANCE && process.env.ZAPI_CAPTACAO_TOKEN) && novosIds.length > 0;
-    res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone, verificandoWhats: autoVerificar });
+    res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone, verificandoWhats: autoVerificar, variantes: Array.isArray(variantes) ? variantes : undefined });
 
     if (autoVerificar) {
       (async () => {
