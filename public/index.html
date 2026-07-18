@@ -539,31 +539,6 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label id="lbl-client-token">Z-API CLIENT TOKEN</label>
         <input type="text" id="f-client-token" placeholder="client-token">
       </div>
-      <div class="form-field full so-admin" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
-        <label>🎯 PROSPECÇÃO — NÚMERO QUE ENVIA</label>
-        <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
-          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:400;font-size:13px">
-            <input type="radio" name="f-prosp-modo" value="dedicada" checked onchange="atualizarProspeccaoUI()" style="margin-top:3px;cursor:pointer">
-            <span><strong>Instância dedicada</strong> <span style="font-size:11px;color:var(--green)">(recomendado)</span><br><span style="font-size:11px;color:var(--text2)">Número Z-API separado só pra prospecção — isola o risco de bloqueio, longe do número principal.</span></span>
-          </label>
-          <div id="f-prosp-dedicada" style="display:flex;flex-direction:column;gap:6px;padding-left:24px">
-            <input type="text" id="f-prosp-instance" placeholder="Z-API Instance ID (prospecção)">
-            <input type="text" id="f-prosp-token" placeholder="Z-API Token (prospecção) — deixe em branco p/ manter">
-            <input type="text" id="f-prosp-ct" placeholder="Z-API Client-Token (prospecção) — deixe em branco p/ manter">
-          </div>
-          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:400;font-size:13px">
-            <input type="radio" name="f-prosp-modo" value="principal" onchange="atualizarProspeccaoUI()" style="margin-top:3px;cursor:pointer">
-            <span><strong>Usar o número principal</strong><br><span style="font-size:11px;color:var(--text2)">Sem número extra — a prospecção sai do mesmo número que atende seus clientes.</span></span>
-          </label>
-          <div id="f-prosp-aviso" style="display:none;background:rgba(255,90,90,.12);border:2px solid var(--red);border-radius:10px;padding:12px 14px">
-            <div style="display:flex;gap:8px;align-items:center;color:var(--red);font-weight:700;margin-bottom:6px">⚠️ Risco de banir o número principal</div>
-            <div style="font-size:12px;color:var(--red);line-height:1.6">Prospecção fria (mensagens não solicitadas em massa) é o principal motivo de bloqueio pela Meta. No número principal, você arrisca o número que atende <strong>todos</strong> os seus clientes e leads. Se ele cair, você perde atendimento, histórico e automações até recuperar — se recuperar.</div>
-            <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer;font-size:12px;color:var(--red);font-weight:600">
-              <input type="checkbox" id="f-prosp-ciente"> Estou ciente do risco e quero usar o número principal
-            </label>
-          </div>
-        </div>
-      </div>
       <div class="form-field so-admin">
         <label>TETO DE CPL (R$)</label>
         <input type="number" id="f-cpl" placeholder="25.00">
@@ -1937,12 +1912,6 @@ function abrirModal() {
   ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos','nicho'].forEach(id => {
     document.getElementById('f-' + id).value = '';
   });
-  // [prospeccao] reset da seção de prospecção (novo cliente entra como 'dedicada').
-  ['prosp-instance','prosp-token','prosp-ct'].forEach(id => { const el = document.getElementById('f-' + id); if (el) el.value = ''; });
-  const radioDed = document.querySelector('input[name="f-prosp-modo"][value="dedicada"]');
-  if (radioDed) radioDed.checked = true;
-  const pCiente0 = document.getElementById('f-prosp-ciente'); if (pCiente0) pCiente0.checked = false;
-  atualizarProspeccaoUI();
   setPermissoesPortal();
 }
 
@@ -1977,15 +1946,6 @@ async function abrirEdicao(id) {
     document.getElementById('f-trigger').value  = c.trigger_msg || '';
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
-    // [prospeccao] modo + instância dedicada (tokens sao write-only, ficam em branco).
-    const modoP = c.prospeccao_modo === 'principal' ? 'principal' : 'dedicada';
-    const radioP = document.querySelector('input[name="f-prosp-modo"][value="' + modoP + '"]');
-    if (radioP) radioP.checked = true;
-    const pInst = document.getElementById('f-prosp-instance'); if (pInst) pInst.value = c.prospeccao_zapi_instance || '';
-    const pTok = document.getElementById('f-prosp-token'); if (pTok) pTok.value = '';
-    const pCt = document.getElementById('f-prosp-ct'); if (pCt) pCt.value = '';
-    const pCiente = document.getElementById('f-prosp-ciente'); if (pCiente) pCiente.checked = false;
-    atualizarProspeccaoUI();
     const nichoEl = document.getElementById('f-nicho'); if (nichoEl) nichoEl.value = c.nicho || '';
     setPermissoesPortal(c.permissoes_portal || {});
     const bvm1 = document.getElementById('f-boasvindas-msg1');
@@ -2038,14 +1998,6 @@ async function salvarEdicao() {
     return;
   }
 
-  // [prospeccao] Trava: usar o número principal exige marcar a ciência do risco de ban.
-  const prospModo = (document.querySelector('input[name="f-prosp-modo"]:checked') || {}).value || 'dedicada';
-  const prospCiente = !!(document.getElementById('f-prosp-ciente') && document.getElementById('f-prosp-ciente').checked);
-  if (prospModo === 'principal' && !prospCiente) {
-    document.getElementById('modal-err').textContent = '⚠️ Para usar o número PRINCIPAL na prospecção, marque que está ciente do risco de banimento.';
-    return;
-  }
-
   document.getElementById('btn-salvar').textContent = 'Salvando...';
   document.getElementById('modal-err').textContent = '';
 
@@ -2064,11 +2016,7 @@ async function salvarEdicao() {
         ia_tom: (document.getElementById('f-ia-tom')?.value || '').trim(),
         ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim(),
         portal_email: (document.getElementById('f-portal-email')?.value || '').trim(),
-        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim(),
-        prospeccao_modo: prospModo,
-        prospeccao_zapi_instance: (document.getElementById('f-prosp-instance')?.value || '').trim(),
-        prospeccao_zapi_token: (document.getElementById('f-prosp-token')?.value || '').trim(),
-        prospeccao_zapi_client_token: (document.getElementById('f-prosp-ct')?.value || '').trim()
+        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim()
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';
@@ -7217,6 +7165,44 @@ function iniciarPaginaCaptacao() {
         <div class="panel-title">Funil de captação</div>
         <div id="cap-funil-corpo" class="fu-hint" style="margin-top:10px">Carregando…</div>
       </div>
+
+      <div class="panel" style="margin-bottom:16px">
+        <div class="panel-title">🎯 Número de prospecção</div>
+        <div class="fu-hint" style="margin-top:4px">A prospecção pode sair de uma instância dedicada (recomendado) ou do número principal do cliente. Configure por cliente.</div>
+        <div style="display:flex;gap:10px;align-items:center;margin:12px 0 4px;flex-wrap:wrap">
+          <select id="cap-prosp-cliente" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px;max-width:280px" onchange="captacaoCarregarProspeccao(this.value)">
+            <option value="">Selecione o cliente…</option>
+          </select>
+        </div>
+        <div id="cap-prosp-config" style="display:none;margin-top:8px">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px">
+              <input type="radio" name="f-prosp-modo" value="dedicada" checked onchange="atualizarProspeccaoUI()" style="margin-top:3px;cursor:pointer">
+              <span><strong>Instância dedicada</strong> <span style="font-size:11px;color:var(--green)">(recomendado)</span><br><span style="font-size:11px;color:var(--text2)">Número Z-API separado só pra prospecção — isola o risco de bloqueio, longe do número principal.</span></span>
+            </label>
+            <div id="f-prosp-dedicada" style="display:flex;flex-direction:column;gap:6px;padding-left:24px">
+              <input type="text" id="f-prosp-instance" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" placeholder="Z-API Instance ID (prospecção)">
+              <input type="text" id="f-prosp-token" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" placeholder="Z-API Token (prospecção) — deixe em branco p/ manter">
+              <input type="text" id="f-prosp-ct" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" placeholder="Z-API Client-Token (prospecção) — deixe em branco p/ manter">
+            </div>
+            <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-size:13px">
+              <input type="radio" name="f-prosp-modo" value="principal" onchange="atualizarProspeccaoUI()" style="margin-top:3px;cursor:pointer">
+              <span><strong>Usar o número principal</strong><br><span style="font-size:11px;color:var(--text2)">Sem número extra — a prospecção sai do mesmo número que atende os clientes/leads.</span></span>
+            </label>
+            <div id="f-prosp-aviso" style="display:none;background:rgba(255,90,90,.12);border:2px solid var(--red);border-radius:10px;padding:12px 14px">
+              <div style="display:flex;gap:8px;align-items:center;color:var(--red);font-weight:700;margin-bottom:6px">⚠️ Risco de banir o número principal</div>
+              <div style="font-size:12px;color:var(--red);line-height:1.6">Prospecção fria (mensagens não solicitadas em massa) é o principal motivo de bloqueio pela Meta. No número principal, você arrisca o número que atende <strong>todos</strong> os clientes e leads. Se ele cair, perde atendimento, histórico e automações até recuperar — se recuperar.</div>
+              <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer;font-size:12px;color:var(--red);font-weight:600">
+                <input type="checkbox" id="f-prosp-ciente"> Estou ciente do risco e quero usar o número principal
+              </label>
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
+            <button class="btn-primary" style="width:auto;margin:0;padding:8px 18px;font-size:13px" onclick="captacaoSalvarProspeccao()">Salvar configuração</button>
+            <span id="cap-prosp-status" style="font-size:12px"></span>
+          </div>
+        </div>
+      </div>
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-title">Buscar leads</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
@@ -7366,12 +7352,66 @@ async function captacaoCarregarUso() {
 async function captacaoCarregarClientes() {
   try {
     const r = await api('/movatak/admin/clientes');
-    const sel = document.getElementById('cap-cliente-destino');
-    if (!sel) return;
     const lista = Array.isArray(r) ? r : (r.clientes || []);
-    sel.innerHTML = '<option value="">Cliente destino...</option>' +
-      lista.map(c => `<option value="${c.id}">${escapeHtml(c.nome || ('Cliente ' + c.id))}</option>`).join('');
+    const opts = lista.map(c => `<option value="${c.id}">${escapeHtml(c.nome || ('Cliente ' + c.id))}</option>`).join('');
+    const sel = document.getElementById('cap-cliente-destino');
+    if (sel) sel.innerHTML = '<option value="">Cliente destino...</option>' + opts;
+    const selP = document.getElementById('cap-prosp-cliente');
+    if (selP) selP.innerHTML = '<option value="">Selecione o cliente…</option>' + opts;
   } catch (e) { /* silencioso — barra de promoção só aparece ao selecionar itens */ }
+}
+
+// [prospeccao] Carrega a config de número de prospecção do cliente selecionado.
+async function captacaoCarregarProspeccao(clienteId) {
+  const box = document.getElementById('cap-prosp-config');
+  const st = document.getElementById('cap-prosp-status');
+  if (st) st.textContent = '';
+  if (!box) return;
+  if (!clienteId) { box.style.display = 'none'; return; }
+  try {
+    const c = await api('/movatak/admin/clientes/' + clienteId + '/dados');
+    const modo = c.prospeccao_modo === 'principal' ? 'principal' : 'dedicada';
+    const radio = document.querySelector('input[name="f-prosp-modo"][value="' + modo + '"]');
+    if (radio) radio.checked = true;
+    const pi = document.getElementById('f-prosp-instance'); if (pi) pi.value = c.prospeccao_zapi_instance || '';
+    const pt = document.getElementById('f-prosp-token'); if (pt) pt.value = '';
+    const pc = document.getElementById('f-prosp-ct'); if (pc) pc.value = '';
+    const pci = document.getElementById('f-prosp-ciente'); if (pci) pci.checked = false;
+    box.style.display = 'block';
+    atualizarProspeccaoUI();
+  } catch (e) {
+    box.style.display = 'block';
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao carregar: ' + (e.message || e); }
+  }
+}
+
+// [prospeccao] Salva a config do cliente selecionado. Trava: 'principal' exige ciência do risco.
+async function captacaoSalvarProspeccao() {
+  const clienteId = document.getElementById('cap-prosp-cliente') && document.getElementById('cap-prosp-cliente').value;
+  const st = document.getElementById('cap-prosp-status');
+  if (!clienteId) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Selecione um cliente.'; } return; }
+  const modo = (document.querySelector('input[name="f-prosp-modo"]:checked') || {}).value || 'dedicada';
+  const ciente = !!(document.getElementById('f-prosp-ciente') && document.getElementById('f-prosp-ciente').checked);
+  if (modo === 'principal' && !ciente) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = '⚠️ Para usar o número PRINCIPAL, marque que está ciente do risco de banimento.'; }
+    return;
+  }
+  try {
+    await api('/movatak/admin/clientes/' + clienteId + '/prospeccao', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        prospeccao_modo: modo,
+        prospeccao_zapi_instance: (document.getElementById('f-prosp-instance') && document.getElementById('f-prosp-instance').value || '').trim(),
+        prospeccao_zapi_token: (document.getElementById('f-prosp-token') && document.getElementById('f-prosp-token').value || '').trim(),
+        prospeccao_zapi_client_token: (document.getElementById('f-prosp-ct') && document.getElementById('f-prosp-ct').value || '').trim()
+      })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração salva.'; }
+    const pt = document.getElementById('f-prosp-token'); if (pt) pt.value = '';
+    const pc = document.getElementById('f-prosp-ct'); if (pc) pc.value = '';
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + (e.message || e); }
+  }
 }
 
 async function captacaoCarregarColunas() {

@@ -3739,6 +3739,26 @@ app.get('/movatak/admin/captacao/funil', authMovatakOuApp, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// [prospeccao] Salva a config de número de prospecção de UM cliente (a UI vive na
+// Central de Captação). Write dedicado — só admin. Tokens só sobrescrevem se vierem.
+app.patch('/movatak/admin/clientes/:id/prospeccao', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaCaptacao();
+    const { prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token } = req.body || {};
+    const modo = ['dedicada', 'principal'].includes(prospeccao_modo) ? prospeccao_modo : 'dedicada';
+    const campos = ['prospeccao_modo = $1'];
+    const valores = [modo];
+    let idx = 2;
+    if (prospeccao_zapi_instance !== undefined) { campos.push('prospeccao_zapi_instance = $' + idx); valores.push(prospeccao_zapi_instance ? String(prospeccao_zapi_instance).trim() : null); idx++; }
+    if (prospeccao_zapi_token && String(prospeccao_zapi_token).trim()) { campos.push('prospeccao_zapi_token = $' + idx); valores.push(String(prospeccao_zapi_token).trim()); idx++; }
+    if (prospeccao_zapi_client_token && String(prospeccao_zapi_client_token).trim()) { campos.push('prospeccao_zapi_client_token = $' + idx); valores.push(String(prospeccao_zapi_client_token).trim()); idx++; }
+    valores.push(req.params.id);
+    const r = await query(`UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id`, valores);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
   if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
   try {
