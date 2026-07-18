@@ -8755,12 +8755,13 @@ function toggleFunilView() {
 // Injeta o botao em toda toolbar do funil (cobre painel e modal sem depender do
 // HTML duplicado). Idempotente: nao duplica se ja existe.
 function montarBotaoFunilView() {
-  document.querySelectorAll('.funil-toolbar').forEach(tb => {
+  // Vai na linha "Visual:" (funil-layout-controls, ao lado de Inbox/Kanban/Chat),
+  // que fica sempre visivel — a .funil-toolbar podia estar escondida no layout.
+  document.querySelectorAll('.funil-layout-controls').forEach(tb => {
     if (tb.querySelector('.btn-funil-view')) return;
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'btn-cancel btn-funil-view';
-    b.style.cssText = 'padding:9px 14px';
+    b.className = 'funil-layout-btn btn-funil-view';
     b.addEventListener('click', toggleFunilView);
     tb.appendChild(b);
   });
