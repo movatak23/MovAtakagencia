@@ -3639,6 +3639,7 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
     const cidadeT = String(cidade).trim();
     const { itens: encontrados, textSearchCalls, placeDetailsCalls } = await buscarGooglePlaces(nichoT, cidadeT);
     let novos = 0, semTelefone = 0, existentes = 0;
+    const novosIds = [];
     for (const item of encontrados) {
       if (!item.telefone) { semTelefone++; continue; }
       const r = await query(
@@ -3648,7 +3649,7 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
          RETURNING id`,
         [item.nome, item.telefone, item.endereco, item.categoria, cidadeT, nichoT, item.place_id]
       ).catch((e) => { console.error('[captacao] erro ao inserir lead:', e.message); return { rows: [] }; });
-      if (r.rows.length) novos++; else existentes++;
+      if (r.rows.length) { novos++; novosIds.push(r.rows[0].id); } else existentes++;
     }
     await query(
       `INSERT INTO movatak_captacao_uso (mes, buscas, text_search, place_details, atualizado_em)
@@ -3660,7 +3661,30 @@ app.post('/movatak/admin/captacao/buscar', authMovatakOuApp, async (req, res) =>
          atualizado_em = NOW()`,
       [mesAtualStr(), textSearchCalls, placeDetailsCalls]
     ).catch((e) => console.error('[captacao] erro ao registrar uso:', e.message));
-    res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone });
+
+    // [prospeccao] Verificação automática de WhatsApp: assim que novos leads são
+    // capturados, checa cada número em segundo plano (não segura a resposta). Deixa a
+    // coluna tem_whatsapp pronta sem o operador clicar em nada — o botão manual vira
+    // fallback p/ os que ficarem indefinidos. Só roda se a instância de captação
+    // estiver configurada no Railway; senão fica NULL e a verificação segue opcional.
+    const autoVerificar = !!(process.env.ZAPI_CAPTACAO_INSTANCE && process.env.ZAPI_CAPTACAO_TOKEN) && novosIds.length > 0;
+    res.json({ ok: true, encontrados: encontrados.length, novos, existentes, semTelefone, verificandoWhats: autoVerificar });
+
+    if (autoVerificar) {
+      (async () => {
+        for (const id of novosIds) {
+          try {
+            const lr = await query('SELECT telefone FROM movatak_leads_captacao WHERE id=$1 AND tem_whatsapp IS NULL', [id]);
+            if (!lr.rows.length) continue; // já verificado ou removido
+            const existe = await zapiPhoneExiste(lr.rows[0].telefone);
+            if (existe === true || existe === false) {
+              await query('UPDATE movatak_leads_captacao SET tem_whatsapp=$1 WHERE id=$2', [existe, id]).catch(() => null);
+            } // null: não marca, permite re-tentar pelo botão manual
+          } catch (e) { /* não interrompe os demais */ }
+          await new Promise(r => setTimeout(r, 400)); // throttle leve p/ não estourar a Z-API
+        }
+      })().catch(e => console.error('[captacao] auto-verificar whatsapp:', e.message));
+    }
   } catch (e) { res.status(500).json({ error: e.response?.data?.error_message || e.message }); }
 });
 
@@ -3771,12 +3795,17 @@ app.post('/movatak/admin/captacao/prospectar', authMovatak, async (req, res) => 
     const usados = await query(`SELECT count(*)::int AS n FROM movatak_prospeccao_envios WHERE cliente_id=$1 AND status='enviado' AND criado_em >= date_trunc('day', NOW())`, [clienteId]);
     const disponivel = Math.max(0, teto - (usados.rows[0].n || 0));
     if (disponivel <= 0) return res.status(400).json({ error: 'Teto diário de prospecção já atingido para este cliente (' + teto + ').' });
-    const capR = await query(`SELECT id, nome, telefone FROM movatak_leads_captacao WHERE id = ANY($1::int[]) AND telefone IS NOT NULL AND telefone <> '' AND promovido = false`, [ids]);
+    // Pula números sabidamente SEM WhatsApp (tem_whatsapp = false): disparar pra eles
+    // é envio desperdiçado e ainda soma risco de ban. Mantém os TRUE e os NULL (ainda
+    // não verificados) — a auto-verificação da captação normalmente já resolveu isso.
+    const capR = await query(`SELECT id, nome, telefone FROM movatak_leads_captacao WHERE id = ANY($1::int[]) AND telefone IS NOT NULL AND telefone <> '' AND promovido = false AND tem_whatsapp IS NOT FALSE`, [ids]);
+    const semWhatsR = await query(`SELECT count(*)::int AS n FROM movatak_leads_captacao WHERE id = ANY($1::int[]) AND tem_whatsapp = false`, [ids]);
+    const semWhats = semWhatsR.rows[0].n || 0;
     const alvos = capR.rows.slice(0, disponivel);
-    if (!alvos.length) return res.status(400).json({ error: 'Nenhum lead válido (com telefone e não promovido) na seleção.' });
+    if (!alvos.length) return res.status(400).json({ error: 'Nenhum lead válido para prospectar na seleção (com telefone, não promovido e com WhatsApp).' });
     const throttleMs = Math.max(10, cli.prospeccao_throttle_seg || 45) * 1000;
 
-    res.json({ ok: true, enfileirados: alvos.length, disponivel, teto, modo });
+    res.json({ ok: true, enfileirados: alvos.length, disponivel, teto, modo, puladosSemWhats: semWhats });
 
     // Envio em background com throttle. Volume pequeno (<= teto). Erros por lead
     // sao registrados e nao interrompem os demais.

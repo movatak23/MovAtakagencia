@@ -7467,7 +7467,9 @@ async function captacaoIniciarProspeccao() {
   if (!confirm(aviso)) return;
   try {
     const r = await api('/movatak/admin/captacao/prospectar', { method: 'POST', body: JSON.stringify({ clienteId, ids }) });
-    alert('Prospecção iniciada: ' + (r.enfileirados || 0) + ' na fila (teto/dia: ' + (r.teto || '-') + ', modo: ' + (r.modo || '-') + ').\nA IA assume quando o prospect responder.');
+    let msg = 'Prospecção iniciada: ' + (r.enfileirados || 0) + ' na fila (teto/dia: ' + (r.teto || '-') + ', modo: ' + (r.modo || '-') + ').\nA IA assume quando o prospect responder.';
+    if (r.puladosSemWhats) msg += '\n\n' + r.puladosSemWhats + ' número(s) sem WhatsApp foram pulados automaticamente.';
+    alert(msg);
     if (typeof captacaoCarregarLista === 'function') captacaoCarregarLista();
     if (typeof captacaoCarregarFunil === 'function') captacaoCarregarFunil();
   } catch (e) {
@@ -7500,10 +7502,18 @@ async function captacaoBuscar() {
       body: JSON.stringify({ nicho, cidade }),
       timeoutMs: 60000
     });
-    if (status) status.textContent = `Encontrados: ${r.encontrados} · Novos: ${r.novos} · Já existiam: ${r.existentes}` + (r.semTelefone ? ` · Sem telefone: ${r.semTelefone}` : '');
+    let txt = `Encontrados: ${r.encontrados} · Novos: ${r.novos} · Já existiam: ${r.existentes}` + (r.semTelefone ? ` · Sem telefone: ${r.semTelefone}` : '');
+    if (r.verificandoWhats) txt += ' · Verificando WhatsApp em segundo plano…';
+    if (status) status.textContent = txt;
     document.getElementById('cap-filtro-promovido').value = '0';
     captacaoCarregarLista();
     captacaoCarregarUso();
+    // A auto-verificação de WhatsApp roda no servidor em segundo plano; recarrega a
+    // lista depois de um tempo p/ os ✅/❌ aparecerem sem o operador clicar em nada.
+    if (r.verificandoWhats && r.novos) {
+      const espera = Math.min(30000, 1500 + r.novos * 700);
+      setTimeout(() => { captacaoCarregarLista(); if (status && status.textContent === txt) status.textContent = txt.replace(' · Verificando WhatsApp em segundo plano…', ' · WhatsApp verificado.'); }, espera);
+    }
   } catch (e) {
     if (status) status.textContent = 'Erro: ' + e.message;
   }
