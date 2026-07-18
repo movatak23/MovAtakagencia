@@ -539,6 +539,31 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <label id="lbl-client-token">Z-API CLIENT TOKEN</label>
         <input type="text" id="f-client-token" placeholder="client-token">
       </div>
+      <div class="form-field full so-admin" style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px">
+        <label>🎯 PROSPECÇÃO — NÚMERO QUE ENVIA</label>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px">
+          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:400;font-size:13px">
+            <input type="radio" name="f-prosp-modo" value="dedicada" checked onchange="atualizarProspeccaoUI()" style="margin-top:3px;cursor:pointer">
+            <span><strong>Instância dedicada</strong> <span style="font-size:11px;color:var(--green)">(recomendado)</span><br><span style="font-size:11px;color:var(--text2)">Número Z-API separado só pra prospecção — isola o risco de bloqueio, longe do número principal.</span></span>
+          </label>
+          <div id="f-prosp-dedicada" style="display:flex;flex-direction:column;gap:6px;padding-left:24px">
+            <input type="text" id="f-prosp-instance" placeholder="Z-API Instance ID (prospecção)">
+            <input type="text" id="f-prosp-token" placeholder="Z-API Token (prospecção) — deixe em branco p/ manter">
+            <input type="text" id="f-prosp-ct" placeholder="Z-API Client-Token (prospecção) — deixe em branco p/ manter">
+          </div>
+          <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:400;font-size:13px">
+            <input type="radio" name="f-prosp-modo" value="principal" onchange="atualizarProspeccaoUI()" style="margin-top:3px;cursor:pointer">
+            <span><strong>Usar o número principal</strong><br><span style="font-size:11px;color:var(--text2)">Sem número extra — a prospecção sai do mesmo número que atende seus clientes.</span></span>
+          </label>
+          <div id="f-prosp-aviso" style="display:none;background:rgba(255,90,90,.12);border:2px solid var(--red);border-radius:10px;padding:12px 14px">
+            <div style="display:flex;gap:8px;align-items:center;color:var(--red);font-weight:700;margin-bottom:6px">⚠️ Risco de banir o número principal</div>
+            <div style="font-size:12px;color:var(--red);line-height:1.6">Prospecção fria (mensagens não solicitadas em massa) é o principal motivo de bloqueio pela Meta. No número principal, você arrisca o número que atende <strong>todos</strong> os seus clientes e leads. Se ele cair, você perde atendimento, histórico e automações até recuperar — se recuperar.</div>
+            <label style="display:flex;gap:8px;align-items:center;margin-top:10px;cursor:pointer;font-size:12px;color:var(--red);font-weight:600">
+              <input type="checkbox" id="f-prosp-ciente"> Estou ciente do risco e quero usar o número principal
+            </label>
+          </div>
+        </div>
+      </div>
       <div class="form-field so-admin">
         <label>TETO DE CPL (R$)</label>
         <input type="number" id="f-cpl" placeholder="25.00">
@@ -1912,6 +1937,12 @@ function abrirModal() {
   ['nome','whatsapp','trigger','instance','token','client-token','cpl','planos','nicho'].forEach(id => {
     document.getElementById('f-' + id).value = '';
   });
+  // [prospeccao] reset da seção de prospecção (novo cliente entra como 'dedicada').
+  ['prosp-instance','prosp-token','prosp-ct'].forEach(id => { const el = document.getElementById('f-' + id); if (el) el.value = ''; });
+  const radioDed = document.querySelector('input[name="f-prosp-modo"][value="dedicada"]');
+  if (radioDed) radioDed.checked = true;
+  const pCiente0 = document.getElementById('f-prosp-ciente'); if (pCiente0) pCiente0.checked = false;
+  atualizarProspeccaoUI();
   setPermissoesPortal();
 }
 
@@ -1946,6 +1977,15 @@ async function abrirEdicao(id) {
     document.getElementById('f-trigger').value  = c.trigger_msg || '';
     document.getElementById('f-instance').value = c.zapi_instance || '';
     document.getElementById('f-cpl').value      = c.teto_cpl || '';
+    // [prospeccao] modo + instância dedicada (tokens sao write-only, ficam em branco).
+    const modoP = c.prospeccao_modo === 'principal' ? 'principal' : 'dedicada';
+    const radioP = document.querySelector('input[name="f-prosp-modo"][value="' + modoP + '"]');
+    if (radioP) radioP.checked = true;
+    const pInst = document.getElementById('f-prosp-instance'); if (pInst) pInst.value = c.prospeccao_zapi_instance || '';
+    const pTok = document.getElementById('f-prosp-token'); if (pTok) pTok.value = '';
+    const pCt = document.getElementById('f-prosp-ct'); if (pCt) pCt.value = '';
+    const pCiente = document.getElementById('f-prosp-ciente'); if (pCiente) pCiente.checked = false;
+    atualizarProspeccaoUI();
     const nichoEl = document.getElementById('f-nicho'); if (nichoEl) nichoEl.value = c.nicho || '';
     setPermissoesPortal(c.permissoes_portal || {});
     const bvm1 = document.getElementById('f-boasvindas-msg1');
@@ -1973,6 +2013,16 @@ async function abrirEdicao(id) {
   }
 }
 
+// [prospeccao] Alterna a UI da config de prospecção: mostra as credenciais da
+// instância dedicada OU o aviso de ban (quando escolhe o número principal).
+function atualizarProspeccaoUI() {
+  const modo = (document.querySelector('input[name="f-prosp-modo"]:checked') || {}).value || 'dedicada';
+  const ded = document.getElementById('f-prosp-dedicada');
+  const aviso = document.getElementById('f-prosp-aviso');
+  if (ded) ded.style.display = modo === 'dedicada' ? 'flex' : 'none';
+  if (aviso) aviso.style.display = modo === 'principal' ? 'block' : 'none';
+}
+
 async function salvarEdicao() {
   const nome          = document.getElementById('f-nome').value.trim();
   const whatsapp      = document.getElementById('f-whatsapp').value.trim();
@@ -1985,6 +2035,14 @@ async function salvarEdicao() {
 
   if (!nome || !whatsapp || !zapi_instance) {
     document.getElementById('modal-err').textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.';
+    return;
+  }
+
+  // [prospeccao] Trava: usar o número principal exige marcar a ciência do risco de ban.
+  const prospModo = (document.querySelector('input[name="f-prosp-modo"]:checked') || {}).value || 'dedicada';
+  const prospCiente = !!(document.getElementById('f-prosp-ciente') && document.getElementById('f-prosp-ciente').checked);
+  if (prospModo === 'principal' && !prospCiente) {
+    document.getElementById('modal-err').textContent = '⚠️ Para usar o número PRINCIPAL na prospecção, marque que está ciente do risco de banimento.';
     return;
   }
 
@@ -2006,7 +2064,11 @@ async function salvarEdicao() {
         ia_tom: (document.getElementById('f-ia-tom')?.value || '').trim(),
         ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim(),
         portal_email: (document.getElementById('f-portal-email')?.value || '').trim(),
-        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim()
+        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim(),
+        prospeccao_modo: prospModo,
+        prospeccao_zapi_instance: (document.getElementById('f-prosp-instance')?.value || '').trim(),
+        prospeccao_zapi_token: (document.getElementById('f-prosp-token')?.value || '').trim(),
+        prospeccao_zapi_client_token: (document.getElementById('f-prosp-ct')?.value || '').trim()
       })
     });
     document.getElementById('btn-salvar').textContent = 'Salvo!';

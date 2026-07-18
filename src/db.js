@@ -460,6 +460,14 @@ async function garantirEstruturaCaptacao() {
     place_details INTEGER NOT NULL DEFAULT 0,
     atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
   )`).catch(() => null);
+  // [prospeccao] Config hibrida do número de prospecção por cliente:
+  //   prospeccao_modo = 'dedicada' (instância Z-API extra) | 'principal' (número principal).
+  //   Default 'dedicada' e credenciais NULL = nada muda no que ja existe.
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS prospeccao_modo TEXT DEFAULT 'dedicada',
+    ADD COLUMN IF NOT EXISTS prospeccao_zapi_instance TEXT,
+    ADD COLUMN IF NOT EXISTS prospeccao_zapi_token TEXT,
+    ADD COLUMN IF NOT EXISTS prospeccao_zapi_client_token TEXT`).catch(() => null);
 }
 
 // Assinatura/mensalidade da MovAtak (SaaS). Colunas defaultam para NAO-bloqueante:

@@ -129,6 +129,7 @@ app.get('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req,
               boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay,
               ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha_trocada_em,
               pos_followup_acao, pos_followup_coluna_id,
+              prospeccao_modo, prospeccao_zapi_instance,
               CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
@@ -170,7 +171,7 @@ app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (
 app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha, pos_followup_acao, pos_followup_coluna_id } = req.body;
+    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha, pos_followup_acao, pos_followup_coluna_id, prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token } = req.body;
 
     // Modo cliente (portal): NUNCA altera dados sensíveis (WhatsApp, Z-API, CPL,
     // permissões, credenciais do portal). Preserva os valores atuais do banco e
@@ -192,6 +193,11 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
       permissoes_portal = undefined;
       portal_email = undefined;
       portal_senha = undefined;
+      // Config de prospeccao (número/instância) é sensível → só admin.
+      prospeccao_modo = undefined;
+      prospeccao_zapi_instance = undefined;
+      prospeccao_zapi_token = undefined;
+      prospeccao_zapi_client_token = undefined;
     }
 
     if (!nome || !whatsapp || !zapi_instance) {
@@ -228,6 +234,17 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
       valores.push(zapi_client_token.trim());
       idx++;
     }
+    // [prospeccao] modo do número da prospecção ('dedicada' | 'principal') + credenciais
+    // da instância dedicada. Só admin (bloqueado acima no modo cliente).
+    if (prospeccao_modo !== undefined) {
+      campos.push('prospeccao_modo = $' + idx);
+      valores.push(['dedicada', 'principal'].includes(prospeccao_modo) ? prospeccao_modo : 'dedicada');
+      idx++;
+    }
+    if (prospeccao_zapi_instance !== undefined) { campos.push('prospeccao_zapi_instance = $' + idx); valores.push(prospeccao_zapi_instance ? String(prospeccao_zapi_instance).trim() : null); idx++; }
+    // Tokens: só sobrescreve se vier preenchido (em branco preserva o atual, igual ao zapi_token principal).
+    if (prospeccao_zapi_token && String(prospeccao_zapi_token).trim()) { campos.push('prospeccao_zapi_token = $' + idx); valores.push(String(prospeccao_zapi_token).trim()); idx++; }
+    if (prospeccao_zapi_client_token && String(prospeccao_zapi_client_token).trim()) { campos.push('prospeccao_zapi_client_token = $' + idx); valores.push(String(prospeccao_zapi_client_token).trim()); idx++; }
 
     valores.push(req.params.id);
     await query(
