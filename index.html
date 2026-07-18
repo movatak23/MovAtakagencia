@@ -942,6 +942,12 @@ async function iniciarAppVendedor() {
                     </label>
                     <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                       style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0">🎙️</button>
+                    <!-- Lixeira: só aparece enquanto grava; descarta o áudio sem enviar.
+                         Propositalmente SEM id (o do 🎙️ já é duplicado entre o painel e o
+                         modal de atendimento) — a lógica acha este botão a partir do pai do
+                         🎙️, então funciona igual nos dois blocos. -->
+                    <button type="button" class="btn-descartar-audio" onclick="cancelarGravacaoAudio(this)" title="Descartar áudio (não envia)"
+                      style="display:none;cursor:pointer;background:transparent;border:1px solid var(--red);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--red);flex-shrink:0">🗑️</button>
                   </div>
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
@@ -3063,11 +3069,41 @@ function ativarColarGlobalPainel() {
 }
 
 // Grava áudio do microfone (clique pra começar, clique de novo pra parar e anexar).
+// Enquanto grava, aparece a lixeira ao lado (.btn-descartar-audio) para jogar o
+// áudio fora sem enviar — antes disso, parar era o mesmo que enviar, sem volta.
 let _gravadorAudio = null;
 let _gravadorAudioChunks = [];
+let _gravacaoAudioCancelada = false;
+
+// Acha a lixeira do MESMO compositor. O id do 🎙️ é duplicado (painel principal e
+// modal de atendimento), então navegamos a partir do próprio botão clicado em vez
+// de usar getElementById — que sempre devolveria o primeiro dos dois.
+function _lixeiraDoGravador(btn) {
+  return (btn && btn.parentElement) ? btn.parentElement.querySelector('.btn-descartar-audio') : null;
+}
+function _mostrarLixeiraGravador(btn, mostrar) {
+  const lixeira = _lixeiraDoGravador(btn);
+  if (lixeira) lixeira.style.display = mostrar ? '' : 'none';
+}
+function _resetBotaoGravador(btn) {
+  if (!btn) return;
+  btn.textContent = '🎙️';
+  btn.style.color = '';
+  btn.style.borderColor = 'var(--border2)';
+  _mostrarLixeiraGravador(btn, false);
+}
+
+// Descarta a gravação em andamento: para o gravador e joga o áudio fora (não envia).
+// O onstop enxerga o flag, limpa os chunks e devolve o botão ao estado inicial.
+function cancelarGravacaoAudio(btnLixeira) {
+  if (!_gravadorAudio || _gravadorAudio.state !== 'recording') return;
+  _gravacaoAudioCancelada = true;
+  _gravadorAudio.stop();
+}
 
 async function alternarGravacaoAudio(btn) {
   if (_gravadorAudio && _gravadorAudio.state === 'recording') {
+    _mostrarLixeiraGravador(btn, false); // vai enviar: não dá mais pra descartar
     _gravadorAudio.stop();
     return;
   }
@@ -3075,12 +3111,20 @@ async function alternarGravacaoAudio(btn) {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     _gravadorAudioChunks = [];
+    _gravacaoAudioCancelada = false;
     const mime = (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) ? 'audio/ogg;codecs=opus'
       : (window.MediaRecorder && MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) ? 'audio/webm;codecs=opus' : 'audio/webm';
     _gravadorAudio = new MediaRecorder(stream, { mimeType: mime });
     _gravadorAudio.ondataavailable = e => { if (e.data && e.data.size > 0) _gravadorAudioChunks.push(e.data); };
     _gravadorAudio.onstop = async () => {
       stream.getTracks().forEach(t => t.stop());
+      // Descarte pedido pela lixeira: joga o áudio fora e não envia nada.
+      if (_gravacaoAudioCancelada) {
+        _gravacaoAudioCancelada = false;
+        _gravadorAudioChunks = [];
+        _resetBotaoGravador(btn);
+        return;
+      }
       const blobGravado = new Blob(_gravadorAudioChunks, { type: mime });
       if (blobGravado.size > 0) {
         if (btn) btn.textContent = '⏳';
@@ -3099,15 +3143,14 @@ async function alternarGravacaoAudio(btn) {
           await enviarAudioGravado(file, btn);
         }
       } else {
-        btn.textContent = '🎙️';
-        btn.style.color = '';
-        btn.style.borderColor = 'var(--border2)';
+        _resetBotaoGravador(btn);
       }
     };
     _gravadorAudio.start();
     btn.textContent = '⏹';
     btn.style.color = 'var(--red)';
     btn.style.borderColor = 'var(--red)';
+    _mostrarLixeiraGravador(btn, true);
   } catch (e) {
     alert('Não consegui acessar o microfone: ' + e.message);
   }
@@ -7665,6 +7708,12 @@ async function iniciarPaginaFunilAtendimento() {
                     </label>
                     <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                       style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0">🎙️</button>
+                    <!-- Lixeira: só aparece enquanto grava; descarta o áudio sem enviar.
+                         Propositalmente SEM id (o do 🎙️ já é duplicado entre o painel e o
+                         modal de atendimento) — a lógica acha este botão a partir do pai do
+                         🎙️, então funciona igual nos dois blocos. -->
+                    <button type="button" class="btn-descartar-audio" onclick="cancelarGravacaoAudio(this)" title="Descartar áudio (não envia)"
+                      style="display:none;cursor:pointer;background:transparent;border:1px solid var(--red);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--red);flex-shrink:0">🗑️</button>
                   </div>
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
