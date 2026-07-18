@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.10.2-prospeccao-no-topo';
+const MOVATAK_VERSION = 'v2.11.0-prospeccao-disparo-ia';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib

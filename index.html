@@ -7192,6 +7192,25 @@ function iniciarPaginaCaptacao() {
               </label>
             </div>
           </div>
+          <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px">
+            <label style="font-size:12px;color:var(--text2)">Mensagem de abordagem (1ª mensagem enviada ao prospect)</label>
+            <textarea id="f-prosp-msg" class="fu-textarea" style="min-height:70px" placeholder="Ex: Olá! Aqui é a MovAtak. Vi que você tem uma gráfica em Recife e queria te mostrar rapidinho como ajudamos negócios como o seu a atender e vender mais no WhatsApp. Posso te explicar em 1 minuto?"></textarea>
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+              <div style="flex:1;min-width:170px">
+                <label style="font-size:12px;color:var(--text2)">Coluna de entrada (onde a IA assume)</label>
+                <select id="f-prosp-coluna" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px"><option value="">— selecione —</option></select>
+              </div>
+              <div style="width:120px">
+                <label style="font-size:12px;color:var(--text2)">Ritmo (seg/envio)</label>
+                <input type="number" id="f-prosp-throttle" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" min="10" max="600" value="45">
+              </div>
+              <div style="width:110px">
+                <label style="font-size:12px;color:var(--text2)">Teto/dia</label>
+                <input type="number" id="f-prosp-teto" class="fu-textarea" style="min-height:auto;padding:8px 12px;font-size:13px" min="1" max="500" value="20">
+              </div>
+            </div>
+            <div class="fu-hint" style="font-size:11px">Ritmo rápido e volume alto aumentam o risco de bloqueio. Comece conservador e aumente aos poucos (aquecimento do número).</div>
+          </div>
           <div style="display:flex;gap:10px;align-items:center;margin-top:12px">
             <button class="btn-primary" style="width:auto;margin:0;padding:8px 18px;font-size:13px" onclick="captacaoSalvarProspeccao()">Salvar configuração</button>
             <span id="cap-prosp-status" style="font-size:12px"></span>
@@ -7250,6 +7269,7 @@ function iniciarPaginaCaptacao() {
             <option value="">Coluna (opcional)</option>
           </select>
           <button class="btn-primary" style="width:auto;margin:0;padding:8px 18px;font-size:13px" onclick="captacaoPromover()">Enviar pro Funil</button>
+          <button class="btn-cancel" style="width:auto;margin:0;padding:8px 16px;font-size:13px;border-color:var(--green);color:var(--green)" onclick="captacaoIniciarProspeccao()" title="Envia a 1ª mensagem pelo número de prospecção e deixa a IA qualificar (usa o cliente selecionado no painel Número de prospecção)">🚀 Prospectar com IA</button>
         </div>
 
         <div id="cap-tabela-wrap"><div class="fu-hint">Faça uma busca acima para começar.</div></div>
@@ -7377,6 +7397,17 @@ async function captacaoCarregarProspeccao(clienteId) {
     const pt = document.getElementById('f-prosp-token'); if (pt) pt.value = '';
     const pc = document.getElementById('f-prosp-ct'); if (pc) pc.value = '';
     const pci = document.getElementById('f-prosp-ciente'); if (pci) pci.checked = false;
+    const pMsg = document.getElementById('f-prosp-msg'); if (pMsg) pMsg.value = c.prospeccao_msg_abordagem || '';
+    const pThr = document.getElementById('f-prosp-throttle'); if (pThr) pThr.value = c.prospeccao_throttle_seg != null ? c.prospeccao_throttle_seg : 45;
+    const pTeto = document.getElementById('f-prosp-teto'); if (pTeto) pTeto.value = c.prospeccao_teto_dia != null ? c.prospeccao_teto_dia : 20;
+    // Colunas do funil do cliente -> seletor de coluna de entrada (onde a IA assume).
+    try {
+      const cr = await api('/movatak/admin/captacao/colunas/' + clienteId);
+      const cols = (cr && cr.colunas) || [];
+      const selCol = document.getElementById('f-prosp-coluna');
+      if (selCol) selCol.innerHTML = '<option value="">— selecione —</option>' +
+        cols.map(x => `<option value="${x.id}" ${Number(x.id) === Number(c.prospeccao_coluna_entrada_id) ? 'selected' : ''}>${escapeHtml(x.nome)}</option>`).join('');
+    } catch (e) { /* seletor fica vazio se falhar */ }
     box.style.display = 'block';
     atualizarProspeccaoUI();
   } catch (e) {
@@ -7403,7 +7434,11 @@ async function captacaoSalvarProspeccao() {
         prospeccao_modo: modo,
         prospeccao_zapi_instance: (document.getElementById('f-prosp-instance') && document.getElementById('f-prosp-instance').value || '').trim(),
         prospeccao_zapi_token: (document.getElementById('f-prosp-token') && document.getElementById('f-prosp-token').value || '').trim(),
-        prospeccao_zapi_client_token: (document.getElementById('f-prosp-ct') && document.getElementById('f-prosp-ct').value || '').trim()
+        prospeccao_zapi_client_token: (document.getElementById('f-prosp-ct') && document.getElementById('f-prosp-ct').value || '').trim(),
+        prospeccao_msg_abordagem: (document.getElementById('f-prosp-msg') && document.getElementById('f-prosp-msg').value) || '',
+        prospeccao_throttle_seg: (document.getElementById('f-prosp-throttle') && document.getElementById('f-prosp-throttle').value) || 45,
+        prospeccao_teto_dia: (document.getElementById('f-prosp-teto') && document.getElementById('f-prosp-teto').value) || 20,
+        prospeccao_coluna_entrada_id: (document.getElementById('f-prosp-coluna') && document.getElementById('f-prosp-coluna').value) || null
       })
     });
     if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração salva.'; }
@@ -7411,6 +7446,32 @@ async function captacaoSalvarProspeccao() {
     const pc = document.getElementById('f-prosp-ct'); if (pc) pc.value = '';
   } catch (e) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + (e.message || e); }
+  }
+}
+
+// [prospeccao] Dispara a prospecção com IA nos leads selecionados. Usa o cliente do
+// painel "Número de prospecção". Confirmação obrigatória; aviso extra no modo principal.
+async function captacaoIniciarProspeccao() {
+  const selCli = document.getElementById('cap-prosp-cliente');
+  const clienteId = selCli && selCli.value;
+  if (!clienteId) { alert('Primeiro selecione o cliente no painel "🎯 Número de prospecção" (no topo).'); return; }
+  const ids = Array.from(_captacaoSelecionados || []);
+  if (!ids.length) { alert('Selecione ao menos um lead capturado (marque os checkboxes).'); return; }
+  const modo = (document.querySelector('input[name="f-prosp-modo"]:checked') || {}).value || 'dedicada';
+  const nomeCli = selCli.options[selCli.selectedIndex] ? selCli.options[selCli.selectedIndex].text : ('Cliente ' + clienteId);
+  let aviso = 'Iniciar prospecção com IA para ' + ids.length + ' lead(s) usando "' + nomeCli + '"?\n\n'
+    + 'A 1ª mensagem de abordagem será enviada e a IA assume a conversa. Respeita o teto diário.';
+  if (modo === 'principal') {
+    aviso += '\n\n⚠️ ATENÇÃO: modo NÚMERO PRINCIPAL. O disparo frio pode BANIR o número que atende todos os seus clientes. Recomendado usar instância dedicada.';
+  }
+  if (!confirm(aviso)) return;
+  try {
+    const r = await api('/movatak/admin/captacao/prospectar', { method: 'POST', body: JSON.stringify({ clienteId, ids }) });
+    alert('Prospecção iniciada: ' + (r.enfileirados || 0) + ' na fila (teto/dia: ' + (r.teto || '-') + ', modo: ' + (r.modo || '-') + ').\nA IA assume quando o prospect responder.');
+    if (typeof captacaoCarregarLista === 'function') captacaoCarregarLista();
+    if (typeof captacaoCarregarFunil === 'function') captacaoCarregarFunil();
+  } catch (e) {
+    alert('Erro ao iniciar prospecção: ' + (e.message || e));
   }
 }
 

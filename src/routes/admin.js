@@ -130,6 +130,7 @@ app.get('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req,
               ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha_trocada_em,
               pos_followup_acao, pos_followup_coluna_id,
               prospeccao_modo, prospeccao_zapi_instance,
+              prospeccao_msg_abordagem, prospeccao_throttle_seg, prospeccao_teto_dia, prospeccao_coluna_entrada_id,
               CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
@@ -3739,12 +3740,81 @@ app.get('/movatak/admin/captacao/funil', authMovatakOuApp, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// [prospeccao] Dispara a prospecção com IA para uma seleção de leads capturados.
+// GATED: só roda por acionamento explícito do admin, valida config/credenciais e
+// respeita o TETO DIÁRIO. Promove cada lead pro funil do cliente de prospecção
+// (coluna de entrada com IA), envia a 1ª mensagem pelo número certo (modo
+// dedicada/principal) e registra o envio. O throttle roda em background (não segura
+// a resposta). A IA assume quando o prospect responder (webhook -> iaResponderAutomatico).
+app.post('/movatak/admin/captacao/prospectar', authMovatak, async (req, res) => {
+  try {
+    await garantirEstruturaCaptacao();
+    await garantirEstruturaFunil();
+    const { clienteId, ids } = req.body || {};
+    if (!clienteId || !Array.isArray(ids) || !ids.length) return res.status(400).json({ error: 'Informe clienteId e ids[].' });
+    const cr = await query(
+      `SELECT id, nome, zapi_instance, zapi_token, zapi_client_token,
+              prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token,
+              prospeccao_msg_abordagem, prospeccao_throttle_seg, prospeccao_teto_dia, prospeccao_coluna_entrada_id
+         FROM movatak_clientes WHERE id=$1`, [clienteId]);
+    if (!cr.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const cli = cr.rows[0];
+    const msg = (cli.prospeccao_msg_abordagem || '').trim();
+    if (!msg) return res.status(400).json({ error: 'Configure a mensagem de abordagem antes de prospectar.' });
+    if (!cli.prospeccao_coluna_entrada_id) return res.status(400).json({ error: 'Configure a coluna de entrada (onde a IA assume).' });
+    const modo = cli.prospeccao_modo === 'principal' ? 'principal' : 'dedicada';
+    const inst = modo === 'principal' ? cli.zapi_instance : cli.prospeccao_zapi_instance;
+    const tok = modo === 'principal' ? cli.zapi_token : cli.prospeccao_zapi_token;
+    const ct = modo === 'principal' ? cli.zapi_client_token : cli.prospeccao_zapi_client_token;
+    if (!inst || !tok) return res.status(400).json({ error: 'Credenciais Z-API do número de prospecção ausentes (modo: ' + modo + ').' });
+    const teto = cli.prospeccao_teto_dia || 20;
+    const usados = await query(`SELECT count(*)::int AS n FROM movatak_prospeccao_envios WHERE cliente_id=$1 AND status='enviado' AND criado_em >= date_trunc('day', NOW())`, [clienteId]);
+    const disponivel = Math.max(0, teto - (usados.rows[0].n || 0));
+    if (disponivel <= 0) return res.status(400).json({ error: 'Teto diário de prospecção já atingido para este cliente (' + teto + ').' });
+    const capR = await query(`SELECT id, nome, telefone FROM movatak_leads_captacao WHERE id = ANY($1::int[]) AND telefone IS NOT NULL AND telefone <> '' AND promovido = false`, [ids]);
+    const alvos = capR.rows.slice(0, disponivel);
+    if (!alvos.length) return res.status(400).json({ error: 'Nenhum lead válido (com telefone e não promovido) na seleção.' });
+    const throttleMs = Math.max(10, cli.prospeccao_throttle_seg || 45) * 1000;
+
+    res.json({ ok: true, enfileirados: alvos.length, disponivel, teto, modo });
+
+    // Envio em background com throttle. Volume pequeno (<= teto). Erros por lead
+    // sao registrados e nao interrompem os demais.
+    (async () => {
+      for (const alvo of alvos) {
+        try {
+          let leadId;
+          const dup = await query(`SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1`, [clienteId, alvo.telefone]);
+          if (dup.rows.length) leadId = dup.rows[0].id;
+          else {
+            const insL = await query(
+              `INSERT INTO movatak_leads (cliente_id, nome, telefone, etapa, origem, nao_lida, criado_em, atualizado_em)
+               VALUES ($1,$2,$3,'lead','prospeccao_captacao',false,NOW(),NOW()) RETURNING id`,
+              [clienteId, alvo.nome || alvo.telefone, alvo.telefone]);
+            leadId = insL.rows[0].id;
+          }
+          await moverLeadParaColunaFunil(leadId, cli.prospeccao_coluna_entrada_id, false).catch(() => null);
+          const texto = msg.replace(/\{nome\}/g, String(alvo.nome || '').split(' ')[0] || '');
+          await zapiEnviar(inst, tok, ct || '', alvo.telefone, texto);
+          await registrarConversa(leadId, clienteId, 'saida', texto, null, null, null, null, 'prospeccao').catch(() => null);
+          await query(`UPDATE movatak_leads_captacao SET promovido=true, promovido_em=NOW(), lead_id=$1 WHERE id=$2`, [leadId, alvo.id]).catch(() => null);
+          await query(`INSERT INTO movatak_prospeccao_envios (cliente_id, lead_id, captacao_id, telefone, status) VALUES ($1,$2,$3,$4,'enviado')`, [clienteId, leadId, alvo.id, alvo.telefone]).catch(() => null);
+        } catch (e) {
+          await query(`INSERT INTO movatak_prospeccao_envios (cliente_id, captacao_id, telefone, status, erro) VALUES ($1,$2,$3,'erro',$4)`, [clienteId, alvo.id, alvo.telefone, String(e.message || e).slice(0, 300)]).catch(() => null);
+        }
+        await new Promise(r => setTimeout(r, throttleMs));
+      }
+    })().catch(e => console.error('[prospeccao] loop de disparo:', e.message));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // [prospeccao] Salva a config de número de prospecção de UM cliente (a UI vive na
 // Central de Captação). Write dedicado — só admin. Tokens só sobrescrevem se vierem.
 app.patch('/movatak/admin/clientes/:id/prospeccao', authMovatak, async (req, res) => {
   try {
     await garantirEstruturaCaptacao();
-    const { prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token } = req.body || {};
+    const { prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token,
+            prospeccao_msg_abordagem, prospeccao_throttle_seg, prospeccao_teto_dia, prospeccao_coluna_entrada_id } = req.body || {};
     const modo = ['dedicada', 'principal'].includes(prospeccao_modo) ? prospeccao_modo : 'dedicada';
     const campos = ['prospeccao_modo = $1'];
     const valores = [modo];
@@ -3752,6 +3822,10 @@ app.patch('/movatak/admin/clientes/:id/prospeccao', authMovatak, async (req, res
     if (prospeccao_zapi_instance !== undefined) { campos.push('prospeccao_zapi_instance = $' + idx); valores.push(prospeccao_zapi_instance ? String(prospeccao_zapi_instance).trim() : null); idx++; }
     if (prospeccao_zapi_token && String(prospeccao_zapi_token).trim()) { campos.push('prospeccao_zapi_token = $' + idx); valores.push(String(prospeccao_zapi_token).trim()); idx++; }
     if (prospeccao_zapi_client_token && String(prospeccao_zapi_client_token).trim()) { campos.push('prospeccao_zapi_client_token = $' + idx); valores.push(String(prospeccao_zapi_client_token).trim()); idx++; }
+    if (prospeccao_msg_abordagem !== undefined) { campos.push('prospeccao_msg_abordagem = $' + idx); valores.push(prospeccao_msg_abordagem ? String(prospeccao_msg_abordagem) : null); idx++; }
+    if (prospeccao_throttle_seg !== undefined) { const n = parseInt(prospeccao_throttle_seg, 10); campos.push('prospeccao_throttle_seg = $' + idx); valores.push(Number.isFinite(n) ? Math.max(10, Math.min(600, n)) : 45); idx++; }
+    if (prospeccao_teto_dia !== undefined) { const n = parseInt(prospeccao_teto_dia, 10); campos.push('prospeccao_teto_dia = $' + idx); valores.push(Number.isFinite(n) ? Math.max(1, Math.min(500, n)) : 20); idx++; }
+    if (prospeccao_coluna_entrada_id !== undefined) { campos.push('prospeccao_coluna_entrada_id = $' + idx); valores.push(prospeccao_coluna_entrada_id ? parseInt(prospeccao_coluna_entrada_id, 10) : null); idx++; }
     valores.push(req.params.id);
     const r = await query(`UPDATE movatak_clientes SET ${campos.join(', ')} WHERE id = $${idx} RETURNING id`, valores);
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });

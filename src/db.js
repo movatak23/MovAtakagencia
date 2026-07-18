@@ -467,7 +467,23 @@ async function garantirEstruturaCaptacao() {
     ADD COLUMN IF NOT EXISTS prospeccao_modo TEXT DEFAULT 'dedicada',
     ADD COLUMN IF NOT EXISTS prospeccao_zapi_instance TEXT,
     ADD COLUMN IF NOT EXISTS prospeccao_zapi_token TEXT,
-    ADD COLUMN IF NOT EXISTS prospeccao_zapi_client_token TEXT`).catch(() => null);
+    ADD COLUMN IF NOT EXISTS prospeccao_zapi_client_token TEXT,
+    ADD COLUMN IF NOT EXISTS prospeccao_msg_abordagem TEXT,
+    ADD COLUMN IF NOT EXISTS prospeccao_throttle_seg INTEGER DEFAULT 45,
+    ADD COLUMN IF NOT EXISTS prospeccao_teto_dia INTEGER DEFAULT 20,
+    ADD COLUMN IF NOT EXISTS prospeccao_coluna_entrada_id INTEGER`).catch(() => null);
+  // Registro de disparos de prospecção (throttle + teto diário + auditoria/idempotencia).
+  await query(`CREATE TABLE IF NOT EXISTS movatak_prospeccao_envios (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    lead_id INTEGER,
+    captacao_id INTEGER,
+    telefone TEXT,
+    status TEXT NOT NULL DEFAULT 'enviado',
+    erro TEXT,
+    criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_prospeccao_envios_cliente_dia ON movatak_prospeccao_envios(cliente_id, criado_em)`).catch(() => null);
 }
 
 // Assinatura/mensalidade da MovAtak (SaaS). Colunas defaultam para NAO-bloqueante:
