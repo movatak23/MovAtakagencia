@@ -7761,6 +7761,7 @@ async function iniciarPaginaFunilAtendimento() {
   try { restaurarSomMensagem(); } catch (e) { console.warn('[som] init:', e.message); }
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
+  montarBotaoFunilView(); // injeta o botao Clean/Completo na toolbar deste funil (modal)
 }
 
 // ============================================================
@@ -8735,6 +8736,42 @@ function renderBadgeFollowup(lead) {
   return `<span class="funil-badge" title="${qtd} mensagem(ns) de follow-up pendente(s) na sequência ${c.label}" style="background:${c.bg};color:${c.fg};border:1px solid ${c.fg}55">${c.label}</span>`;
 }
 
+// ── Visao do funil: alterna entre "Completo" (padrao) e "Clean" (cards enxutos) ──
+// A classe vai no body p/ cobrir os dois compositores (painel + modal) de uma vez.
+// Nao mexe na montagem dos cards — so liga/desliga o CSS de .funil-view-clean.
+function aplicarFunilView() {
+  const clean = localStorage.getItem('movatak_funil_view') === 'clean';
+  document.body.classList.toggle('funil-view-clean', clean);
+  document.querySelectorAll('.btn-funil-view').forEach(b => {
+    b.textContent = clean ? '▦ Completo' : '✦ Clean';
+    b.title = clean ? 'Voltar para a visao completa dos cards' : 'Ativar a visao clean (cards enxutos)';
+  });
+}
+function toggleFunilView() {
+  const clean = localStorage.getItem('movatak_funil_view') === 'clean';
+  localStorage.setItem('movatak_funil_view', clean ? 'completo' : 'clean');
+  aplicarFunilView();
+}
+// Injeta o botao em toda toolbar do funil (cobre painel e modal sem depender do
+// HTML duplicado). Idempotente: nao duplica se ja existe.
+function montarBotaoFunilView() {
+  document.querySelectorAll('.funil-toolbar').forEach(tb => {
+    if (tb.querySelector('.btn-funil-view')) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn-cancel btn-funil-view';
+    b.style.cssText = 'padding:9px 14px';
+    b.addEventListener('click', toggleFunilView);
+    tb.appendChild(b);
+  });
+  aplicarFunilView();
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', montarBotaoFunilView);
+} else {
+  montarBotaoFunilView();
+}
+
 function renderFunilCard(lead, colunaAtualId) {
   const nome = lead.nome || 'Lead sem nome';
   const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}${lead.plano_valor != null ? ' — R$ ' + formatarValorPlanoBR(lead.plano_valor) : ''}</div>` : '';
@@ -9670,6 +9707,19 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
   .funil-page .funil-card:hover .funil-card-actions,
   .funil-page .funil-card.funil-card-selecionado .funil-card-actions{display:flex}
 }
+
+/* [funil clean view] Visao enxuta opcional, ligada pelo botao na toolbar do
+   funil (classe funil-view-clean no body). Esconde telefone e as linhas de meta
+   (plano/vendedor/atualizado), deixando avatar + nome + previa + setor. As acoes
+   ja sao gerenciadas pelo hover acima. Cobre os DOIS escopos, como as regras
+   consolidadas acima. A escolha fica salva por navegador (localStorage). */
+body.funil-view-clean #modal-funil-atendimento .funil-card-phone,
+body.funil-view-clean .funil-page .funil-card-phone,
+body.funil-view-clean #modal-funil-atendimento .funil-card-line,
+body.funil-view-clean .funil-page .funil-card-line{display:none}
+/* Card enxuto ganha um respiro a mais entre nome e previa. */
+body.funil-view-clean #modal-funil-atendimento .funil-card-preview,
+body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
 
 /* Configuracao da etapa recolhida atras da engrenagem */
 #modal-funil-atendimento .funil-col-config, .funil-page .funil-col-config{display:none}
