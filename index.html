@@ -7151,6 +7151,10 @@ function iniciarPaginaCaptacao() {
   main.className = '';
   main.innerHTML = `
     <div style="max-width:1100px;margin:0 auto;padding:24px 16px">
+      <div id="cap-funil-painel" class="panel" style="margin-bottom:16px">
+        <div class="panel-title">Funil de captação</div>
+        <div id="cap-funil-corpo" class="fu-hint" style="margin-top:10px">Carregando…</div>
+      </div>
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-title">Buscar leads</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-top:10px">
@@ -7207,6 +7211,81 @@ function iniciarPaginaCaptacao() {
   captacaoCarregarClientes();
   captacaoCarregarLista();
   captacaoCarregarUso();
+  captacaoCarregarFunil();
+}
+
+// Painel/funil da captacao: le o endpoint READ-ONLY /captacao/funil e desenha
+// os KPIs, o funil (barras) e a quebra por nicho/cidade. So mede, nao dispara nada.
+async function captacaoCarregarFunil() {
+  const el = document.getElementById('cap-funil-corpo');
+  if (!el) return;
+  try {
+    const d = await api('/movatak/admin/captacao/funil');
+    const f = d.funil || {};
+    const num = k => Number(f[k] || 0);
+    const cap = num('capturados');
+    const clientes = num('clientes');
+    const semVerificar = num('whatsapp_indefinido');
+    const ratio = clientes > 0 ? Math.round(cap / clientes) : null;
+
+    const tile = (rot, val, cor) => `<div style="background:var(--bg2);border-radius:10px;padding:12px 14px;min-width:0">
+        <div style="font-size:12px;color:var(--text2);margin-bottom:4px">${rot}</div>
+        <div style="font-size:22px;font-weight:600;color:${cor || 'var(--text)'}">${val}</div></div>`;
+    const tiles = `<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px">
+      ${tile('Capturados', cap)}
+      ${tile('Com WhatsApp', num('com_whatsapp'))}
+      ${tile('Responderam', num('responderam'))}
+      ${tile('Fechou', clientes, clientes > 0 ? 'var(--green)' : 'var(--text3)')}
+    </div>`;
+
+    const etapas = [
+      { r: 'Capturados', v: cap },
+      { r: 'Com WhatsApp', v: num('com_whatsapp') },
+      { r: 'Contatados', v: num('contatados') },
+      { r: 'Responderam', v: num('responderam') },
+      { r: 'Em negociação', v: num('interessados') },
+      { r: 'Link de pagamento', v: num('link_pagamento') },
+      { r: 'Cliente fechado', v: clientes, destaque: true }
+    ];
+    const max = Math.max(1, cap);
+    const barras = etapas.map((s, i) => {
+      const w = s.v > 0 ? Math.max(3, Math.round(s.v / max * 100)) : 0;
+      // % relativo ao total capturado (o funil real nao e estritamente monotonico:
+      // um lead pode ir pra negociacao sem resposta registrada, o que geraria >100%).
+      const pct = (i > 0 && cap > 0) ? Math.round(s.v / cap * 100) + '%' : '';
+      const cor = s.destaque ? 'var(--green)' : 'var(--accent)';
+      return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+        <div style="width:140px;font-size:13px;color:var(--text);flex-shrink:0">${s.r}</div>
+        <div style="flex:1;background:var(--bg2);border-radius:5px;height:22px;overflow:hidden;min-width:40px"><div style="width:${w}%;height:100%;background:${cor};border-radius:5px"></div></div>
+        <div style="width:86px;text-align:right;font-size:13px;flex-shrink:0"><strong>${s.v}</strong>${pct ? ` <span style="font-size:11px;color:var(--text2)">${pct}</span>` : ''}</div>
+      </div>`;
+    }).join('');
+
+    const linhas = (d.porNicho || []).slice(0, 8).map(x =>
+      `<tr style="border-top:1px solid var(--border)">
+        <td style="padding:5px 0;font-size:12px">${escapeHtml(x.nicho_busca || '—')} · ${escapeHtml(x.cidade || '—')}</td>
+        <td style="text-align:right;font-size:12px">${x.capturados}</td>
+        <td style="text-align:right;font-size:12px">${x.promovidos}</td>
+        <td style="text-align:right;font-size:12px;color:${Number(x.clientes) > 0 ? 'var(--green)' : 'var(--text3)'}">${x.clientes}</td>
+      </tr>`).join('');
+    const tabela = linhas ? `<div style="margin-top:16px">
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:6px">Por nicho e cidade</div>
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="color:var(--text2);text-align:left;font-size:11px">
+          <th style="font-weight:400;padding:2px 0">Nicho · cidade</th><th style="font-weight:400;text-align:right">Capt.</th>
+          <th style="font-weight:400;text-align:right">Prom.</th><th style="font-weight:400;text-align:right">Fechou</th></tr>
+        ${linhas}
+      </table></div>` : '';
+
+    const rodape = `<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--text2);display:flex;gap:16px;flex-wrap:wrap">
+      <span>${ratio != null ? `<strong style="color:var(--text)">${ratio}</strong> capturados por cliente fechado` : 'Nenhum cliente fechado ainda — a razão aparece quando o 1º fechar.'}</span>
+      ${semVerificar > 0 ? `<span>⚠️ <strong style="color:var(--amber)">${semVerificar}</strong> leads sem verificar WhatsApp</span>` : ''}
+    </div>`;
+
+    el.innerHTML = tiles + barras + tabela + rodape;
+  } catch (e) {
+    el.innerHTML = `<span style="color:var(--red)">Erro ao carregar o funil: ${escapeHtml(e.message || String(e))}</span>`;
+  }
 }
 
 async function captacaoCarregarUso() {

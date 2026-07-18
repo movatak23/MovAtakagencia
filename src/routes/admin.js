@@ -3652,6 +3652,56 @@ app.get('/movatak/admin/captacao/uso', authMovatakOuApp, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// [captacao] Painel/funil da captacao. READ-ONLY: so agrega e conta, nao dispara
+// nada. Marcos de sistema (etapa_sistema) tornam a metrica robusta entre clientes:
+// interessados=negociacao, link de pagamento=com_link_de_pagamento, cliente=cliente.
+app.get('/movatak/admin/captacao/funil', authMovatakOuApp, async (req, res) => {
+  if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
+  try {
+    await garantirEstruturaCaptacao();
+    const nicho = req.query.nicho ? String(req.query.nicho) : null;
+    const cidade = req.query.cidade ? String(req.query.cidade) : null;
+    const capCte = `
+      WITH cap AS (
+        SELECT lc.id, lc.tem_whatsapp, lc.promovido, lc.lead_id, lc.nicho_busca, lc.cidade,
+               fc.etapa_sistema,
+               EXISTS(SELECT 1 FROM movatak_conversas cv WHERE cv.lead_id=lc.lead_id AND cv.direcao='saida')   AS teve_saida,
+               EXISTS(SELECT 1 FROM movatak_conversas cv WHERE cv.lead_id=lc.lead_id AND cv.direcao='entrada') AS teve_entrada
+          FROM movatak_leads_captacao lc
+          LEFT JOIN movatak_leads l ON l.id = lc.lead_id
+          LEFT JOIN movatak_funil_colunas fc ON fc.id = l.funil_coluna_id
+         WHERE ($1::text IS NULL OR lc.nicho_busca ILIKE '%'||$1||'%')
+           AND ($2::text IS NULL OR lc.cidade ILIKE '%'||$2||'%')
+      )`;
+    const f = await query(`${capCte}
+      SELECT
+        count(*) AS capturados,
+        count(*) FILTER (WHERE tem_whatsapp IS TRUE)  AS com_whatsapp,
+        count(*) FILTER (WHERE tem_whatsapp IS NULL)  AS whatsapp_indefinido,
+        count(*) FILTER (WHERE promovido)             AS promovidos,
+        count(*) FILTER (WHERE teve_saida)            AS contatados,
+        count(*) FILTER (WHERE teve_entrada)          AS responderam,
+        count(*) FILTER (WHERE etapa_sistema='negociacao')            AS interessados,
+        count(*) FILTER (WHERE etapa_sistema='com_link_de_pagamento') AS link_pagamento,
+        count(*) FILTER (WHERE etapa_sistema='cliente')               AS clientes,
+        count(*) FILTER (WHERE etapa_sistema='descartado')            AS descartados
+      FROM cap`, [nicho, cidade]);
+    const porNicho = await query(`${capCte}
+      SELECT nicho_busca, cidade, count(*) AS capturados,
+             count(*) FILTER (WHERE promovido) AS promovidos,
+             count(*) FILTER (WHERE etapa_sistema='cliente') AS clientes
+        FROM cap GROUP BY nicho_busca, cidade ORDER BY capturados DESC LIMIT 20`, [nicho, cidade]);
+    const u = await query('SELECT text_search, place_details FROM movatak_captacao_uso WHERE mes=$1', [mesAtualStr()]);
+    const uso = u.rows[0] || { text_search: 0, place_details: 0 };
+    res.json({
+      ok: true,
+      funil: f.rows[0],
+      porNicho: porNicho.rows,
+      uso: { ...uso, cotaTextSearch: CAPTACAO_COTA_TEXT_SEARCH, cotaPlaceDetails: CAPTACAO_COTA_PLACE_DETAILS }
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/captacao/leads', authMovatakOuApp, async (req, res) => {
   if (req.ehCliente) return res.status(403).json({ error: 'Recurso restrito ao admin.' });
   try {
