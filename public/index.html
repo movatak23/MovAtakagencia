@@ -7255,7 +7255,6 @@ function iniciarPaginaCaptacao() {
               <option value="">Todos</option>
               <option value="1">Já promovidos</option>
             </select>
-            <button class="btn-cancel" style="padding:8px 14px;font-size:13px" onclick="captacaoVerificarWhats()">✓ Verificar WhatsApp</button>
             <button class="btn-cancel" style="padding:8px 14px;font-size:13px" onclick="captacaoCarregarLista()">↻ Atualizar</button>
           </div>
         </div>
@@ -7516,24 +7515,6 @@ async function captacaoBuscar() {
     }
   } catch (e) {
     if (status) status.textContent = 'Erro: ' + e.message;
-  }
-}
-
-async function captacaoVerificarWhats() {
-  const status = document.getElementById('cap-busca-status');
-  const nicho = document.getElementById('cap-nicho')?.value.trim() || '';
-  const cidade = document.getElementById('cap-cidade')?.value.trim() || '';
-  if (status) status.textContent = 'Verificando WhatsApp dos leads não checados...';
-  try {
-    const r = await api('/movatak/admin/captacao/verificar-whatsapp', {
-      method: 'POST',
-      body: JSON.stringify({ nicho, cidade }),
-      timeoutMs: 120000
-    });
-    if (status) status.textContent = `Verificados: ${r.verificados} · Com WhatsApp: ${r.comWhats} · Sem: ${r.semWhats}` + (r.indefinido ? ` · Não deu p/ checar: ${r.indefinido}` : '');
-    captacaoCarregarLista();
-  } catch (e) {
-    if (status) status.textContent = 'Erro ao verificar: ' + e.message;
   }
 }
 
