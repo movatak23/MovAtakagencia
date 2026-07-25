@@ -601,16 +601,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         <div id="ia-status" class="fu-hint" style="margin-top:6px"></div>
       </div>
 
-      <!-- ACESSO AO PORTAL DO CLIENTE -->
-      <div class="form-field full so-admin" id="portal-section" style="display:none">
-        <label>🔑 ACESSO DO CLIENTE AO PORTAL</label>
-        <div class="fu-hint" style="margin-bottom:10px">Defina o email e a senha que o cliente usará para acessar o portal dele (onde ele vê e edita as próprias configurações). Envie essas credenciais para ele.</div>
-        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Email de acesso</label>
-        <input type="email" id="f-portal-email" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none;margin-bottom:12px" placeholder="cliente@empresa.com.br">
-        <label style="font-size:12px;color:var(--text2);display:block;margin-bottom:6px">Senha de acesso</label>
-        <input type="text" id="f-portal-senha" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Deixe em branco para manter a senha atual">
-        <div id="portal-senha-hint" class="fu-hint" style="margin-top:6px"></div>
-      </div>
+      <!-- Acesso ao portal do cliente: agora só no menu "Credenciais" (evita duplicidade). -->
 
       <!-- AUSÊNCIA / FORA DE HORÁRIO -->
       <div class="form-field full" id="ausencia-section" style="display:none">
@@ -1929,7 +1920,6 @@ async function abrirEdicao(id) {
   document.getElementById('planos-section').style.display = '';
   document.getElementById('ausencia-section').style.display = '';
   document.getElementById('ia-section').style.display = '';
-  document.getElementById('portal-section').style.display = '';
   planosClienteId = id;
   carregarPlanos(id);
   carregarAusencia(id);
@@ -1960,12 +1950,7 @@ async function abrirEdicao(id) {
     if (iaOferta) iaOferta.value = c.ia_oferta || '';
     if (iaTom) iaTom.value = c.ia_tom || '';
     if (iaResumo) iaResumo.value = c.ia_resumo || '';
-    const portalEmail = document.getElementById('f-portal-email');
-    const portalSenha = document.getElementById('f-portal-senha');
-    const portalHint = document.getElementById('portal-senha-hint');
-    if (portalEmail) portalEmail.value = c.portal_email || '';
-    if (portalSenha) portalSenha.value = '';
-    if (portalHint) portalHint.textContent = c.portal_tem_senha ? '✓ Senha já definida. Preencha apenas para trocar.' : '⚠️ Nenhuma senha definida ainda.';
+    // Acesso ao portal (email/senha) foi movido para o menu "Credenciais".
     btn.textContent = 'Salvar alterações';
   } catch(e) {
     document.getElementById('modal-err').textContent = 'Erro ao carregar: ' + e.message;
@@ -1998,6 +1983,18 @@ async function salvarEdicao() {
     return;
   }
 
+  // A seção 🌙 de ausência mora dentro deste modal, mas grava por um endpoint
+  // próprio. O botão principal "Salvar alterações" também persiste a ausência,
+  // senão os horários preenchidos aqui se perdem ao fechar o modal.
+  const ausSecaoAtiva = _ausClienteId === editandoClienteId;
+  if (ausSecaoAtiva) {
+    const { faixasIncompletas } = coletarAusencia();
+    if (faixasIncompletas > 0) {
+      document.getElementById('modal-err').textContent = '⚠️ ' + faixasIncompletas + ' faixa(s) de horário de ausência sem dia da semana marcado. Marque os dias ou remova a faixa antes de salvar.';
+      return;
+    }
+  }
+
   document.getElementById('btn-salvar').textContent = 'Salvando...';
   document.getElementById('modal-err').textContent = '';
 
@@ -2014,11 +2011,11 @@ async function salvarEdicao() {
         boas_vindas_lead_delay: parseInt(document.getElementById('f-boasvindas-delay')?.value) || 5,
         ia_oferta: (document.getElementById('f-ia-oferta')?.value || '').trim(),
         ia_tom: (document.getElementById('f-ia-tom')?.value || '').trim(),
-        ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim(),
-        portal_email: (document.getElementById('f-portal-email')?.value || '').trim(),
-        portal_senha: (document.getElementById('f-portal-senha')?.value || '').trim()
+        ia_resumo: (document.getElementById('f-ia-resumo')?.value || '').trim()
+        // portal_email/portal_senha: gerenciados só pelo menu "Credenciais".
       })
     });
+    if (ausSecaoAtiva) { await persistirAusencia(editandoClienteId); }
     document.getElementById('btn-salvar').textContent = 'Salvo!';
     setTimeout(() => { fecharModal(); carregarTudo(); }, 800);
   } catch(e) {
@@ -2101,17 +2098,40 @@ async function carregarAusencia(id) {
   } catch (e) { /* silencioso — seção aparece vazia */ }
 }
 
+// Coleta a config de ausência a partir do estado atual do formulário.
+// Retorna o payload pronto e quantas faixas de horário foram deixadas de fora
+// por não ter nenhum dia da semana marcado — para avisar em vez de descartar
+// em silêncio (uma faixa recorrente sem dia é inútil para a automação).
+function coletarAusencia() {
+  const el = document.getElementById('aus-msg-padrao');
+  const msgPadrao = ((el && el.value) || '').trim();
+  const horarios = _ausHorarios.filter(h => (h.dias||[]).length && h.inicio && h.fim);
+  const faixasIncompletas = _ausHorarios.filter(h => (h.inicio || h.fim) && !(h.dias||[]).length).length;
+  const datas = _ausDatas.filter(d => d.data);
+  return {
+    faixasIncompletas,
+    payload: { ausencia_msg_padrao: msgPadrao, ausencia_horarios: horarios, ausencia_datas: datas }
+  };
+}
+
+async function persistirAusencia(clienteId) {
+  const { payload } = coletarAusencia();
+  await api('/movatak/admin/clientes/' + clienteId + '/ausencia', {
+    method: 'PATCH',
+    body: JSON.stringify(payload)
+  });
+}
+
 async function salvarAusencia() {
   const st = document.getElementById('aus-status');
   if (!_ausClienteId) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Abra um cliente para editar.'; } return; }
-  const msgPadrao = (document.getElementById('aus-msg-padrao').value || '').trim();
-  const horarios = _ausHorarios.filter(h => (h.dias||[]).length && h.inicio && h.fim);
-  const datas = _ausDatas.filter(d => d.data);
+  const { faixasIncompletas } = coletarAusencia();
+  if (faixasIncompletas > 0) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = '⚠️ ' + faixasIncompletas + ' faixa(s) de horário sem dia da semana marcado. Marque os dias ou remova a faixa.'; }
+    return;
+  }
   try {
-    await api('/movatak/admin/clientes/' + _ausClienteId + '/ausencia', {
-      method: 'PATCH',
-      body: JSON.stringify({ ausencia_msg_padrao: msgPadrao, ausencia_horarios: horarios, ausencia_datas: datas })
-    });
+    await persistirAusencia(_ausClienteId);
     if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Configuração de ausência salva.'; }
   } catch (e) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao salvar: ' + e.message; }

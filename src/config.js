@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.13.0-captacao-nicho-ia-paginacao';
+const MOVATAK_VERSION = 'v2.13.1-ausencia-salvar-no-botao-principal';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib
