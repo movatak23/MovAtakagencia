@@ -1857,6 +1857,7 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirCredenciais(${c.id})" class="so-admin" style="background:transparent;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">🔑 Credenciais</button>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
+        <button onclick="event.stopPropagation();abrirCampanhasOperacao(${c.id}, '${c.nome.replace(/'/g, "")}')" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">📊 Campanhas &amp; Operação</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
         <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
         <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
@@ -4407,19 +4408,13 @@ async function abrirFU(id) {
       document.getElementById('fu2-msg2').value = '';
       document.getElementById('fu2-msg3').value = '';
     }
-    document.getElementById('fu-verba').value = msgs.verba_diaria || '';
-    document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
     document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
-    // Carregar templates primeiro (garante que o select de campanha já tem opções quando Editar é clicado)
+    // Investimento, campanhas e status operacional agora ficam no menu "Campanhas & Operação".
     await carregarTemplatesFollowup();
-    // Carregar campanhas depois (Editar só aparece quando as opções já estão prontas)
-    carregarCampanhas(id);
-    // Demais seções em paralelo (não dependem do select de templates)
     carregarVendedores(id);
     carregarComandos(id);
     carregarRanking(id);
-    carregarOperacao(id);
     carregarFilaFollowup(id);
     carregarPosFollowup(id);
   } catch(e) {
@@ -4430,6 +4425,46 @@ async function abrirFU(id) {
 function fecharFU() {
   document.getElementById('modal-fu').classList.remove('open');
   fuId = null;
+}
+
+// ── Menu "Campanhas & Operação" (investimento + campanhas/origens + status operacional) ──
+async function abrirCampanhasOperacao(id, nome) {
+  fuId = id;
+  cancelarEdicaoCampanha();
+  const nomeEl = document.getElementById('campop-cliente-nome');
+  if (nomeEl) nomeEl.textContent = nome ? ' — ' + nome : '';
+  const st = document.getElementById('campop-inv-status'); if (st) st.textContent = '';
+  document.getElementById('modal-campop').classList.add('open');
+  try {
+    const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
+    document.getElementById('fu-verba').value = msgs.verba_diaria || '';
+    document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
+    await carregarTemplatesFollowup();
+    carregarCampanhas(id);
+    carregarOperacao(id);
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro ao carregar: ' + e.message; }
+  }
+}
+function fecharCampanhasOperacao() {
+  document.getElementById('modal-campop').classList.remove('open');
+  fuId = null;
+}
+async function salvarInvestimentoAlertas() {
+  if (!fuId) return;
+  const st = document.getElementById('campop-inv-status');
+  const verba_diaria = document.getElementById('fu-verba').value.trim();
+  const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
+  if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando...'; }
+  try {
+    await api('/movatak/admin/clientes/' + fuId + '/investimento-alertas', {
+      method: 'PATCH',
+      body: JSON.stringify({ verba_diaria, whatsapp_dono })
+    });
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Investimento e alertas salvos.'; }
+  } catch (e) {
+    if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
+  }
 }
 // Salva o follow-up: grava no cliente E, se houver template vinculado,
 // atualiza o template (aplica em toda automação que usa ele).
@@ -4494,10 +4529,9 @@ async function salvarFU() {
   document.getElementById('btn-fu-save').textContent = 'Salvando...';
   document.getElementById('fu-err').textContent = '';
   try {
-    const verba_diaria = document.getElementById('fu-verba').value.trim();
-    const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
     const trigger_msg = document.getElementById('fu-trigger').value.trim();
 
+    // Investimento/WhatsApp do dono saíram daqui (menu "Campanhas & Operação").
     // Salvar follow up com estrutura dos 2 blocos
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
@@ -4506,7 +4540,7 @@ async function salvarFU() {
           fu1: { msg1: fu1_msg1, msg2: fu1_msg2 },
           fu2: { msg1: fu2_msg1, msg2: fu2_msg2, msg3: fu2_msg3 }
         },
-        verba_diaria, whatsapp_dono, trigger_msg
+        trigger_msg
       })
     });
     
@@ -9747,56 +9781,6 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <button class="btn-save" onclick="salvarFollowupComFeedback()" title="Salvar as mensagens de follow-up deste cliente">💾 Salvar follow-up</button>
     </div>
 
-    <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">5. Investimento consolidado</div>
-      <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
-      <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
-      <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
-      <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
-      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
-      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
-    </div>
-
-    <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">6. Campanhas e origens</div>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
-      <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
-      <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
-        <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
-        <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
-        <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
-        <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
-        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado (follow-up ou autoatendimento)</option></select>
-        <button class="btn-add-small" id="btn-camp-add" onclick="adicionarCampanha(this)">Adicionar</button>
-        <button class="btn-cancel" id="btn-camp-cancel" style="display:none;padding:8px 14px" onclick="cancelarEdicaoCampanha()">Cancelar edição</button>
-      </div>
-      <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
-      <div class="fu-hint" style="margin-top:8px">No <strong>Template vinculado</strong> você escolhe entre os modelos de <strong>Follow-up</strong> e os de <strong>Autoatendimento</strong> (questionário). Escolher um de Autoatendimento ativa o questionário; um de Follow-up manda a campanha direto pra sequência. Deixe em "Sem template" se não quiser vincular nenhum.</div>
-      <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
-      <div id="fu-campanhas-box"></div>
-    </div>
-
-    <!-- BLOCO 8: STATUS OPERACIONAL -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">7. Status operacional</div>
-      <div id="fu-operacao-box"></div>
-      <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" class="fu-textarea" id="fu-trigger-teste" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Cole aqui a mensagem recebida do anúncio">
-        <button class="btn-add-small" onclick="testarGatilhoAtual()">Testar</button>
-      </div>
-      <div class="fu-hint" id="fu-trigger-resultado"></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
-        <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
-        <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
-        <button class="btn-add-small" onclick="baixarBackupCliente()">💾 Backup deste cliente</button>
-        <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
-      </div>
-      <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
-    </div>
-
     <!-- BLOCO 8: FILA DE FOLLOW-UP -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
       <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">8. Fila de follow-up</div>
@@ -10259,6 +10243,71 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
         <button class="tour-prev" id="tour-btn-prev" onclick="tourAnterior()">Voltar</button>
         <button class="tour-next" id="tour-btn-next" onclick="tourProximo()">Avançar</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-campop">
+  <div class="modal modal-cliente" style="max-width:940px">
+    <button class="modal-x" onclick="fecharCampanhasOperacao()" title="Fechar">✕</button>
+    <h3>📊 Campanhas &amp; Operação<span id="campop-cliente-nome" style="color:var(--text2);font-weight:500"></span></h3>
+    <div style="font-size:13px;color:var(--text2);margin:6px 0 16px">Investimento em anúncios, campanhas/origens (atribuição do lead) e o acompanhamento operacional. Separado das mensagens de follow-up.</div>
+    <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Investimento consolidado</div>
+      <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
+      <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
+      <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
+      <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
+      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
+      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+        <button class="btn-add-small" onclick="salvarInvestimentoAlertas()">Salvar investimento e alertas</button>
+        <span id="campop-inv-status" class="fu-hint" style="margin:0"></span>
+      </div>
+    </div>
+
+    <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Campanhas e origens</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
+      <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
+      <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
+        <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
+        <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
+        <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
+        <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
+        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado (follow-up ou autoatendimento)</option></select>
+        <button class="btn-add-small" id="btn-camp-add" onclick="adicionarCampanha(this)">Adicionar</button>
+        <button class="btn-cancel" id="btn-camp-cancel" style="display:none;padding:8px 14px" onclick="cancelarEdicaoCampanha()">Cancelar edição</button>
+      </div>
+      <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
+      <div class="fu-hint" style="margin-top:8px">No <strong>Template vinculado</strong> você escolhe entre os modelos de <strong>Follow-up</strong> e os de <strong>Autoatendimento</strong> (questionário). Escolher um de Autoatendimento ativa o questionário; um de Follow-up manda a campanha direto pra sequência. Deixe em "Sem template" se não quiser vincular nenhum.</div>
+      <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
+      <div id="fu-campanhas-box"></div>
+    </div>
+
+    <!-- BLOCO 8: STATUS OPERACIONAL -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Status operacional</div>
+      <div id="fu-operacao-box"></div>
+      <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" class="fu-textarea" id="fu-trigger-teste" style="min-height:auto;padding:10px 14px;resize:none;flex:1" placeholder="Cole aqui a mensagem recebida do anúncio">
+        <button class="btn-add-small" onclick="testarGatilhoAtual()">Testar</button>
+      </div>
+      <div class="fu-hint" id="fu-trigger-resultado"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+        <button class="btn-add-small" onclick="enviarRelatorioDiarioAgora()">Enviar relatório agora</button>
+        <button class="btn-add-small" onclick="exportarLeadsCSV()">Exportar leads CSV</button>
+        <button class="btn-add-small" onclick="baixarBackupCliente()">💾 Backup deste cliente</button>
+        <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
+      </div>
+      <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
+    </div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharCampanhasOperacao()">Fechar</button>
     </div>
   </div>
 </div>

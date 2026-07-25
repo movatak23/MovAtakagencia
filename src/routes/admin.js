@@ -407,8 +407,8 @@ app.patch('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async 
       `UPDATE movatak_clientes
          SET followup_msgs_v2 = $1::jsonb,
              boas_vindas_msg = $2,
-             verba_diaria = $3,
-             whatsapp_dono = $4,
+             verba_diaria = COALESCE($3, verba_diaria),
+             whatsapp_dono = COALESCE($4, whatsapp_dono),
              trigger_msg = COALESCE($5, trigger_msg)
        WHERE id = $6`,
       [
@@ -437,6 +437,23 @@ app.patch('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async 
 
     console.log('[followup][salvo]', JSON.stringify({ clienteId: req.params.id, followup_v2 }));
     res.json({ ok: true, followup_v2, comandos: comandosSalvos });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Investimento consolidado + WhatsApp do dono para alertas. Vive no menu
+// "Campanhas & Operação" (separado do follow-up). Atualiza SÓ esses dois campos.
+app.patch('/movatak/admin/clientes/:id/investimento-alertas', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    const { verba_diaria, whatsapp_dono } = req.body || {};
+    await query(
+      `UPDATE movatak_clientes SET verba_diaria = $1, whatsapp_dono = $2 WHERE id = $3`,
+      [
+        (verba_diaria !== undefined && verba_diaria !== null && String(verba_diaria).trim() !== '') ? parseFloat(String(verba_diaria).replace(',', '.')) : null,
+        (whatsapp_dono && String(whatsapp_dono).trim()) ? String(whatsapp_dono).replace(/\D/g, '') : null,
+        req.params.id
+      ]
+    );
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
