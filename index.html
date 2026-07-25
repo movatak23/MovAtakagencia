@@ -5141,12 +5141,7 @@ async function carregarTemplatesFollowup() {
       csel.innerHTML = '<option value="">Sem template</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
       csel.value = atual;
     });
-    const campSel = document.getElementById('fu-campanha-template');
-    if (campSel) {
-      const prevVal = editandoCampanhaId ? campSel.value : '';
-      campSel.innerHTML = '<option value="">Template vinculado</option>' + templatesFollowupCache.map(t => `<option value="${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${t.nome}</option>`).join('');
-      if (prevVal) campSel.value = prevVal;
-    }
+    await popularPickerTemplateCampanha();
   } catch(e) {
     if (sel) sel.innerHTML = '<option value="">Erro ao carregar templates</option>';
   }
@@ -5271,23 +5266,40 @@ async function salvarTemplateFollowupAtual() {
     if (btn) { btn.disabled = false; btn.textContent = 'Salvar modelo'; }
   }
 }
-async function popularSelectQuestTemplateCampanha(clienteId) {
-  const sel = document.getElementById('fu-campanha-quest-template');
+let _questTplPickerCache = [];
+// Traduz o valor escolhido no picker unificado para os 3 campos do backend.
+// '' = nenhum | 'fu:<id>' = follow-up | 'quest:padrao' = autoatendimento padrão | 'quest:<id>' = autoatendimento específico
+function routearPickCampanha(val) {
+  const v = String(val || '');
+  if (v.startsWith('fu:')) return { template_id: v.slice(3), questionario_ativo: false, questionario_template_id: null };
+  if (v === 'quest:padrao') return { template_id: null, questionario_ativo: true, questionario_template_id: null };
+  if (v.startsWith('quest:')) return { template_id: null, questionario_ativo: true, questionario_template_id: parseInt(v.slice(6), 10) };
+  return { template_id: null, questionario_ativo: false, questionario_template_id: null };
+}
+// Monta o "Template vinculado" unificado: grupos Follow-up + Autoatendimento.
+async function popularPickerTemplateCampanha() {
+  const sel = document.getElementById('fu-campanha-template');
   if (!sel) return;
+  const prev = sel.value;
   try {
-    const rows = await api('/movatak/admin/clientes/' + clienteId + '/questionario-templates');
-    const prev = sel.value;
-    sel.innerHTML = '<option value="">Questionário do cliente (padrão)</option>' +
-      (rows || []).map(t => `<option value="${t.id}">${escapeHtml(t.nome)}</option>`).join('');
+    if (!templatesFollowupCache || !templatesFollowupCache.length) {
+      templatesFollowupCache = await api('/movatak/admin/templates-followup?cliente_id=' + fuId).catch(() => []);
+    }
+    _questTplPickerCache = await api('/movatak/admin/clientes/' + fuId + '/questionario-templates').catch(() => []);
+    const optsFu = (templatesFollowupCache || []).map(t => `<option value="fu:${t.id}">${t.tipo === 'cliente' ? '⭐ ' : ''}${escapeHtml(t.nome)}</option>`).join('');
+    const optsQuest = (_questTplPickerCache || []).map(t => `<option value="quest:${t.id}">${escapeHtml(t.nome)}</option>`).join('');
+    sel.innerHTML = '<option value="">Sem template (nenhum)</option>'
+      + '<optgroup label="— Follow-up —">' + optsFu + '</optgroup>'
+      + '<optgroup label="— Autoatendimento —"><option value="quest:padrao">Questionário padrão do cliente</option>' + optsQuest + '</optgroup>';
     sel.value = prev;
-  } catch (e) { /* mantém só o padrão */ }
+  } catch (e) { /* silencioso */ }
 }
 
 async function carregarCampanhas(id) {
   const box = document.getElementById('fu-campanhas-box');
   if (!box) return;
   box.innerHTML = '<div style="font-size:13px;color:var(--text3);margin-top:10px">Carregando campanhas...</div>';
-  await popularSelectQuestTemplateCampanha(id);
+  await popularPickerTemplateCampanha();
   try {
     const rows = await api('/movatak/admin/clientes/' + id + '/campanhas');
     fuCampanhas = rows;
@@ -5313,7 +5325,7 @@ async function carregarCampanhas(id) {
             <tr>
               <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong>${c.questionario_ativo === false ? '<div style="margin-top:4px;font-size:10px;color:var(--amber);font-family:var(--sans)">Sem autoatendimento (só follow-up)</div>' : ''}</td>
               <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}${c.gatilho_compartilhado ? '<div style="margin-top:6px;color:var(--amber);font-family:var(--sans);font-size:11px">Gatilho compartilhado com ' + c.campanhas_mesmo_gatilho + ' campanhas. Métrica por gatilho, não por campanha única.</div>' : ''}</td>
-              <td style="white-space:normal">${escapeHtml(c.template_nome || '—')}</td>
+              <td style="white-space:normal">${c.template_nome ? escapeHtml(c.template_nome) : (c.questionario_ativo !== false ? ('🤖 ' + escapeHtml(c.questionario_template_nome || 'Autoatendimento (padrão)')) : '—')}</td>
               <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
               <td class="td-mono">${c.leads || 0}</td>
               <td class="td-green">${c.vendas || 0}</td>
@@ -5333,6 +5345,7 @@ async function carregarCampanhas(id) {
 
 let fuCampanhas = [];
 let editandoCampanhaId = null;
+let _campanhaTemplateInicial = ''; // valor do picker ao abrir a edição (p/ salvar não-destrutivo)
 
 async function excluirCampanha(campanhaId) {
   if (!confirm('Excluir esta campanha/origem? Ela será removida da tela e deixará de atribuir novos leads.')) return;
@@ -5378,26 +5391,29 @@ async function adicionarCampanha(btn) {
   const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
   const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
   const investimento_valor = document.getElementById('fu-campanha-investimento').value.trim();
-  const template_id = document.getElementById('fu-campanha-template').value;
-  const questEl = document.getElementById('fu-campanha-questionario');
-  const questionario_ativo = questEl ? questEl.checked : true;
-  const qtSel = document.getElementById('fu-campanha-quest-template');
-  const questionario_template_id = qtSel && qtSel.value ? parseInt(qtSel.value, 10) : null;
+  const pick = document.getElementById('fu-campanha-template').value;
+  const rota = routearPickCampanha(pick);
   if (!nome) { document.getElementById('fu-err').textContent = 'Informe o nome da campanha/origem.'; return; }
   if (!gatilho) { document.getElementById('fu-err').textContent = 'Informe a frase-gatilho da campanha. Sem ela a atribuição não será confiável.'; return; }
-  if (!template_id) { document.getElementById('fu-err').textContent = 'Vincule um template à campanha. Isso evita campanha sem sequência de follow-up definida.'; return; }
+  // Nenhum template é obrigatório: follow-up e autoatendimento são opcionais.
+  // Na edição, se o picker não mudou, NÃO enviamos os campos de template — assim os
+  // vínculos atuais são preservados (protege campanhas antigas que tinham os dois).
+  const mexeuNoTemplate = !editandoCampanhaId || pick !== _campanhaTemplateInicial;
+  const camposTemplate = mexeuNoTemplate
+    ? { template_id: rota.template_id, questionario_ativo: rota.questionario_ativo, questionario_template_id: rota.questionario_template_id }
+    : {};
   try {
     if (btn) { btn.disabled = true; btn.textContent = editandoCampanhaId ? 'Salvando...' : 'Adicionando...'; }
     if (statusEl) { statusEl.style.color = 'var(--text2)'; statusEl.textContent = editandoCampanhaId ? 'Salvando alterações...' : 'Cadastrando campanha...'; }
     if (editandoCampanhaId) {
       await api('/movatak/admin/campanhas/' + editandoCampanhaId, {
         method: 'PATCH',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id })
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, ...camposTemplate })
       });
     } else {
       await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
         method: 'POST',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id })
+        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, ...camposTemplate })
       });
     }
     cancelarEdicaoCampanha();
@@ -5419,23 +5435,26 @@ function editarCampanha(id) {
   document.getElementById('fu-campanha-gatilho').value = c.gatilho || '';
   document.getElementById('fu-campanha-investimento-tipo').value = c.investimento_tipo === 'total' ? 'total' : 'diario';
   document.getElementById('fu-campanha-investimento').value = (c.investimento_valor != null ? c.investimento_valor : (c.investimento != null ? c.investimento : ''));
-  const campSel = document.getElementById('fu-campanha-template');
-  const targetVal = c.template_id != null ? String(c.template_id) : '';
-  campSel.value = targetVal;
-  // Se a opção não existe no select (cache ainda não carregado ou id não bateu), injeta temporariamente
-  if (targetVal && campSel.value !== targetVal) {
-    const opt = document.createElement('option');
-    opt.value = targetVal;
-    opt.setAttribute('data-fallback', '1');
-    opt.textContent = c.template_nome || ('Template #' + targetVal);
-    campSel.appendChild(opt);
-    campSel.value = targetVal;
-  }
   editandoCampanhaId = id;
-  const questEl = document.getElementById('fu-campanha-questionario');
-  if (questEl) questEl.checked = c.questionario_ativo !== false;
-  const qtSel = document.getElementById('fu-campanha-quest-template');
-  if (qtSel) qtSel.value = c.questionario_template_id != null ? String(c.questionario_template_id) : '';
+  // Deriva o valor do picker unificado a partir dos vínculos da campanha.
+  // Se tiver os dois (follow-up + autoatendimento), mostra o follow-up (base); o
+  // salvamento é não-destrutivo, então o autoatendimento é preservado se o picker não mudar.
+  const campSel = document.getElementById('fu-campanha-template');
+  let pickVal = '';
+  if (c.template_id != null) pickVal = 'fu:' + c.template_id;
+  else if (c.questionario_ativo !== false && c.questionario_template_id != null) pickVal = 'quest:' + c.questionario_template_id;
+  else if (c.questionario_ativo !== false) pickVal = 'quest:padrao';
+  campSel.value = pickVal;
+  // Se a opção não existe no select (cache ainda não carregado), injeta temporariamente
+  if (pickVal && campSel.value !== pickVal) {
+    const opt = document.createElement('option');
+    opt.value = pickVal;
+    opt.setAttribute('data-fallback', '1');
+    opt.textContent = c.template_nome || c.questionario_template_nome || 'Template vinculado';
+    campSel.appendChild(opt);
+    campSel.value = pickVal;
+  }
+  _campanhaTemplateInicial = pickVal;
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Salvar edição';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = '';
   const statusEl = document.getElementById('fu-campanha-status');
@@ -5452,9 +5471,8 @@ function cancelarEdicaoCampanha() {
     Array.from(t.querySelectorAll('option[data-fallback]')).forEach(o => o.remove());
     t.value = '';
   }
+  _campanhaTemplateInicial = '';
   const tipo = document.getElementById('fu-campanha-investimento-tipo'); if (tipo) tipo.value = 'diario';
-  const questEl = document.getElementById('fu-campanha-questionario'); if (questEl) questEl.checked = true;
-  const qtSel = document.getElementById('fu-campanha-quest-template'); if (qtSel) qtSel.value = '';
   const addBtn = document.getElementById('btn-camp-add'); if (addBtn) addBtn.textContent = 'Adicionar';
   const cancelBtn = document.getElementById('btn-camp-cancel'); if (cancelBtn) cancelBtn.style.display = 'none';
 }
@@ -9750,21 +9768,12 @@ async function sincronizarColunaWhatsapp(colunaId) {
         <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">
         <select class="fu-textarea" id="fu-campanha-investimento-tipo" style="min-height:auto;padding:10px 14px;resize:none"><option value="diario">Diário</option><option value="total">Total</option></select>
         <input type="number" class="fu-textarea" id="fu-campanha-investimento" style="min-height:auto;padding:10px 14px;resize:none" placeholder="R$">
-        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado</option></select>
+        <select class="fu-textarea" id="fu-campanha-template" style="min-height:auto;padding:10px 14px;resize:none"><option value="">Template vinculado (follow-up ou autoatendimento)</option></select>
         <button class="btn-add-small" id="btn-camp-add" onclick="adicionarCampanha(this)">Adicionar</button>
         <button class="btn-cancel" id="btn-camp-cancel" style="display:none;padding:8px 14px" onclick="cancelarEdicaoCampanha()">Cancelar edição</button>
       </div>
       <div class="fu-hint">O ideal é usar uma frase-gatilho distinta por campanha. Se repetir o mesmo gatilho, o sistema permite cadastrar, mas a métrica fica compartilhada pelo gatilho, pois o WhatsApp não informa de qual anúncio veio a conversa.</div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px;color:var(--text2);cursor:pointer;user-select:none">
-        <input type="checkbox" id="fu-campanha-questionario" checked style="cursor:pointer">
-        Ativar autoatendimento (questionário) para esta campanha
-        <span class="fu-hint" style="margin:0">— desmarque para a campanha ir direto ao follow-up, sem questionário (ex: DTF Têxtil).</span>
-      </label>
-      <div style="margin-top:10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <label class="fu-label" style="margin:0;font-size:13px">Modelo de autoatendimento:</label>
-        <select id="fu-campanha-quest-template" class="fu-textarea" style="min-height:auto;padding:8px 12px;resize:none;max-width:280px"><option value="">Questionário do cliente (padrão)</option></select>
-        <span class="fu-hint" style="margin:0">Escolha um modelo específico para esta campanha, ou deixe no padrão do cliente.</span>
-      </div>
+      <div class="fu-hint" style="margin-top:8px">No <strong>Template vinculado</strong> você escolhe entre os modelos de <strong>Follow-up</strong> e os de <strong>Autoatendimento</strong> (questionário). Escolher um de Autoatendimento ativa o questionário; um de Follow-up manda a campanha direto pra sequência. Deixe em "Sem template" se não quiser vincular nenhum.</div>
       <div id="fu-campanha-status" class="fu-hint" style="margin-top:8px"></div>
       <div id="fu-campanhas-box"></div>
     </div>

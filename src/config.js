@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.14.0-credenciais-dados-empresa';
+const MOVATAK_VERSION = 'v2.15.0-campanha-template-unificado';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib

@@ -1978,6 +1978,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (
         )
         SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em,
               t.nome AS template_nome,
+              qt.nome AS questionario_template_nome,
               c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
               (c.qtd_mesmo_gatilho > 1) AS gatilho_compartilhado,
               COUNT(l.id)::int AS leads,
@@ -1988,12 +1989,13 @@ app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (
               CASE WHEN COUNT(l.id) FILTER (WHERE l.etapa = 'cliente') > 0 THEN ROUND((COALESCE(c.investimento_valor, c.verba_diaria, 0) / NULLIF(COUNT(l.id) FILTER (WHERE l.etapa = 'cliente'),0))::numeric, 2) ELSE NULL END AS custo_venda
          FROM camp c
          LEFT JOIN movatak_followup_templates t ON t.id = c.template_id
+         LEFT JOIN movatak_questionario_templates qt ON qt.id = c.questionario_template_id
          LEFT JOIN movatak_leads l
            ON (CASE WHEN c.qtd_mesmo_gatilho > 1
                     THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
                     ELSE l.campanha_id = c.id
                END)
-        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome
+        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome, qt.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
     );
@@ -2038,7 +2040,10 @@ app.patch('/movatak/admin/campanhas/:id', ...exigeCampanha, async (req, res) => 
     const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo, questionario_template_id } = req.body || {};
     const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
     const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
-    const templateDbId = template_id === undefined ? undefined : await resolverTemplateCampanha(null, template_id);
+    // template_id: quando enviado (mesmo null), sobrescreve — permite DESVINCULAR o follow-up
+    // (ex.: campanha que passa a ser só autoatendimento). Quando ausente (undefined), preserva.
+    const templateProvided = template_id !== undefined;
+    const templateDbId = templateProvided ? await resolverTemplateCampanha(null, template_id) : null;
     const questTplProvided = questionario_template_id !== undefined;
     const questTplId = questTplProvided ? ((questionario_template_id === null || String(questionario_template_id) === '') ? null : parseInt(questionario_template_id, 10)) : null;
     const r = await query(
@@ -2048,13 +2053,13 @@ app.patch('/movatak/admin/campanhas/:id', ...exigeCampanha, async (req, res) => 
               verba_diaria = CASE WHEN $3::text IS NULL THEN verba_diaria ELSE $3::numeric END,
               investimento_valor = CASE WHEN $3::text IS NULL THEN investimento_valor ELSE $3::numeric END,
               investimento_tipo = COALESCE($4, investimento_tipo),
-              template_id = CASE WHEN $5::text IS NULL THEN template_id ELSE $5::int END,
+              template_id = CASE WHEN $11::boolean THEN $5::int ELSE template_id END,
               ativo = COALESCE($6, ativo),
               questionario_ativo = COALESCE($8, questionario_ativo),
               questionario_template_id = CASE WHEN $9::boolean THEN $10::int ELSE questionario_template_id END,
               atualizado_em = NOW()
         WHERE id = $7 RETURNING *`,
-      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, template_id === undefined ? null : templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null, questTplProvided, questTplId]
+      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null, questTplProvided, questTplId, templateProvided]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
     res.json(r.rows[0]);
