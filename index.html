@@ -504,6 +504,8 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
   <div class="modal modal-cliente">
     <h3 id="modal-titulo">Config. Inicial</h3>
     <div class="form-grid">
+      <!-- Bloco Empresa + Conexão: no modo EDITAR fica oculto (editado no menu 🔑 Credenciais). Aparece só ao CADASTRAR novo cliente. -->
+      <div id="bloco-empresa-conexao" style="display:contents">
       <div class="form-field full">
         <label>NOME DA EMPRESA</label>
         <input type="text" id="f-nome" placeholder="Ex: Auto Center Silva">
@@ -561,6 +563,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
         </div>
         <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
       </div>
+      </div><!-- /bloco-empresa-conexao -->
       <div class="form-field full">
         <label>BOAS-VINDAS AO LEAD</label>
         <div class="fu-hint" style="margin-bottom:8px">Saudação enviada assim que o lead chega, antes do follow-up. Se deixar em branco, nada é enviado. Não gera marcação no funil.</div>
@@ -1894,6 +1897,7 @@ function abrirModal() {
   document.getElementById('modal-titulo').textContent = 'Cadastrar novo cliente';
   document.getElementById('lbl-token').textContent = 'Z-API TOKEN';
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
+  document.getElementById('bloco-empresa-conexao').style.display = 'contents';
   document.getElementById('f-planos').closest('.form-field').style.display = '';
   document.getElementById('planos-section').style.display = 'none';
   document.getElementById('ausencia-section').style.display = 'none';
@@ -1915,6 +1919,9 @@ async function abrirEdicao(id) {
   document.getElementById('modal-titulo').textContent = 'Config. Inicial';
   document.getElementById('lbl-token').textContent = 'Z-API TOKEN (deixe vazio para manter)';
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN (deixe vazio para manter)';
+  // Empresa/conexão/acessos agora são editados no menu 🔑 Credenciais. Aqui ficam ocultos
+  // (mas continuam populados e são reenviados sem alteração pelo salvarEdicao).
+  document.getElementById('bloco-empresa-conexao').style.display = 'none';
   // Planos: editados aqui (modo edição), com valor e nota mínima
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
   document.getElementById('planos-section').style.display = '';
@@ -5980,18 +5987,48 @@ async function limparCobertura() {
   } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
 }
 
-// ── Credenciais de acesso ao portal do cliente ──
+// ── Credenciais & Dados do cliente (empresa, conexão Z-API, acessos, login do portal) ──
 let _credClienteId = null;
+let _credDados = null; // snapshot do /dados carregado, p/ preservar trigger_msg e detectar mudança de nicho
+// Helpers de permissão específicos do modal Credenciais (checkboxes cred-perm-*).
+function credGetPermissoes() {
+  const g = id => !!(document.getElementById(id) && document.getElementById(id).checked);
+  return {
+    ver_dashboard: true,
+    ver_cpl: g('cred-perm-ver-cpl'),
+    ver_vendedores: g('cred-perm-ver-vendedores'),
+    ver_campanhas: g('cred-perm-ver-campanhas'),
+    ver_eventos: g('cred-perm-ver-eventos'),
+    editar_vendedores: g('cred-perm-editar-vendedores'),
+    editar_followup: g('cred-perm-editar-followup'),
+    editar_campanhas: g('cred-perm-editar-campanhas'),
+    exportar_csv: g('cred-perm-exportar-csv')
+  };
+}
+function credSetPermissoes(p = {}) {
+  const def = { ver_cpl:true, ver_vendedores:true, ver_campanhas:true, ver_eventos:true, editar_vendedores:false, editar_followup:false, editar_campanhas:false, exportar_csv:true, ...(p || {}) };
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+  set('cred-perm-ver-cpl', def.ver_cpl); set('cred-perm-ver-vendedores', def.ver_vendedores); set('cred-perm-ver-campanhas', def.ver_campanhas); set('cred-perm-ver-eventos', def.ver_eventos);
+  set('cred-perm-editar-vendedores', def.editar_vendedores); set('cred-perm-editar-followup', def.editar_followup); set('cred-perm-editar-campanhas', def.editar_campanhas); set('cred-perm-exportar-csv', def.exportar_csv);
+}
 async function abrirCredenciais(clienteId) {
   _credClienteId = clienteId;
-  document.getElementById('cred-email').value = '';
-  document.getElementById('cred-senha').value = '';
+  _credDados = null;
+  ['cred-nome','cred-whatsapp','cred-instance','cred-token','cred-client-token','cred-cpl','cred-email','cred-senha'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  document.getElementById('cred-nicho').value = '';
   document.getElementById('cred-msg').textContent = '';
   document.getElementById('cred-hint').textContent = 'Carregando...';
   document.getElementById('modal-credenciais').classList.add('open');
   try {
     const c = await api('/movatak/admin/clientes/' + clienteId + '/dados');
+    _credDados = c;
     document.getElementById('cred-cliente-nome').textContent = c.nome || '';
+    document.getElementById('cred-nome').value = c.nome || '';
+    document.getElementById('cred-nicho').value = c.nicho || '';
+    document.getElementById('cred-whatsapp').value = c.whatsapp || '';
+    document.getElementById('cred-instance').value = c.zapi_instance || '';
+    document.getElementById('cred-cpl').value = c.teto_cpl || '';
+    credSetPermissoes(c.permissoes_portal || {});
     document.getElementById('cred-email').value = c.portal_email || '';
     document.getElementById('cred-hint').textContent = c.portal_tem_senha
       ? '✓ Senha já definida. Preencha o campo senha apenas se quiser trocar.'
@@ -6013,26 +6050,50 @@ async function abrirCredenciais(clienteId) {
 function fecharCredenciais() {
   document.getElementById('modal-credenciais').classList.remove('open');
   _credClienteId = null;
+  _credDados = null;
 }
 async function salvarCredenciais() {
   if (!_credClienteId) return;
-  const email = document.getElementById('cred-email').value.trim();
-  const senha = document.getElementById('cred-senha').value.trim();
+  const nome     = document.getElementById('cred-nome').value.trim();
+  const whatsapp = document.getElementById('cred-whatsapp').value.trim();
+  const instance = document.getElementById('cred-instance').value.trim();
+  const token    = document.getElementById('cred-token').value.trim();
+  const clientTk = document.getElementById('cred-client-token').value.trim();
+  const cpl      = document.getElementById('cred-cpl').value.trim();
+  const nicho    = document.getElementById('cred-nicho').value.trim();
+  const email    = document.getElementById('cred-email').value.trim();
+  const senha    = document.getElementById('cred-senha').value.trim();
   const msg = document.getElementById('cred-msg');
   const btn = document.getElementById('btn-cred-save');
-  if (!email) { msg.style.color = 'var(--red)'; msg.textContent = 'Informe o email de acesso.'; return; }
+  if (!nome || !whatsapp || !instance) { msg.style.color = 'var(--red)'; msg.textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.'; return; }
   btn.disabled = true; btn.textContent = 'Salvando...';
   try {
-    const body = { portal_email: email };
+    const body = {
+      nome, whatsapp, zapi_instance: instance,
+      // preserva o gatilho atual (o PATCH /dados sempre sobrescreve trigger_msg)
+      trigger_msg: (_credDados && _credDados.trigger_msg) || '',
+      teto_cpl: cpl ? parseFloat(cpl) : null,
+      permissoes_portal: credGetPermissoes(),
+      portal_email: email
+    };
+    // nicho só vai quando muda (evita reaplicar o template de nicho a cada salvar)
+    if (!_credDados || (nicho || '') !== (_credDados.nicho || '')) { body.nicho = nicho; }
+    if (token) body.zapi_token = token;
+    if (clientTk) body.zapi_client_token = clientTk;
     if (senha) body.portal_senha = senha;
-    await api('/movatak/admin/clientes/' + _credClienteId + '/credenciais-portal', { method: 'PATCH', body: JSON.stringify(body) });
+    await api('/movatak/admin/clientes/' + _credClienteId + '/dados', { method: 'PATCH', body: JSON.stringify(body) });
     msg.style.color = 'var(--green)';
-    msg.textContent = '✓ Credenciais salvas. Envie email e senha para o cliente.';
+    msg.textContent = '✓ Dados e credenciais salvos.' + (email ? ' Envie email e senha para o cliente.' : '');
     document.getElementById('cred-senha').value = '';
+    document.getElementById('cred-token').value = '';
+    document.getElementById('cred-client-token').value = '';
+    if (_credDados) { _credDados.nicho = nicho; _credDados.nome = nome; }
+    document.getElementById('cred-cliente-nome').textContent = nome;
+    carregarTudo && carregarTudo();
   } catch (e) {
     msg.style.color = 'var(--red)'; msg.textContent = 'Erro: ' + e.message;
   } finally {
-    btn.disabled = false; btn.textContent = 'Salvar credenciais';
+    btn.disabled = false; btn.textContent = 'Salvar';
   }
 }
 
@@ -10194,19 +10255,81 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
 </div>
 
 <div class="modal-overlay" id="modal-credenciais">
-  <div class="modal" style="max-width:460px">
+  <div class="modal modal-cliente" style="max-width:660px">
     <button class="modal-x" onclick="fecharCredenciais()" title="Fechar">✕</button>
-    <h3>🔑 Credenciais de acesso ao portal</h3>
-    <p style="font-size:13px;color:var(--text2);margin:8px 0 16px">Defina o email e a senha que o cliente <strong id="cred-cliente-nome"></strong> usará para acessar o portal dele. Envie essas credenciais para ele.</p>
-    <label class="fu-label" style="margin-top:0">Email de acesso</label>
-    <input type="email" class="fu-textarea" id="cred-email" style="min-height:auto;padding:11px 14px;resize:none" placeholder="cliente@empresa.com.br">
-    <label class="fu-label" style="margin-top:12px">Senha de acesso</label>
-    <input type="text" class="fu-textarea" id="cred-senha" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Deixe em branco para manter a atual">
+    <h3>🔑 Credenciais & Dados do cliente</h3>
+    <p style="font-size:13px;color:var(--text2);margin:8px 0 16px">Dados da empresa, conexão Z-API, acessos ao portal e login do cliente <strong id="cred-cliente-nome"></strong>.</p>
+    <div class="form-grid">
+      <div class="form-field full">
+        <label>NOME DA EMPRESA</label>
+        <input type="text" id="cred-nome" placeholder="Ex: Auto Center Silva">
+      </div>
+      <div class="form-field">
+        <label>NICHO DO CLIENTE</label>
+        <select id="cred-nicho" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none">
+          <option value="">— selecione —</option>
+          <option value="estetica">Clínica de estética</option>
+          <option value="barbearia">Barbearia</option>
+          <option value="salao">Salão de beleza</option>
+          <option value="odontologia">Clínica odontológica</option>
+          <option value="provedor">Provedor de internet</option>
+          <option value="assistencia">Assistência técnica</option>
+          <option value="grafica_dtf">DTF / Gráfica</option>
+          <option value="generico">Comercial genérico</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>WHATSAPP BUSINESS</label>
+        <input type="text" id="cred-whatsapp" placeholder="5581999990000">
+      </div>
+      <div class="form-field">
+        <label>Z-API INSTANCE ID</label>
+        <input type="text" id="cred-instance" placeholder="ID da instância">
+      </div>
+      <div class="form-field">
+        <label>Z-API TOKEN (deixe vazio para manter)</label>
+        <input type="text" id="cred-token" placeholder="token da instância">
+      </div>
+      <div class="form-field">
+        <label>Z-API CLIENT TOKEN (deixe vazio para manter)</label>
+        <input type="text" id="cred-client-token" placeholder="client-token">
+      </div>
+      <div class="form-field">
+        <label>TETO DE CPL (R$)</label>
+        <input type="number" id="cred-cpl" placeholder="25.00">
+      </div>
+      <div class="form-field full">
+        <label>ACESSOS DO CLIENTE NO PORTAL</label>
+        <div class="perm-grid">
+          <label class="perm-item"><input type="checkbox" id="cred-perm-ver-cpl" checked> Ver CPL</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-ver-vendedores" checked> Ver vendedores</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-ver-campanhas" checked> Ver campanhas</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-ver-eventos" checked> Ver movimentações</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-editar-vendedores"> Editar/cadastrar vendedores</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-editar-followup"> Ajustar mensagens de follow-up</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-editar-campanhas"> Cadastrar campanhas/origens</label>
+          <label class="perm-item"><input type="checkbox" id="cred-perm-exportar-csv" checked> Exportar CSV</label>
+        </div>
+        <div class="fu-hint">Marque apenas o que o cliente pode acessar sem interferir na parte técnica.</div>
+      </div>
+      <div class="form-field full" style="border-top:1px solid var(--border2);padding-top:14px;margin-top:4px">
+        <label>🔑 LOGIN DO CLIENTE NO PORTAL</label>
+        <div class="fu-hint" style="margin-bottom:8px">Email e senha que o cliente usará para entrar no portal dele. Envie essas credenciais para ele.</div>
+      </div>
+      <div class="form-field">
+        <label>Email de acesso</label>
+        <input type="email" id="cred-email" placeholder="cliente@empresa.com.br">
+      </div>
+      <div class="form-field">
+        <label>Senha de acesso</label>
+        <input type="text" id="cred-senha" placeholder="Deixe em branco para manter a atual">
+      </div>
+    </div>
     <div id="cred-hint" class="fu-hint" style="margin-top:8px"></div>
     <div id="cred-msg" style="font-size:13px;margin-top:12px"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharCredenciais()">Cancelar</button>
-      <button class="btn-save" id="btn-cred-save" onclick="salvarCredenciais()">Salvar credenciais</button>
+      <button class="btn-save" id="btn-cred-save" onclick="salvarCredenciais()">Salvar</button>
     </div>
   </div>
 </div>
