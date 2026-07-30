@@ -16,7 +16,7 @@ function register(app, deps) {
     ZAPI_ADVANCED_ENDPOINTS, agendarFollowupV2, authVendedor, axios, buscarColunaAgenda,
     conflitoAgenda, emitirLeadFlags, emitirMensagemApagada, emitirMensagemLead, enviarFollowupsPendentesDoLead, etapaSistemaPorSlug,
     garantirColunasVendedoresPortal, garantirEstruturaAgenda, garantirEstruturaFunil, garantirEstruturaMensagensRapidas, garantirEstruturaQuestionario,
-    hashSenha, iniciarQuestionarioPorTemplate, limparPayloadAvancado, limparPedidoAtendente, marcarChatLidoNoZap,
+    hashSenha, iniciarQuestionarioPorTemplate, limparPayloadAvancado, limparPedidoAtendente, marcarChatLidoNoZap, marcarChatNaoLidoNoZap,
     montarPayloadRespostaZapi, moverLeadParaColunaFunil, query, registrarConversa, registrarEventoLead,
     resolverReplyInfoLead, sincronizarColunaComWhatsapp, slugFunilPorEtapa, slugifyFunil, tipoMidia,
     uploadSupabase, vendedorPodeAgendamento, vendedorPodeColuna, vendedorPodeConversa, vendedorPodeLead,
@@ -388,8 +388,11 @@ app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, r
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const naoLida = !!(req.body && req.body.nao_lida);
     const upd = await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2 AND nao_lida IS DISTINCT FROM $1 RETURNING id`, [naoLida, lead.id]);
-    // Reflete no WhatsApp só quando REALMENTE mudou de não-lido -> lido.
-    if (!naoLida && upd.rows.length) marcarChatLidoNoZap(lead.id);
+    // Reflete no WhatsApp só quando REALMENTE mudou de estado.
+    if (upd.rows.length) {
+      if (!naoLida) marcarChatLidoNoZap(lead.id);
+      else marcarChatNaoLidoNoZap(lead.id);
+    }
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

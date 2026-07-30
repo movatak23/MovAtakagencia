@@ -25,7 +25,7 @@ function register(app, deps) {
     garantirEstruturaCampanhasTemplates, garantirEstruturaCaptacao, garantirEstruturaConversas, garantirEstruturaFunil, garantirEstruturaMensagensRapidas,
     garantirEstruturaPlanos, garantirEstruturaQuestionario, garantirFunilPadraoCliente, gerarRespostaIALead, gerarToken,
     getZapiCreds, hashSenha, iniciarQuestionarioPorTemplate, limparPayloadAvancado, limparPedidoAtendente,
-    listarTemplatesCustom, localizarCampanhaPorGatilho, marcarChatLidoNoZap, mesAtualStr, montarRelatorioDiarioCliente,
+    listarTemplatesCustom, localizarCampanhaPorGatilho, marcarChatLidoNoZap, marcarChatNaoLidoNoZap, mesAtualStr, montarRelatorioDiarioCliente,
     moverLeadParaColunaFunil, normalizarGatilho, normalizarListaComandos, normalizarNichoCliente, normalizarPermissoes,
     obterLeadComZapi, obterMensagemComZapi, parseMoedaParaNumero, query, r2Client,
     r2Delete, r2Download, r2Upload, registrarConversa, registrarEventoLead,
@@ -748,9 +748,12 @@ app.patch('/movatak/admin/leads/:id/marcar-lida', ...exigeLead, async (req, res)
   try {
     const naoLida = !!(req.body && req.body.nao_lida);
     const upd = await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2 AND nao_lida IS DISTINCT FROM $1 RETURNING id`, [naoLida, req.params.id]);
-    // Reflete no WhatsApp só quando REALMENTE mudou de não-lido -> lido, para não
-    // chamar a Z-API à toa ao reabrir conversas que já estavam lidas.
-    if (!naoLida && upd.rows.length) marcarChatLidoNoZap(req.params.id);
+    // Reflete no WhatsApp só quando REALMENTE mudou de estado, para não chamar a
+    // Z-API à toa ao reabrir conversas que já estavam no mesmo estado.
+    if (upd.rows.length) {
+      if (!naoLida) marcarChatLidoNoZap(req.params.id);
+      else marcarChatNaoLidoNoZap(req.params.id);
+    }
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) {
     res.status(500).json({ error: e.message });

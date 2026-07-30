@@ -135,8 +135,10 @@ async function zapiArquivar(instance, token, clientToken, telefone) {
 }
 
 async function zapiMarcarNaoLido(instance, token, clientToken, telefone) {
-  const url = `${ZAPI_BASE}/${instance}/token/${token}/mark-message-as-unread`;
-  await axios.post(url, { phone: telefone }, { headers: { 'Client-Token': clientToken } });
+  // Marca o chat como NÃO LIDO no WhatsApp. Obs.: o endpoint mark-message-as-unread
+  // NÃO existe na Z-API (retorna NOT_FOUND / "Unable to find matching target resource
+  // method"); o caminho correto é modify-chat com action:"unread" (retorna value:true).
+  return zapiPost(instance, token, clientToken, 'modify-chat', { phone: telefone, action: 'unread' });
 }
 
 // Busca a URL da foto de perfil do contato. A URL retornada pelo WhatsApp expira

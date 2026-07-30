@@ -16,7 +16,7 @@ const { enviarBoasVindasLead, enviarMenuAtendimento, processarRespostaMenu } = r
 const { enviarMsgQuestionario, iniciarQuestionario, processarRespostaQuestionario, reiniciarQuestionarioLead } = require('./questionario');
 const { iaResponderAutomatico, localizarCampanhaPorIA } = require('./ia');
 const { ehGrupoOuCanal, extrairDigitosTelefone, telefonesEquivalentes, variantesTelefone, registrarErroZapi, enviarAlerta } = require('./util');
-const { emitirStatusMensagem } = require('./realtime');
+const { emitirStatusMensagem, emitirLeadFlags } = require('./realtime');
 const { zapiEtiquetar } = require('./zapi');
 
 // Deps ainda no index.js (compartilhadas com rotas), injetadas no boot via init().
@@ -256,6 +256,34 @@ async function handleZapiStatus(req, res) {
     const body = req.body || {};
     const messageId = body.messageId || body.id || body.messageID || body.msgId || body.message_id;
     const status = body.status || body.messageStatus || body.type || body.ack || body.event || null;
+    // READ_BY_ME = você leu a mensagem recebida direto no aparelho / WhatsApp Web.
+    // Reflete no CRM marcando o lead como lido (limpa o não-lido e avisa os painéis
+    // via socket). Casa o lead pelo telefone (com variantes BR) dentro do cliente da
+    // instância. Não depende do msg_id existir no histórico.
+    if (String(status || '').toUpperCase() === 'READ_BY_ME') {
+      try {
+        const instanceId = body.instanceId || body.instance || '';
+        const telefone = extrairTelefonePayload(body);
+        const variantes = variantesTelefone(telefone);
+        if (instanceId && variantes.length) {
+          const rc = await query('SELECT id FROM movatak_clientes WHERE zapi_instance=$1 AND ativo=true', [instanceId]);
+          if (rc.rows.length) {
+            const clienteId = rc.rows[0].id;
+            const rl = await query(
+              `UPDATE movatak_leads SET nao_lida=false
+                 WHERE cliente_id=$1
+                   AND regexp_replace(telefone, '\\D', '', 'g') = ANY($2::text[])
+                   AND nao_lida IS DISTINCT FROM false
+                 RETURNING id`,
+              [clienteId, variantes]
+            );
+            if (rl.rows.length) emitirLeadFlags(clienteId, Number(rl.rows[0].id), { nao_lida: false });
+          }
+        }
+      } catch (e) {
+        console.error('[read-by-me] falha ao refletir leitura do aparelho no CRM:', e.message);
+      }
+    }
     if (!messageId) return res.json({ ok: true, ignored: true });
     const r = await query(`UPDATE movatak_conversas
                              SET msg_status=$1, msg_status_em=NOW(), zapi_status_payload=$2::jsonb
