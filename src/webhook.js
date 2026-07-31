@@ -274,8 +274,8 @@ async function handleZapiStatus(req, res) {
           const rc = await query('SELECT id FROM movatak_clientes WHERE zapi_instance=$1 AND ativo=true', [instanceId]);
           if (rc.rows.length) {
             const clienteId = rc.rows[0].id;
-            const rl = await localizarLeadPorPayload(clienteId, telefone, chatLid, false);
-            const lead = rl && rl.rows && rl.rows[0];
+            // localizarLeadPorPayload retorna a LINHA do lead (ou null), não {rows:[]}.
+            const lead = await localizarLeadPorPayload(clienteId, telefone, chatLid, false);
             if (lead && lead.nao_lida) {
               await query('UPDATE movatak_leads SET nao_lida=false WHERE id=$1 AND nao_lida IS DISTINCT FROM false', [lead.id]).catch(() => null);
               emitirLeadFlags(clienteId, Number(lead.id), { nao_lida: false });
