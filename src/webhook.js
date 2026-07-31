@@ -254,9 +254,6 @@ async function handleZapiStatus(req, res) {
   try {
     await garantirEstruturaConversas();
     const body = req.body || {};
-    // [DEBUG TEMPORÁRIO] captura crua de TODO payload de status pra diagnosticar o
-    // READ_BY_ME (formato do telefone / campos). Fire-and-forget, não afeta o fluxo.
-    query('INSERT INTO movatak_status_debug (payload) VALUES ($1::jsonb)', [JSON.stringify(body)]).catch(() => null);
     const messageId = body.messageId || body.id || body.messageID || body.msgId || body.message_id;
     const status = body.status || body.messageStatus || body.type || body.ack || body.event || null;
     // READ_BY_ME = você leu a mensagem recebida direto no aparelho / WhatsApp Web.
