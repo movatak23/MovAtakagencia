@@ -8210,6 +8210,13 @@ async function iniciarPaginaFunilAtendimento() {
   await carregarFunilAtendimento();
   iniciarSocketFunil(id);
   montarBotaoFunilView(); // injeta o botao Clean/Completo na toolbar deste funil (modal)
+  // Deep-link: ?leadId=<id> (ex.: link do aviso "Lead qualificado") abre direto a
+  // conversa desse lead assim que o board terminou de carregar.
+  const _leadDeep = Number(params.get('leadId'));
+  if (_leadDeep && typeof abrirPainelLead === 'function') {
+    const _ld = (funilState.leads || []).find(x => Number(x.id) === _leadDeep);
+    abrirPainelLead(_leadDeep, _ld ? (_ld.nome || '') : '');
+  }
 }
 
 // ============================================================

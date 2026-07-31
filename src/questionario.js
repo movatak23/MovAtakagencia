@@ -481,15 +481,36 @@ async function finalizarQuestionario(cliente, lead, respostas) {
       await enviarMsgQuestionario(cliente, lead.telefone, finalMsg, cliente.questionario_final_imagem);
     }
 
+    // Mostra a resposta de forma legível: para passos de múltipla escolha, troca o
+    // índice (ex.: "1") pelo texto da opção. Passos sim/não são portões (ex.: "Bora
+    // dar uma olhada?") — não entram no resumo (são ruído, não info do lead).
+    const legivelResposta = (p, val) => {
+      if (Array.isArray(p.opcoes) && p.opcoes.length) {
+        const i = parseInt(val, 10);
+        const opt = (!isNaN(i) && i >= 1) ? p.opcoes[i - 1] : null;
+        if (opt != null) return (typeof opt === 'string') ? opt : (opt.texto || opt.label || opt.valor || String(val));
+      }
+      return String(val);
+    };
     const resumoLinhas = passos
-      .filter(p => p.pergunta_curta && String(p.pergunta_curta).trim() && respostas[p.id] !== undefined)
-      .map(p => `${String(p.pergunta_curta).trim()}: ${respostas[p.id]}`);
+      .filter(p => p.tipo !== 'sim_nao' && p.pergunta_curta && String(p.pergunta_curta).trim() && respostas[p.id] !== undefined)
+      .map(p => `${String(p.pergunta_curta).trim()}: ${legivelResposta(p, respostas[p.id])}`);
     const cobTxt = (respostas._cobertura === true) ? 'SIM' : (respostas._cobertura === false ? 'NÃO (verificar)' : '—');
+
+    // Links clicáveis no WhatsApp do dono: um abre a conversa no painel do CRM
+    // (deep-link ?funil=1&clienteId&leadId), outro abre a conversa no WhatsApp (wa.me).
+    const digitos = String(lead.telefone || '').replace(/\D/g, '');
+    const baseCrm = `https://${process.env.RAILWAY_PUBLIC_DOMAIN || 'app.movatak.com.br'}`;
+    const linkCrm = `${baseCrm}/?funil=1&clienteId=${cliente.id}&leadId=${lead.id}&clienteNome=${encodeURIComponent(cliente.nome || '')}`;
+    const linkWa = digitos ? `https://wa.me/${digitos}` : '';
+
     const resumo =
       '🔔 Lead qualificado!\n' +
       `Nome: ${lead.nome || '—'}\n` +
-      `Fone: ${lead.telefone}` +
-      (resumoLinhas.length ? '\n' + resumoLinhas.join('\n') : '') +
+      `Telefone: ${lead.telefone}\n` +
+      `🖥️ Abrir no CRM: ${linkCrm}` +
+      (linkWa ? `\n💬 Abrir no WhatsApp: ${linkWa}` : '') +
+      (resumoLinhas.length ? '\n\n' + resumoLinhas.join('\n') : '') +
       (respostas._cep ? `\nCEP: ${respostas._cep} | Cobertura: ${cobTxt}` : '') +
       (rec.plano ? `\nPlano sugerido: ${rec.plano.nome}` : '');
 
