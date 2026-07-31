@@ -261,26 +261,25 @@ async function handleZapiStatus(req, res) {
     const status = body.status || body.messageStatus || body.type || body.ack || body.event || null;
     // READ_BY_ME = você leu a mensagem recebida direto no aparelho / WhatsApp Web.
     // Reflete no CRM marcando o lead como lido (limpa o não-lido e avisa os painéis
-    // via socket). Casa o lead pelo telefone (com variantes BR) dentro do cliente da
-    // instância. Não depende do msg_id existir no histórico.
+    // via socket). O payload traz `phone` que muitas vezes é um @lid (id privado do
+    // WhatsApp, NÃO o número), então casamos o lead reusando localizarLeadPorPayload,
+    // que resolve por chat_lid primeiro e cai pro telefone (com variantes BR).
     if (String(status || '').toUpperCase() === 'READ_BY_ME') {
       try {
         const instanceId = body.instanceId || body.instance || '';
+        const rawPhone = String(body.phone || '');
+        const chatLid = rawPhone.includes('@lid') ? rawPhone : (body.chatLid || null);
         const telefone = extrairTelefonePayload(body);
-        const variantes = variantesTelefone(telefone);
-        if (instanceId && variantes.length) {
+        if (instanceId && (chatLid || telefone)) {
           const rc = await query('SELECT id FROM movatak_clientes WHERE zapi_instance=$1 AND ativo=true', [instanceId]);
           if (rc.rows.length) {
             const clienteId = rc.rows[0].id;
-            const rl = await query(
-              `UPDATE movatak_leads SET nao_lida=false
-                 WHERE cliente_id=$1
-                   AND regexp_replace(telefone, '\\D', '', 'g') = ANY($2::text[])
-                   AND nao_lida IS DISTINCT FROM false
-                 RETURNING id`,
-              [clienteId, variantes]
-            );
-            if (rl.rows.length) emitirLeadFlags(clienteId, Number(rl.rows[0].id), { nao_lida: false });
+            const rl = await localizarLeadPorPayload(clienteId, telefone, chatLid, false);
+            const lead = rl && rl.rows && rl.rows[0];
+            if (lead && lead.nao_lida) {
+              await query('UPDATE movatak_leads SET nao_lida=false WHERE id=$1 AND nao_lida IS DISTINCT FROM false', [lead.id]).catch(() => null);
+              emitirLeadFlags(clienteId, Number(lead.id), { nao_lida: false });
+            }
           }
         }
       } catch (e) {
