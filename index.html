@@ -1832,14 +1832,28 @@ function renderFunil(clientes, periodo) {
 }
 
 // ── Tabela de clientes ─────────────────────────────────────
+let _mostrarClientesInativos = false;
 function renderClientes(clientes) {
   const tbody = document.getElementById('clientes-tbody');
   if (!tbody) return; // não existe na tela do funil/kanban — evita erro de innerHTML em null
+  window._clientesCache = clientes;
   if (!clientes.length) {
-    tbody.innerHTML = '<tr><td colspan="6" class="state-row">Nenhum cliente cadastrado.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="state-row">Nenhum cliente cadastrado.</td></tr>';
     return;
   }
-  tbody.innerHTML = clientes.map(c => {
+  const inativos = clientes.filter(c => !c.ativo);
+  const visiveis = clientes.filter(c => _mostrarClientesInativos || c.ativo);
+  const toggleRow = inativos.length
+    ? `<tr><td colspan="8" style="padding:6px 4px;border:none;background:transparent">
+        <label style="font-size:12px;color:var(--text2);cursor:pointer;display:inline-flex;align-items:center;gap:7px">
+          <input type="checkbox" ${_mostrarClientesInativos ? 'checked' : ''} onchange="_mostrarClientesInativos=this.checked;renderClientes(window._clientesCache)">
+          Mostrar inativos (${inativos.length})</label></td></tr>`
+    : '';
+  if (!visiveis.length) {
+    tbody.innerHTML = toggleRow + '<tr><td colspan="8" class="state-row">Nenhum cliente ativo. Marque "Mostrar inativos" para ver os desativados.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = toggleRow + visiveis.map(c => {
     const total  = parseInt(c.total_leads || 0);
     const conv   = parseInt(c.convertidos || 0);
     const fu     = parseInt(c.em_followup || 0);
@@ -1863,11 +1877,79 @@ function renderClientes(clientes) {
         <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
         <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
         <button onclick="event.stopPropagation();baixarBackupClientePorId(${c.id})" title="Baixar backup deste cliente" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">💾 Backup</button>
+        ${_botoesGestaoCliente(c)}
         <span class="inst-status" data-cliente="${c.id}" onclick="event.stopPropagation();abrirConexaoWhatsapp(${c.id})" title="Status da instância Z-API — clique para ver/reconectar" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border2);border-radius:6px;font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px;color:var(--text2)">Instância <span class="inst-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);display:inline-block;flex-shrink:0"></span></span>
       </td>
     </tr>`;
   }).join('');
-  atualizarStatusInstancias(clientes);
+  atualizarStatusInstancias(visiveis);
+}
+
+// Botões de gestão (desativar/reativar/excluir) por cliente na lista do painel.
+function _botoesGestaoCliente(c) {
+  const nomeEsc = String(c.nome || '').replace(/'/g, "");
+  const base = 'event.stopPropagation();';
+  if (c.ativo) {
+    return `<button onclick="${base}desativarCliente(${c.id}, '${nomeEsc}')" title="Desativar: some da lista (reversível)" style="background:transparent;border:1px solid var(--amber);border-radius:6px;color:var(--amber);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">⏸ Desativar</button>`;
+  }
+  return `<button onclick="${base}reativarCliente(${c.id}, '${nomeEsc}')" title="Reativar cliente" style="background:transparent;border:1px solid var(--green);border-radius:6px;color:var(--green);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">▶ Reativar</button>
+    <button onclick="${base}excluirClienteDeVez(${c.id}, '${nomeEsc}')" title="Excluir de vez (apaga tudo, irreversível)" style="background:transparent;border:1px solid var(--red);border-radius:6px;color:var(--red);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🗑️ Excluir</button>`;
+}
+
+// Desativa (soft): some da lista, reversível.
+async function desativarCliente(id, nome) {
+  if (!confirm('Desativar "' + nome + '"?\n\nEle sai da lista do painel (marque "Mostrar inativos" para vê-lo de novo). Os dados continuam salvos e dá para reativar quando quiser.')) return;
+  try {
+    await api('/movatak/admin/clientes/' + id + '/ativo', { method: 'PATCH', body: JSON.stringify({ ativo: false }) });
+    await carregarTudo();
+  } catch (e) { alert('Erro ao desativar: ' + e.message); }
+}
+
+async function reativarCliente(id, nome) {
+  try {
+    await api('/movatak/admin/clientes/' + id + '/ativo', { method: 'PATCH', body: JSON.stringify({ ativo: true }) });
+    await carregarTudo();
+  } catch (e) { alert('Erro ao reativar: ' + e.message); }
+}
+
+// Baixa o backup do cliente e resolve a Promise só quando o download foi disparado.
+function baixarBackupClienteAsync(id) {
+  return fetch(API_BASE + '/movatak/admin/clientes/' + id + '/backup', { headers: { 'x-movatak-secret': secret } })
+    .then(r => {
+      if (!r.ok) throw new Error('Erro ' + r.status);
+      const cd = r.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename="([^"]+)"/);
+      return r.blob().then(blob => ({ blob, nome: m ? m[1] : ('movatak-backup-' + id + '.json') }));
+    })
+    .then(({ blob, nome }) => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = nome;
+      document.body.appendChild(a); a.click(); a.remove();
+    });
+}
+
+// Exclui de vez (hard): baixa backup -> confirma digitando o nome -> DELETE. Irreversível.
+async function excluirClienteDeVez(id, nome) {
+  const digitado = prompt(
+    '⚠️ EXCLUIR DE VEZ "' + nome + '"\n\n' +
+    'Isso apaga TODOS os dados do cliente (leads, conversas, follow-ups, vendedores, funil, agendamentos...) e é IRREVERSÍVEL.\n\n' +
+    'Um backup .json será baixado automaticamente antes.\n\n' +
+    'Para confirmar, digite o nome do cliente exatamente:'
+  );
+  if (digitado === null) return;
+  if (digitado.trim() !== String(nome).trim()) { alert('O nome não confere. Exclusão cancelada.'); return; }
+  try {
+    await baixarBackupClienteAsync(id);
+  } catch (e) {
+    if (!confirm('Não consegui gerar o backup (' + e.message + ').\n\nExcluir mesmo assim, SEM backup?')) return;
+  }
+  try {
+    const r = await api('/movatak/admin/clientes/' + id, { method: 'DELETE', body: JSON.stringify({ confirmar_nome: nome }) });
+    const total = r && r.contagens ? Object.values(r.contagens).reduce((a, b) => a + (Number(b) || 0), 0) : 0;
+    alert('Cliente "' + nome + '" excluído. Registros apagados: ' + total + '.');
+    await carregarTudo();
+  } catch (e) { alert('Erro ao excluir: ' + e.message); }
 }
 
 // Consulta o status Z-API de cada cliente e pinta a bolinha da coluna Instância

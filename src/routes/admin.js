@@ -1,5 +1,7 @@
 'use strict';
 
+const { pool } = require('../db');
+
 // ============================================================
 // src/routes/admin.js — Fase 5a da refatoracao.
 //
@@ -1874,6 +1876,78 @@ app.get('/movatak/admin/clientes/:id/leads.csv', ...forcaClienteIdNaUrl, async (
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Ativar/desativar cliente (soft delete): sai da lista do painel, mas os dados
+// continuam no banco e dá pra reativar. Admin-only (nunca o portal do cliente).
+app.patch('/movatak/admin/clientes/:id/ativo', authMovatak, async (req, res) => {
+  try {
+    const ativo = !!(req.body && req.body.ativo);
+    const r = await query('UPDATE movatak_clientes SET ativo=$1 WHERE id=$2 RETURNING id', [ativo, req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    res.json({ ok: true, ativo });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Excluir cliente DE VEZ (hard delete): apaga TODOS os dados do cliente em todas as
+// tabelas com cliente_id (+ movatak_leads_captacao, ligada por lead_id), numa única
+// transação (ou apaga tudo ou nada). Admin-only e exige `confirmar_nome` batendo com
+// o nome do cliente — trava de segurança contra exclusão acidental. Irreversível.
+app.delete('/movatak/admin/clientes/:id', authMovatak, async (req, res) => {
+  const clienteId = req.params.id;
+  try {
+    const cli = await query('SELECT id, nome FROM movatak_clientes WHERE id=$1', [clienteId]);
+    if (!cli.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const nome = cli.rows[0].nome || '';
+    const confirmar = req.body && req.body.confirmar_nome;
+    if (String(confirmar || '').trim() !== String(nome).trim()) {
+      return res.status(400).json({ error: 'Confirmação inválida: o nome digitado não confere com o do cliente.' });
+    }
+    // Descobre dinamicamente as tabelas com cliente_id (mesma lógica do backup), então
+    // tabelas novas entram automaticamente no delete.
+    const tabsRes = await query(
+      `SELECT table_name FROM information_schema.columns
+        WHERE table_schema='public' AND column_name='cliente_id' AND table_name LIKE 'movatak_%'
+        GROUP BY table_name ORDER BY table_name`
+    );
+    const tabelas = tabsRes.rows
+      .map(r => r.table_name)
+      .filter(t => /^movatak_[a-z_]+$/.test(t) && t !== 'movatak_clientes' && t !== 'movatak_leads');
+    const temCaptacao = (await query(`SELECT to_regclass('public.movatak_leads_captacao') AS t`)).rows[0].t;
+
+    const client = await pool.connect();
+    const contagens = {};
+    try {
+      await client.query('BEGIN');
+      // 1) leads_captacao liga por lead_id (não tem cliente_id).
+      if (temCaptacao) {
+        const capt = await client.query(
+          'DELETE FROM movatak_leads_captacao WHERE lead_id IN (SELECT id FROM movatak_leads WHERE cliente_id=$1)',
+          [clienteId]
+        );
+        contagens['movatak_leads_captacao'] = capt.rowCount || 0;
+      }
+      // 2) leads primeiro: cascateia filhos com FK e libera os FKs NO ACTION que
+      //    apontam de leads -> planos/setores/vendedores.
+      const leadsDel = await client.query('DELETE FROM movatak_leads WHERE cliente_id=$1', [clienteId]);
+      contagens['movatak_leads'] = leadsDel.rowCount || 0;
+      // 3) demais tabelas com cliente_id (ordem indiferente: sem FK NO ACTION entre elas).
+      for (const t of tabelas) {
+        const dr = await client.query(`DELETE FROM ${t} WHERE cliente_id=$1`, [clienteId]);
+        contagens[t] = dr.rowCount || 0;
+      }
+      // 4) o próprio cliente.
+      const cliDel = await client.query('DELETE FROM movatak_clientes WHERE id=$1', [clienteId]);
+      contagens['movatak_clientes'] = cliDel.rowCount || 0;
+      await client.query('COMMIT');
+      res.json({ ok: true, cliente_id: Number(clienteId), nome, contagens });
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => null);
+      res.status(500).json({ error: 'Falha ao excluir (nada foi apagado): ' + e.message });
+    } finally {
+      client.release();
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/movatak/admin/clientes/:id/backup', ...forcaClienteIdNaUrl, async (req, res) => {
