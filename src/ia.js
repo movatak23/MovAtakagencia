@@ -316,13 +316,38 @@ async function transferirIAParaHumano(cliente, lead, motivo, msgTransicao) {
   console.log(`[ia-auto] lead ${lead.id}: transferido para humano (${motivo})`);
 }
 
+// Mapa etapa -> slug da coluna de sistema (espelha slugFunilPorEtapa do index.js).
+// Usado para resolver a coluna EFETIVA do lead quando funil_coluna_id ainda é NULL
+// (leads que aparecem no board por fallback de etapa — o caso do "novo contato").
+const IA_ETAPA_SLUG = {
+  lead: 'novo_contato',
+  auto_atendimento: 'auto_atendimento',
+  followup: 'aguardando_resposta',
+  negociacao: 'em_negociacao',
+  cliente: 'cliente_fechado',
+  descartado: 'perdido'
+};
+
 async function iaResponderAutomatico(cliente, lead, textoLead) {
   try {
-    if (!lead || !lead.funil_coluna_id) return false;
-    const colR = await query(
-      'SELECT ia_ativa FROM movatak_funil_colunas WHERE id=$1 AND ativo=true',
-      [lead.funil_coluna_id]
-    ).catch(() => ({ rows: [] }));
+    if (!lead) return false;
+    // Resolve a coluna do MESMO jeito que o board (renderFunil): se o lead tem
+    // funil_coluna_id físico, usa ele; senão, cai no slug da etapa. Sem isso, a
+    // IA só respondia leads arrastados manualmente pra coluna — leads de "novo
+    // contato" (funil_coluna_id NULL) ficavam de fora mesmo com o toggle ligado.
+    let colR;
+    if (lead.funil_coluna_id) {
+      colR = await query(
+        'SELECT ia_ativa FROM movatak_funil_colunas WHERE id=$1 AND ativo=true',
+        [lead.funil_coluna_id]
+      ).catch(() => ({ rows: [] }));
+    } else {
+      const slug = IA_ETAPA_SLUG[lead.etapa] || 'novo_contato';
+      colR = await query(
+        'SELECT ia_ativa FROM movatak_funil_colunas WHERE cliente_id=$1 AND slug=$2 AND ativo=true ORDER BY ordem ASC, id ASC LIMIT 1',
+        [lead.cliente_id || cliente.id, slug]
+      ).catch(() => ({ rows: [] }));
+    }
     if (!colR.rows.length || !colR.rows[0].ia_ativa) return false;
     console.log(`[ia-auto] lead ${lead.id}: coluna com IA ativa — avaliando resposta (texto: "${String(textoLead || '').slice(0, 80)}")`);
 
