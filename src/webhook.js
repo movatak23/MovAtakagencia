@@ -5,6 +5,8 @@
 // 4a: 5 handlers menores. 4b: /webhook/zapi (handleZapi, orquestrador) +
 // 22 helpers exclusivos (payload/comando). index.js registra app.M(path, handleX).
 // ============================================================
+const axios = require('axios');
+const RASTREIOBOT_URL = process.env.RASTREIOBOT_URL || 'https://rastreiobot-production-e904.up.railway.app';
 const { query, garantirEstruturaConversas } = require('./db');
 const { logDebug, MOVATAK_REENTRADA_FU1_HORAS } = require('./config');
 const { registrarConversa, registrarEventoLead, pararAtendimentoLead, limparPedidoAtendente } = require('./leads');
