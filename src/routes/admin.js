@@ -2579,13 +2579,14 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
               questionario_comando_parar, questionario_comando_ativar,
               questionario_msg_parar,
               acao_arquivar_ao_final, acao_marcar_nao_lido, enviar_msg_final,
-              quest_lembrete_msg, quest_lembrete_minutos
+              quest_lembrete_msg, quest_lembrete_minutos, questionario_coluna_destino_id
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
     const rp = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [req.params.id]);
     const cob = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
+    const colr = await query('SELECT id, nome FROM movatak_funil_colunas WHERE cliente_id = $1 AND ativo = true ORDER BY ordem ASC, id ASC', [req.params.id]).catch(() => ({ rows: [] }));
     res.json({
       ativo: !!r.rows[0].questionario_ativo,
       intro: r.rows[0].questionario_intro || '',
@@ -2603,7 +2604,9 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
       acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido,
       enviar_msg_final: r.rows[0].enviar_msg_final !== false,
       quest_lembrete_msg: r.rows[0].quest_lembrete_msg || '',
-      quest_lembrete_minutos: r.rows[0].quest_lembrete_minutos || null
+      quest_lembrete_minutos: r.rows[0].quest_lembrete_minutos || null,
+      questionario_coluna_destino_id: r.rows[0].questionario_coluna_destino_id || null,
+      colunas: colr.rows
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2649,6 +2652,13 @@ app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, as
         (typeof msg_parar === 'string') ? msg_parar.trim() : null
       ]
     );
+    // Coluna de destino ao fim do questionario: atualizada a parte (fora do COALESCE),
+    // pois precisa permitir LIMPAR (voltar ao padrao "em_negociacao") enviando vazio.
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'questionario_coluna_destino_id')) {
+      const raw = req.body.questionario_coluna_destino_id;
+      const colDestino = (raw === '' || raw === null || raw === undefined) ? null : (parseInt(raw, 10) || null);
+      await query('UPDATE movatak_clientes SET questionario_coluna_destino_id = $1 WHERE id = $2', [colDestino, req.params.id]);
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

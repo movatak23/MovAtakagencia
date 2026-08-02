@@ -379,6 +379,8 @@ async function garantirEstruturaFunil() {
 
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_arquivar_ao_final BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS acao_marcar_nao_lido BOOLEAN DEFAULT false`).catch(() => null);
+  // Coluna do kanban p/ onde o lead vai ao fim do questionario (NULL = padrao "em_negociacao").
+  await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS questionario_coluna_destino_id INTEGER`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS enviar_msg_final BOOLEAN DEFAULT true`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS nicho TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_clientes ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`).catch(() => null);

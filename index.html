@@ -5760,6 +5760,15 @@ async function carregarQuestNoEditor() {
     document.getElementById('quest-ativo').disabled = ehTemplate;
     document.getElementById('quest-acao-arquivar').checked = !!cfgCli.acao_arquivar_ao_final;
     document.getElementById('quest-acao-nao-lido').checked = !!cfgCli.acao_marcar_nao_lido;
+    // Coluna de destino ao fim do questionário (campo do cliente): monta as opções
+    // com as colunas do kanban e seleciona a atual.
+    const selColDest = document.getElementById('quest-coluna-destino');
+    if (selColDest) {
+      const colsDest = Array.isArray(cfgCli.colunas) ? cfgCli.colunas : [];
+      selColDest.innerHTML = ['<option value="">Padrão (Em negociação)</option>']
+        .concat(colsDest.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`)).join('');
+      selColDest.value = cfgCli.questionario_coluna_destino_id != null ? String(cfgCli.questionario_coluna_destino_id) : '';
+    }
     document.getElementById('quest-enviar-final').checked = (cfgCli.enviar_msg_final !== false);
     document.getElementById('quest-intro').value = r.intro || '';
     document.getElementById('quest-final').value = r.final || '';
@@ -6055,7 +6064,8 @@ async function salvarQuestionario() {
           enviar_msg_final: document.getElementById('quest-enviar-final').checked,
           msg_parar: document.getElementById('quest-msg-parar').value.trim(),
           quest_lembrete_msg: lembreteMsg,
-          quest_lembrete_minutos: lembreteMinutos
+          quest_lembrete_minutos: lembreteMinutos,
+          questionario_coluna_destino_id: document.getElementById('quest-coluna-destino').value || ''
         })
       });
       await carregarListaTemplatesQuest(questState.clienteId);
@@ -6077,7 +6087,8 @@ async function salvarQuestionario() {
           acao_marcar_nao_lido: document.getElementById('quest-acao-nao-lido').checked,
           enviar_msg_final: document.getElementById('quest-enviar-final').checked,
           quest_lembrete_msg: lembreteMsg,
-          quest_lembrete_minutos: lembreteMinutos
+          quest_lembrete_minutos: lembreteMinutos,
+          questionario_coluna_destino_id: document.getElementById('quest-coluna-destino').value || ''
         })
       });
     }
@@ -10305,6 +10316,14 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     <div class="perm-grid">
       <label class="perm-item"><input type="checkbox" id="quest-acao-arquivar"> Arquivar chat do lead</label>
       <label class="perm-item"><input type="checkbox" id="quest-acao-nao-lido"> Marcar como não lido</label>
+    </div>
+
+    <div style="margin-top:14px">
+      <label class="fu-label" for="quest-coluna-destino" style="display:block;margin-bottom:6px">Mover o lead para a coluna do kanban</label>
+      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:8px">Ao concluir (ou ser transferido no) questionário, o lead vai para esta coluna. Deixe no padrão para manter "Em negociação".</div>
+      <select id="quest-coluna-destino" style="width:100%;max-width:420px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+        <option value="">Padrão (Em negociação)</option>
+      </select>
     </div>
 
     <div class="login-err" id="quest-err" style="margin-top:12px"></div>

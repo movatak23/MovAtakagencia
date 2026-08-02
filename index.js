@@ -144,7 +144,7 @@ followups.init({
 // declarations sao hoisted, entao ja estao definidas aqui.
 questionario.init({
   agendarFollowupV2, enviarFollowupsPendentesDoLead,
-  atribuirVendedorBalanceado, moverLeadParaFunilSlug, enviarMenuAtendimento,
+  atribuirVendedorBalanceado, moverLeadParaFunilSlug, moverLeadParaColunaFunil, enviarMenuAtendimento,
   ehGrupoOuCanal, sleep, normalizarDelayQuestionario, normalizarCep, tipoMidia
 });
 

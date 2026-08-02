@@ -15,12 +15,29 @@ const { MOVATAK_QUEST_LEMBRETE_HORAS, MOVATAK_QUEST_MAX_LEMBRETES } = require('.
 // forem extraidos). Como as funcoes movidas as referenciam por variavel de
 // escopo do modulo, o corpo movido fica byte-a-byte identico ao original.
 let agendarFollowupV2, enviarFollowupsPendentesDoLead,
-    atribuirVendedorBalanceado, moverLeadParaFunilSlug, enviarMenuAtendimento,
+    atribuirVendedorBalanceado, moverLeadParaFunilSlug, moverLeadParaColunaFunil, enviarMenuAtendimento,
     ehGrupoOuCanal, sleep, normalizarDelayQuestionario, normalizarCep, tipoMidia;
 function init(deps) {
   ({ agendarFollowupV2, enviarFollowupsPendentesDoLead,
-     atribuirVendedorBalanceado, moverLeadParaFunilSlug, enviarMenuAtendimento,
+     atribuirVendedorBalanceado, moverLeadParaFunilSlug, moverLeadParaColunaFunil, enviarMenuAtendimento,
      ehGrupoOuCanal, sleep, normalizarDelayQuestionario, normalizarCep, tipoMidia } = deps);
+}
+
+// Move o lead para a coluna configurada no fim do questionario. Se o cliente
+// escolheu uma coluna de destino (questionario_coluna_destino_id), usa ela;
+// senao, mantem o padrao historico "em_negociacao". Falha na coluna escolhida
+// (ex.: coluna apagada/de outro cliente) cai no fallback, nunca quebra o fluxo.
+async function moverLeadFimQuestionario(cliente, leadId) {
+  const colId = parseInt(cliente && cliente.questionario_coluna_destino_id, 10);
+  if (colId) {
+    try {
+      await moverLeadParaColunaFunil(leadId, colId, true);
+      return;
+    } catch (e) {
+      console.error('[funil][quest-destino] coluna ' + colId + ' invalida, usando em_negociacao:', e.message);
+    }
+  }
+  await moverLeadParaFunilSlug(cliente.id, leadId, 'em_negociacao').catch(e => console.error('[funil][em_negociacao]', e.message));
 }
 
 async function reiniciarQuestionarioLead(cliente, lead, comando) {
@@ -401,7 +418,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
         await enviarMsgQuestionario(cliente, lead.telefone, msgTransfer, null);
         await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [estado.id]);
         await atribuirVendedorBalanceado(cliente.id, lead.id).catch(() => null);
-        await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(() => null);
+        await moverLeadFimQuestionario(cliente, lead.id);
         await agendarFollowupV2(lead.id, cliente.id, 1, true);
         await enviarFollowupsPendentesDoLead(lead.id, 1);
         await registrarEventoLead(lead.id, cliente.id, 'questionario_transferido', 'Lead transferido após 2 respostas inválidas', { passo_idx: estado.passo_idx });
@@ -520,7 +537,7 @@ async function finalizarQuestionario(cliente, lead, respostas) {
         .catch(e => console.error('[questionario][resumo vendedor]', e.message));
     }
 
-    await moverLeadParaFunilSlug(cliente.id, lead.id, 'em_negociacao').catch(e => console.error('[funil][em_negociacao]', e.message));
+    await moverLeadFimQuestionario(cliente, lead.id);
     await atribuirVendedorBalanceado(cliente.id, lead.id).catch(e => console.error('[funil][distribuicao]', e.message));
 
     if (cliente.acao_arquivar_ao_final) {
