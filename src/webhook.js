@@ -6,7 +6,7 @@
 // 22 helpers exclusivos (payload/comando). index.js registra app.M(path, handleX).
 // ============================================================
 const { query, garantirEstruturaConversas } = require('./db');
-const { logDebug } = require('./config');
+const { logDebug, MOVATAK_REENTRADA_FU1_HORAS } = require('./config');
 const { registrarConversa, registrarEventoLead, pararAtendimentoLead, limparPedidoAtendente } = require('./leads');
 const { agendarFollowupV2, enviarFollowupsPendentesDoLead } = require('./followups');
 const { leadRespondeuRecentemente, reentradaFU1Permitida } = require('./antispam');
@@ -17,7 +17,7 @@ const { enviarMsgQuestionario, iniciarQuestionario, processarRespostaQuestionari
 const { iaResponderAutomatico, localizarCampanhaPorIA } = require('./ia');
 const { ehGrupoOuCanal, extrairDigitosTelefone, telefonesEquivalentes, variantesTelefone, registrarErroZapi, enviarAlerta } = require('./util');
 const { emitirStatusMensagem, emitirLeadFlags } = require('./realtime');
-const { zapiEtiquetar } = require('./zapi');
+const { zapiEtiquetar, MOVATAK_ADMIN_WA } = require('./zapi');
 
 // Deps ainda no index.js (compartilhadas com rotas), injetadas no boot via init().
 let textoBateGatilho, comandosDoVendedor, contemComando, localizarCampanhaPorGatilho,
