@@ -520,6 +520,25 @@ async function garantirEstruturaAssinaturas() {
   await query(`CREATE INDEX IF NOT EXISTS idx_pagamentos_cliente ON movatak_pagamentos (cliente_id)`).catch(() => null);
 }
 
+// [instagram] Fundacao multicanal. TUDO defaulta para o mundo atual (WhatsApp):
+//   - lead sem canal = 'whatsapp' (queries e lookups por telefone seguem iguais);
+//   - cliente com ig_habilitado=false (default) = Instagram desligado, nada muda.
+// Nenhuma linha/consulta existente e afetada. Ver PLANO_INSTAGRAM.md (Fase 0).
+async function garantirEstruturaCanais() {
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS canal TEXT DEFAULT 'whatsapp',
+    ADD COLUMN IF NOT EXISTS canal_id TEXT`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_canal ON movatak_leads(cliente_id, canal, canal_id) WHERE canal_id IS NOT NULL`).catch(() => null);
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS ig_habilitado BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS ig_user_id TEXT,
+    ADD COLUMN IF NOT EXISTS ig_page_id TEXT,
+    ADD COLUMN IF NOT EXISTS ig_access_token TEXT,
+    ADD COLUMN IF NOT EXISTS ig_token_expira_em TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS ig_app_secret TEXT,
+    ADD COLUMN IF NOT EXISTS ig_verify_token TEXT`).catch(() => null);
+}
+
 // [perf] Executa uma migracao idempotente no maximo UMA vez por processo. As
 // garantirEstrutura*/garantirColunas* rodam CREATE/ALTER ... IF NOT EXISTS, que
 // so precisam acontecer uma vez; sem isso rodavam a cada chamada — inclusive no
@@ -550,4 +569,5 @@ module.exports = {
   garantirEstruturaAgenda: umaVez(garantirEstruturaAgenda),
   garantirEstruturaCaptacao: umaVez(garantirEstruturaCaptacao),
   garantirEstruturaAssinaturas: umaVez(garantirEstruturaAssinaturas),
+  garantirEstruturaCanais: umaVez(garantirEstruturaCanais),
 };

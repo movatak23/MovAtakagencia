@@ -16,7 +16,8 @@ const {
   withPgAdvisoryLock,
   garantirEstruturaCampanhasTemplates, garantirEstruturaQuestionario, garantirEstruturaPlanos,
   garantirEstruturaConversas, garantirEstruturaMensagensRapidas, garantirEstruturaFunil,
-  garantirEstruturaAgenda, garantirEstruturaCaptacao, garantirEstruturaAssinaturas
+  garantirEstruturaAgenda, garantirEstruturaCaptacao, garantirEstruturaAssinaturas,
+  garantirEstruturaCanais
 } = db;
 
 const {
@@ -2134,4 +2135,5 @@ httpServer.listen(PORT, () => {
   garantirEstruturaPlanos().catch(e => console.error('[planos] schema:', e.message));
   garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
   garantirEstruturaCaptacao().catch(e => console.error('[captacao] schema:', e.message));
+  garantirEstruturaCanais().catch(e => console.error('[canais] schema:', e.message));
 });
