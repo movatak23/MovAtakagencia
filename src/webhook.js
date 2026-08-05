@@ -563,6 +563,7 @@ async function handleZapi(req, res) {
       // jaRegistrada fica visível ao bloco de comandos mais abaixo: um eco fromMe de
       // uma mensagem que o PRÓPRIO CRM enviou não deve ser interpretado como comando.
       let jaRegistrada = false;
+      let origemJaReg = null; // origem da conversa já gravada (pra distinguir eco AUTOMÁTICO de comando HUMANO do painel)
       if ((texto && String(texto).trim()) || midiaFromMe.url) {
         // Evita duplicar: se a mensagem foi enviada pelo PRÓPRIO painel, ela já foi
         // gravada no banco (com o mesmo messageId do Z-API) no momento do envio. O
@@ -571,10 +572,11 @@ async function handleZapi(req, res) {
         const msgIdFromMe = body.messageId || body.id || null;
         if (msgIdFromMe) {
           const dup = await query(
-            'SELECT 1 FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
+            'SELECT origem FROM movatak_conversas WHERE lead_id=$1 AND msg_id=$2 LIMIT 1',
             [leadFromMe.id, msgIdFromMe]
           ).catch(() => ({ rows: [] }));
           jaRegistrada = dup.rows.length > 0;
+          if (jaRegistrada) origemJaReg = dup.rows[0].origem || null;
         }
         // Fallback por conteúdo + janela curta — roda sempre que o match por msg_id não
         // achou. Cobre mensagens que o CRM enviou e gravou SEM messageId (follow-up,
@@ -582,13 +584,15 @@ async function handleZapi(req, res) {
         // acima falha e, sem isto, a mensagem apareceria DUPLICADA no painel.
         if (!jaRegistrada && texto && String(texto).trim()) {
           const dupC = await query(
-            `SELECT 1 FROM movatak_conversas
+            `SELECT origem FROM movatak_conversas
               WHERE lead_id=$1 AND direcao='saida'
                 AND COALESCE(conteudo,'')=COALESCE($2,'')
-                AND criado_em > NOW() - INTERVAL '45 seconds' LIMIT 1`,
+                AND criado_em > NOW() - INTERVAL '45 seconds'
+              ORDER BY criado_em DESC LIMIT 1`,
             [leadFromMe.id, texto || '']
           ).catch(() => ({ rows: [] }));
           jaRegistrada = dupC.rows.length > 0;
+          if (jaRegistrada) origemJaReg = dupC.rows[0].origem || null;
         }
         if (!jaRegistrada) {
           const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
@@ -613,14 +617,17 @@ async function handleZapi(req, res) {
         return;
       }
 
-      // Eco fromMe de um envio automático do PRÓPRIO CRM (questionário, IA, follow-up,
-      // boas-vindas, ausência): jaRegistrada=true significa que já gravamos esse envio.
-      // Mesmo que o texto contenha um token de comando — ex.: a intro do questionário
-      // que instrui o lead a digitar #ATENDENTE —, NÃO é um comando digitado por um
-      // humano. Ignora, senão o bot se auto-pausa. Comando real vem digitado no
-      // WhatsApp pelo atendente e não está pré-registrado (jaRegistrada=false).
-      if (jaRegistrada) {
-        logDebug('[zapi][fromMe] eco de envio automático contém texto de comando — ignorando (não é comando humano)');
+      // Eco fromMe de um envio AUTOMÁTICO do PRÓPRIO CRM (questionário, IA, follow-up,
+      // ausência, cobrança): mesmo que o texto contenha um token de comando — ex.: a
+      // intro do questionário que instrui o lead a digitar #ATENDENTE —, NÃO é um comando
+      // digitado por um humano. Ignora, senão o bot se auto-pausa/move sozinho.
+      // GOTCHA (corrigido): antes bloqueava por jaRegistrada apenas, o que também barrava
+      // COMANDO HUMANO digitado no PAINEL (origem='humano', também jaRegistrada=true) —
+      // por isso comandos de mover coluna só funcionavam quando digitados no WhatsApp.
+      // Agora só bloqueia quando a origem é automática; humano (painel/whatsapp) despacha.
+      const ORIGENS_HUMANAS = new Set(['humano', 'whatsapp_web']);
+      if (jaRegistrada && !ORIGENS_HUMANAS.has(origemJaReg)) {
+        logDebug('[zapi][fromMe] eco de envio automático (origem=' + origemJaReg + ') contém texto de comando — ignorando');
         return;
       }
 
