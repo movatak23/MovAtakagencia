@@ -4491,6 +4491,18 @@ async function abrirFU(id) {
       document.getElementById('fu2-msg3').value = '';
     }
     document.getElementById('fu-trigger').value = msgs.trigger_msg || '';
+    // Recuperação de carrinho / cobrança
+    try {
+      const cb = msgs.cobranca_v2 || {};
+      const cbm = Array.isArray(cb.msgs) ? cb.msgs : [];
+      const setCob = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v ?? ''); };
+      setCob('cob-gatilho', cb.gatilho || '');
+      const cbAtivo = document.getElementById('cob-ativo'); if (cbAtivo) cbAtivo.checked = !!cb.ativo;
+      for (let i = 0; i < 3; i++) {
+        setCob('cob-msg' + (i + 1), (cbm[i] && cbm[i].texto) || '');
+        setCob('cob-horas' + (i + 1), (cbm[i] && (cbm[i].horas ?? '')) );
+      }
+    } catch (e) { /* config de cobrança opcional */ }
     document.getElementById('btn-fu-save').textContent = 'Salvar alterações';
     // Investimento, campanhas e status operacional agora ficam no menu "Campanhas & Operação".
     await carregarTemplatesFollowup();
@@ -4613,6 +4625,18 @@ async function salvarFU() {
   try {
     const trigger_msg = document.getElementById('fu-trigger').value.trim();
 
+    // Recuperação de carrinho / cobrança
+    const numH = (id) => { const v = parseFloat((document.getElementById(id)?.value || '').replace(',', '.')); return isNaN(v) ? 0 : Math.max(0, v); };
+    const cobranca_v2 = {
+      gatilho: (document.getElementById('cob-gatilho')?.value || '').trim(),
+      ativo: !!document.getElementById('cob-ativo')?.checked,
+      msgs: [
+        { texto: (document.getElementById('cob-msg1')?.value || '').trim(), horas: numH('cob-horas1') },
+        { texto: (document.getElementById('cob-msg2')?.value || '').trim(), horas: numH('cob-horas2') },
+        { texto: (document.getElementById('cob-msg3')?.value || '').trim(), horas: numH('cob-horas3') }
+      ]
+    };
+
     // Investimento/WhatsApp do dono saíram daqui (menu "Campanhas & Operação").
     // Salvar follow up com estrutura dos 2 blocos
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
@@ -4622,7 +4646,8 @@ async function salvarFU() {
           fu1: { msg1: fu1_msg1, msg2: fu1_msg2 },
           fu2: { msg1: fu2_msg1, msg2: fu2_msg2, msg3: fu2_msg3 }
         },
-        trigger_msg
+        trigger_msg,
+        cobranca_v2
       })
     });
     
@@ -9879,6 +9904,32 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg2" rows="3" placeholder="1 dia após entrar no follow up 2"></textarea>
       <label class="fu-label">Mensagem 3 <span class="fu-tag">D+3</span></label>
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
+    </div>
+
+    <!-- BLOCO 3.5: RECUPERAÇÃO DE CARRINHO / COBRANÇA -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase">🛒 Recuperação de Carrinho (Cobrança)</div>
+        <label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);cursor:pointer"><input type="checkbox" id="cob-ativo"> Ativar</label>
+      </div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Para leads que <strong>receberam link de pagamento e não pagaram</strong>. A régua começa quando você envia uma mensagem contendo a <strong>palavra-gatilho</strong> abaixo (ex.: junto com o link). Para automaticamente se o lead <strong>pagar</strong> (vai para "Pedido concluído/Cliente") ou <strong>responder</strong>. Use <code>{nome}</code> para o primeiro nome.</div>
+
+      <label class="fu-label" style="margin-top:0">Palavra-gatilho <span class="fu-tag">na mensagem do atendente</span></label>
+      <input type="text" id="cob-gatilho" class="fu-textarea" style="min-height:auto;padding:11px 14px;resize:none" placeholder="Ex: #cobrar  (escolha algo que você só usa pra isso)">
+
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-top:12px">
+        <div style="flex:1"><label class="fu-label">Mensagem 1</label><textarea class="fu-textarea" id="cob-msg1" rows="2" placeholder="Ex: Oi {nome}! Vi que seu pagamento ficou pendente. Posso te ajudar a finalizar?"></textarea></div>
+        <div style="width:110px"><label class="fu-label">Horas</label><input type="number" min="0" step="0.5" id="cob-horas1" class="fu-textarea" style="min-height:auto;padding:11px 10px;resize:none;text-align:center" placeholder="3"></div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-top:8px">
+        <div style="flex:1"><label class="fu-label">Mensagem 2</label><textarea class="fu-textarea" id="cob-msg2" rows="2" placeholder="Deixe em branco se não quiser este lembrete"></textarea></div>
+        <div style="width:110px"><label class="fu-label">Horas</label><input type="number" min="0" step="0.5" id="cob-horas2" class="fu-textarea" style="min-height:auto;padding:11px 10px;resize:none;text-align:center" placeholder="24"></div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:flex-end;margin-top:8px">
+        <div style="flex:1"><label class="fu-label">Mensagem 3</label><textarea class="fu-textarea" id="cob-msg3" rows="2" placeholder="Deixe em branco se não quiser este lembrete"></textarea></div>
+        <div style="width:110px"><label class="fu-label">Horas</label><input type="number" min="0" step="0.5" id="cob-horas3" class="fu-textarea" style="min-height:auto;padding:11px 10px;resize:none;text-align:center" placeholder="48"></div>
+      </div>
+      <div class="fu-hint" style="margin-top:8px">"Horas" = quanto tempo após o gatilho cada mensagem é enviada (ex.: 3, 24, 48).</div>
     </div>
 
     <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px">
