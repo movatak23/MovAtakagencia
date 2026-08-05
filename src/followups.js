@@ -23,9 +23,13 @@ function followupDataDaLinha(row) {
   return row.template_followup_v2 || row.followup_msgs_v2 || {};
 }
 
+// Dias (a partir do momento em que o FU2 é agendado, ou seja, da migração FU1->FU2).
+// FU2 msg1 sai na migração (que ocorre 24h após o último FU1 — ver migrarFU1ParaFU2),
+// e cada mensagem seguinte fica 24h após a anterior: msg1=24h, msg2=48h, msg3=72h
+// contados desde o último FU1.
 const DIAS_FOLLOWUP_V2 = {
   fu1: { 1: 0, 2: 0 },
-  fu2: { 1: 0, 2: 1, 3: 3 }
+  fu2: { 1: 0, 2: 1, 3: 2 }
 };
 
 async function agendarFollowupV2(leadId, clienteId, sequenciaFu, limparFila = true) {
@@ -197,15 +201,16 @@ async function migrarFU1ParaFU2() {
            AND COALESCE(fp.sequencia_fu, 1) = 1
            AND fp.status = 'pendente'
        )
-       -- Conta 1h a partir do ÚLTIMO FU1 realmente enviado (não da entrada do lead),
+       -- Conta 24h a partir do ÚLTIMO FU1 realmente enviado (não da entrada do lead),
        -- pra respeitar o intervalo mesmo quando o FU1 foi adiado por ausência.
+       -- Assim a 1ª mensagem do FU2 sai 24h depois do último FU1.
        AND (
          SELECT MAX(fe.enviado_em)
          FROM movatak_followup fe
          WHERE fe.lead_id = l.id
            AND COALESCE(fe.sequencia_fu, 1) = 1
            AND fe.status = 'enviado'
-       ) <= NOW() - INTERVAL '1 hour'
+       ) <= NOW() - INTERVAL '24 hours'
        AND NOT EXISTS (
          SELECT 1 FROM movatak_followup f2
          WHERE f2.lead_id = l.id
