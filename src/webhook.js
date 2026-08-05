@@ -17,7 +17,25 @@ const { moverLeadParaColunaFunil } = require('./funil');
 const { enviarBoasVindasLead, enviarMenuAtendimento, processarRespostaMenu } = require('./menu');
 const { enviarMsgQuestionario, iniciarQuestionario, processarRespostaQuestionario, reiniciarQuestionarioLead } = require('./questionario');
 const { iaResponderAutomatico, localizarCampanhaPorIA } = require('./ia');
-const { ehGrupoOuCanal, extrairDigitosTelefone, telefonesEquivalentes, variantesTelefone, registrarErroZapi, enviarAlerta } = require('./util');
+const { ehGrupoOuCanal, ehLidValor, extrairDigitosTelefone, telefonesEquivalentes, variantesTelefone, registrarErroZapi, enviarAlerta } = require('./util');
+
+// Chave de identidade do contato para a coluna telefone (que é NOT NULL): usa o
+// número real quando existe; senão o @lid (contatos que o WhatsApp só identifica
+// por LID). Nunca deixa nulo e nunca grava dígitos de LID como se fossem telefone.
+function chaveContato(telefone, chatLid) {
+  if (telefone) return telefone;
+  if (chatLid) return String(chatLid);
+  return null;
+}
+// Um "telefone" que na verdade é um LID (placeholder salvo antes do fix, ou chave
+// de contato só-LID). Serve para decidir quando fazer upgrade para o número real.
+function telefoneEhPlaceholderLid(tel) {
+  const s = String(tel || '');
+  if (ehLidValor(s)) return true;
+  const d = s.replace(/\D/g, '');
+  // LIDs têm 13-15 dígitos e não começam com o DDI 55; números BR reais começam com 55.
+  return d.length >= 13 && !d.startsWith('55');
+}
 const { emitirStatusMensagem, emitirLeadFlags } = require('./realtime');
 const { zapiEtiquetar, MOVATAK_ADMIN_WA } = require('./zapi');
 
@@ -346,8 +364,10 @@ async function handleZapi(req, res) {
   // ---- Processamento Movatak ----
   try {
     const instanceId = body.instanceId || body.instance || '';
-    const chatLid    = body.chatLid || null;
     const phoneRaw   = String(body.phone || '');
+    // O LID pode chegar no campo chatLid OU direto no phone (ex.: "78469253840902@lid").
+    // Captura dos dois para casar o lead por chat_lid de forma confiável.
+    const chatLid    = body.chatLid || (ehLidValor(phoneRaw) ? phoneRaw : null);
     // Telefone real: tenta extrair de vários campos porque eventos fromMe podem vir com @lid
     let telefone     = extrairTelefonePayload(body);
     // Usa o helper que também captura a LEGENDA de mídia (image/video/document.caption
@@ -465,7 +485,9 @@ async function handleZapi(req, res) {
     });
     logDebug('[zapi][cliente]', cliente.nome + ' id=' + cliente.id);
 
-    if (!telefone) {
+    // Sem número real E sem @lid não dá para identificar o contato. Mas contatos
+    // que o WhatsApp só expõe por @lid seguem em frente (casados por chat_lid).
+    if (!telefone && !chatLid) {
       logDebug('[zapi][ignorado] telefone real do contato não identificado após filtro anti-próprio-número', JSON.stringify({
         fromMe: !!body.fromMe,
         phone: body.phone || null,
@@ -523,12 +545,13 @@ async function handleZapi(req, res) {
         // Mensagem enviada diretamente pelo WhatsApp Web para um contato que ainda não
         // existe no CRM. Antes era ignorada; agora cria um contato simples, sem acionar
         // automação nem marcar como não lido.
-        if (!ehComandoInterno && telefone && ((texto && String(texto).trim()) || midiaFromMe.url)) {
+        const chaveFromMe = chaveContato(telefone, chatLid);
+        if (!ehComandoInterno && chaveFromMe && ((texto && String(texto).trim()) || midiaFromMe.url)) {
           const novoLeadFromMe = await query(
             `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
              VALUES ($1, $2, $3, 'lead', $4, false, NOW())
              RETURNING id`,
-            [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
+            [cliente.id, chaveFromMe, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
           );
           await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web').catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
@@ -727,18 +750,29 @@ async function handleZapi(req, res) {
       return;
     }
 
-    if (!telefone) {
-      console.log('[zapi][lead] ignorado: nao consegui extrair telefone real do payload');
+    if (!telefone && !chatLid) {
+      console.log('[zapi][lead] ignorado: nao consegui extrair telefone real nem @lid do payload');
       return;
     }
 
-    // Buscar lead pelo telefone (tolerante ao 9º dígito)
-    const _varMsg = variantesTelefone(telefone);
-    const rl = await query(
-      `SELECT * FROM movatak_leads WHERE cliente_id = $1 AND telefone IN (${_varMsg.map((_, i) => '$' + (i + 2)).join(',')}) ORDER BY atualizado_em DESC NULLS LAST, criado_em DESC LIMIT 1`,
-      [cliente.id, ..._varMsg]
-    );
-    const lead = rl.rows[0] || null;
+    // Busca o lead casando por chat_lid PRIMEIRO e depois por telefone (variantes do
+    // 9º dígito). Antes só buscava por telefone: quando o WhatsApp mandava só o @lid,
+    // não achava o lead real (que tem o número no telefone) e criava um DUPLICADO
+    // com o LID no lugar do telefone — a origem dos "números estranhos" na inbox.
+    const lead = await localizarLeadPorPayload(cliente.id, telefone, chatLid, false);
+
+    // Se casou por @lid mas o lead ainda está com um placeholder de LID no telefone
+    // (lead criado por um envio só-LID) e agora chegou o número REAL, faz o upgrade:
+    // o contato deixa de aparecer como "@lid" e vira um número/nome de verdade.
+    if (lead && telefone && telefoneEhPlaceholderLid(lead.telefone) && !telefonesEquivalentes(lead.telefone, telefone)) {
+      const nomeReal = extrairNomeContatoPayloadZapi(body, cliente, telefone);
+      await query(
+        `UPDATE movatak_leads SET telefone = $1, nome = COALESCE(NULLIF($2,''), nome), atualizado_em = NOW() WHERE id = $3`,
+        [telefone, nomeReal || '', lead.id]
+      ).catch(() => null);
+      await registrarEventoLead(lead.id, cliente.id, 'lid_upgrade_telefone', 'Contato só-@lid ganhou número real ao responder', { de: lead.telefone, para: telefone, chatLid }).catch(() => null);
+      lead.telefone = telefone;
+    }
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
@@ -908,7 +942,10 @@ async function handleZapi(req, res) {
       trigger,
       triggerOk
     }));
-    if (triggerOk) {
+    // triggerOk exige telefone real: a automação (boas-vindas/questionário/follow-up)
+    // envia para o número. Contato só-@lid (sem número) cai no ramo de contato simples
+    // abaixo — aparece na inbox, sem automação, até responder com o número real.
+    if (triggerOk && telefone) {
       const novoLead = await query(
         `INSERT INTO movatak_leads
            (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado)
@@ -964,7 +1001,7 @@ async function handleZapi(req, res) {
         `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
          VALUES ($1, $2, $3, 'lead', $4, true, NOW())
          RETURNING id`,
-        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
+        [cliente.id, chaveContato(telefone, chatLid), extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
       );
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
@@ -1129,6 +1166,8 @@ function extrairNomeContatoPayloadZapi(body, cliente, telefone) {
   for (const nome of nomes) {
     const s = String(nome || '').trim();
     if (!s) continue;
+    // Nunca usar um @lid (ex.: chatName vem "149314554863655@lid") como nome do contato.
+    if (ehLidValor(s)) continue;
     // Evita salvar o nome da própria empresa como nome do lead em payload fromMe.
     if (cliente && cliente.nome && s.toLowerCase() === String(cliente.nome).trim().toLowerCase()) continue;
     if (telefone && telefoneEhDaEmpresa(telefone, cliente)) continue;

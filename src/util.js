@@ -43,10 +43,19 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Identificadores @lid (LID / "Linked ID") são ids ANÔNIMOS de privacidade do
+// WhatsApp — NÃO são números de telefone. Antes o código só limpava o sufixo e
+// tratava os 13-15 dígitos do LID como se fossem um telefone, criando leads
+// duplicados com "números estranhos" (ex.: 149314554863655@lid). O LID deve
+// viver só no campo chat_lid; o casamento do lead é por chat_lid.
+function ehLidValor(valor) {
+  return String(valor || '').includes('@lid');
+}
+
 function extrairDigitosTelefone(valor) {
   if (!valor) return null;
   const raw = String(valor);
-  if (raw.includes('@g.us') || raw.includes('@newsletter')) return null;
+  if (raw.includes('@g.us') || raw.includes('@newsletter') || raw.includes('@lid')) return null;
   const digitos = raw.replace(/\D/g, '');
   if (digitos.length < 10 || digitos.length > 15) return null;
   return digitos;
@@ -123,6 +132,7 @@ module.exports = {
   enviarAlerta,
   registrarErroZapi,
   ehGrupoOuCanal,
+  ehLidValor,
   sleep,
   extrairDigitosTelefone,
   telefonesEquivalentes,

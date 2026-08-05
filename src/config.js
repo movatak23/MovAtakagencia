@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.17.2-fix-quickmenu-todas-rapidas';
+const MOVATAK_VERSION = 'v2.18.0-fix-lid-duplicata-naolida';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib
