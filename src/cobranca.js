@@ -42,6 +42,15 @@ async function agendarCobranca(cliente, lead) {
   if (!cfg.ativo || !cfg.msgs.some(m => m.texto)) return;
   if (!lead || !lead.id) return;
 
+  // Debounce anti-loop: se a régua foi (re)agendada nos últimos 2 min, ignora. Evita
+  // que o eco fromMe de uma mensagem de cobrança que por acaso contenha a palavra-
+  // gatilho reinicie a régua em loop.
+  const recente = await query(
+    `SELECT 1 FROM movatak_cobranca_fila WHERE lead_id=$1 AND criado_em > NOW() - INTERVAL '2 minutes' LIMIT 1`,
+    [lead.id]
+  ).catch(() => ({ rows: [] }));
+  if (recente.rows.length) { console.log(`[cobranca] debounce — régua já agendada há pouco, ignora -> lead ${lead.id}`); return; }
+
   await query(`UPDATE movatak_cobranca_fila SET status='cancelado' WHERE lead_id=$1 AND status='pendente'`, [lead.id]).catch(() => null);
 
   const nome = (lead.nome && !String(lead.nome).includes('@lid')) ? String(lead.nome).split(' ')[0] : 'Lead';
