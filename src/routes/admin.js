@@ -3713,13 +3713,36 @@ app.post('/movatak/admin/reset-lead', authMovatakOuApp, async (req, res) => {
     const tel = String((req.body && req.body.telefone) || '').replace(/\D/g, '');
     if (tel.length < 8) return res.status(400).json({ error: 'Telefone inválido.' });
 
+    // Tolerância ao 9º dígito do celular (com/sem o 9).
+    const variantes = variantesTelefone(tel);
+
+    // Atualização @lid do WhatsApp: contatos podem estar salvos pelo LID (id anônimo),
+    // não pelo número. Resolve o(s) LID(s) associados a esse número pelo histórico de
+    // webhooks (o payload traz o número real E o chatLid juntos) para achar o lead
+    // mesmo quando o operador digita o número real de teste, e não o LID.
+    const lidRows = await query(
+      `SELECT DISTINCT payload->>'chatLid' AS lid FROM movatak_webhook_eventos
+        WHERE regexp_replace(COALESCE(phone,''), '[^0-9]', '', 'g') = ANY($1)
+          AND payload->>'chatLid' ILIKE '%@lid%'`,
+      [variantes]
+    ).catch(() => ({ rows: [] }));
+    const lids = lidRows.rows.map(r => r.lid).filter(Boolean);
+
     // Segurança: o cliente só pode resetar leads da PRÓPRIA operação.
     // Para admin, opera em todos. Para cliente, restringe ao cliente_id do token.
-    const filtroCliente = req.ehCliente ? ' AND cliente_id = $2' : '';
-    const paramsBase = req.ehCliente ? [tel, req.clienteId] : [tel];
+    // Casa por: telefone (dígitos, variantes) OU chat_lid (dígitos, variantes) OU
+    // chat_lid exato (LIDs resolvidos pelo histórico do número digitado).
+    const params = [variantes, lids];
+    const filtroCliente = req.ehCliente ? ' AND cliente_id = $3' : '';
+    if (req.ehCliente) params.push(req.clienteId);
 
-    const sel = `SELECT id FROM movatak_leads WHERE regexp_replace(telefone, '[^0-9]', '', 'g') = $1${filtroCliente}`;
-    const found = await query(sel, paramsBase);
+    const sel = `SELECT id FROM movatak_leads
+       WHERE (
+         regexp_replace(COALESCE(telefone,''), '[^0-9]', '', 'g') = ANY($1)
+         OR regexp_replace(COALESCE(chat_lid,''), '[^0-9]', '', 'g') = ANY($1)
+         OR ( array_length($2::text[], 1) IS NOT NULL AND chat_lid = ANY($2) )
+       )${filtroCliente}`;
+    const found = await query(sel, params);
     const removidos = found.rows.length;
     if (removidos) {
       // Apaga dependências dos leads encontrados (já restritos ao cliente, se for o caso).
@@ -3727,9 +3750,13 @@ app.post('/movatak/admin/reset-lead', authMovatakOuApp, async (req, res) => {
       const phIds = ids.map((_, i) => '$' + (i + 1)).join(',');
       await query(`DELETE FROM movatak_followup WHERE lead_id IN (${phIds})`, ids).catch(() => null);
       await query(`DELETE FROM movatak_mensagens WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      // Histórico de conversas (tabela atual) — antes ficava órfão ao resetar, deixando
+      // mensagens presas no banco apontando para um lead que já não existe.
+      await query(`DELETE FROM movatak_conversas WHERE lead_id IN (${phIds})`, ids).catch(() => null);
       await query(`DELETE FROM movatak_lead_eventos WHERE lead_id IN (${phIds})`, ids).catch(() => null);
       await query(`DELETE FROM movatak_etiqueta_log WHERE lead_id IN (${phIds})`, ids).catch(() => null);
       await query(`DELETE FROM movatak_questionario_estado WHERE lead_id IN (${phIds})`, ids).catch(() => null);
+      await query(`DELETE FROM movatak_menu_estado WHERE lead_id IN (${phIds})`, ids).catch(() => null);
       await query(`DELETE FROM movatak_leads WHERE id IN (${phIds})`, ids);
     }
     res.json({ ok: true, removidos });
