@@ -548,7 +548,10 @@ cron.schedule('*/10 * * * *', async () => {
      LEFT JOIN movatak_followup_templates t
             ON t.id = COALESCE(camp.template_id, l.template_id_origem) AND t.ativo = true
      WHERE f.status = 'pendente'
-       AND f.proximo_envio <= NOW()`,
+       AND f.proximo_envio <= NOW()
+       -- Trava anti-spam: ignora follow-up vencido há mais de 7 dias (backlog antigo
+       -- parado nas colunas). Não apaga — só evita disparar mensagem velha fora de hora.
+       AND f.proximo_envio > NOW() - INTERVAL '7 days'`,
       []
     );
 

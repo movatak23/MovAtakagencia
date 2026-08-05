@@ -605,10 +605,20 @@ async function processarQuestionariosParados() {
         } else {
           await query(`UPDATE movatak_questionario_estado SET status = 'abandonado', atualizado_em = NOW() WHERE id = $1`, [est.id]);
           if (est.lead_etapa !== 'cliente') {
+            // Devolve o lead ao ESTÁGIO DE FOLLOW-UP antes de agendar/disparar o FU1.
+            // Sem isto o lead ficava em 'auto_atendimento' e o envio (que exige
+            // etapa='followup') era ignorado — o FU1 de resgate nunca saía. Preferimos a
+            // coluna "Resgate FU1"; se o cliente não tiver, cai na coluna padrão de
+            // follow-up ('aguardando_resposta'), garantindo etapa='followup'.
+            await moverLeadParaFunilSlug(est.cliente_id, lead.id, 'resgate_fu1').catch(() => null);
+            const chkEtapa = await query(`SELECT etapa FROM movatak_leads WHERE id=$1`, [lead.id]).catch(() => ({ rows: [] }));
+            if (!chkEtapa.rows.length || chkEtapa.rows[0].etapa !== 'followup') {
+              await moverLeadParaFunilSlug(est.cliente_id, lead.id, 'aguardando_resposta').catch(() => null);
+            }
             await agendarFollowupV2(lead.id, est.cliente_id, 1, true);
             await enviarFollowupsPendentesDoLead(lead.id, 1);
           }
-          await registrarEventoLead(lead.id, est.cliente_id, 'questionario_abandonado', 'Questionário sem resposta; lead devolvido ao follow-up', { passo_idx: est.passo_idx });
+          await registrarEventoLead(lead.id, est.cliente_id, 'questionario_abandonado', 'Questionário sem resposta; lead devolvido ao follow-up de resgate', { passo_idx: est.passo_idx });
           console.log(`[questionario][abandonado] devolvido ao follow-up -> lead ${lead.id}`);
         }
       } catch (e) {

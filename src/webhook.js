@@ -916,16 +916,23 @@ async function handleZapi(req, res) {
       }
 
       if (lead.etapa === 'followup') {
+        // O lead respondeu ao resgate (follow-up) → é um lead QUENTE. Interrompe a
+        // sequência E acende o sinal de prioridade no atendimento: chip 🙋 "pediu
+        // atendente" + não-lida, pra equipe ver na hora que precisa assumir.
         await query(
-          `UPDATE movatak_leads SET etapa = 'lead', atualizado_em = NOW() WHERE id = $1`,
+          `UPDATE movatak_leads
+              SET etapa = 'lead', pediu_atendente = true, pediu_atendente_em = NOW(),
+                  nao_lida = true, atualizado_em = NOW()
+            WHERE id = $1`,
           [lead.id]
         );
         await query(
           `UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`,
           [lead.id]
         );
-        await registrarEventoLead(lead.id, cliente.id, 'lead_respondeu', 'Lead respondeu e saiu do follow-up', { texto_preview: texto ? String(texto).slice(0, 160) : null });
-        console.log(`[zapi] Follow up pausado e lead voltou para atendimento -> lead ${lead.id}`);
+        emitirLeadFlags(cliente.id, lead.id, { pediu_atendente: true, nao_lida: true });
+        await registrarEventoLead(lead.id, cliente.id, 'lead_respondeu', 'Lead respondeu ao follow-up de resgate — prioridade no atendimento', { texto_preview: texto ? String(texto).slice(0, 160) : null });
+        console.log(`[zapi] Follow up interrompido + prioridade acesa -> lead ${lead.id}`);
       }
 
       // IA automática: se a coluna do lead tem IA ativa, a IA responde sozinha.

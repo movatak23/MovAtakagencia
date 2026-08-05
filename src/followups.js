@@ -89,6 +89,9 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       WHERE f.lead_id = $1
         AND f.status = 'pendente'
         AND f.proximo_envio <= NOW()
+        -- Trava anti-spam: nunca dispara follow-up vencido há mais de 7 dias (backlog
+        -- antigo/parado). Não apaga a linha — só não envia mensagem velha fora de hora.
+        AND f.proximo_envio > NOW() - INTERVAL '7 days'
         ${filtroSequencia}
       ORDER BY COALESCE(f.sequencia_fu, 1), f.etapa_seq`,
     params
