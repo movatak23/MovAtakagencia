@@ -36,10 +36,28 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS portal_senha_trocada_em TIMESTAMPTZ,
     ADD COLUMN IF NOT EXISTS quest_lembrete_msg TEXT,
     ADD COLUMN IF NOT EXISTS quest_lembrete_minutos INTEGER,
+    ADD COLUMN IF NOT EXISTS cobranca_v2 JSONB DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS agenda_ativa BOOLEAN DEFAULT false`, []);
   await query(`UPDATE movatak_clientes
      SET permissoes_portal = '{"ver_dashboard":true,"ver_cpl":true,"ver_vendedores":true,"ver_campanhas":true,"ver_eventos":true,"editar_vendedores":false,"editar_followup":false,"editar_campanhas":false,"exportar_csv":true}'::jsonb
    WHERE permissoes_portal IS NULL`, []);
+  // Fila de RECUPERAÇÃO DE CARRINHO / cobrança (leads que receberam link de pagamento
+  // e não pagaram). Isolada do motor de follow-up: cada linha já guarda o texto pronto
+  // e o horário de disparo. Disparada por palavra-gatilho e cancelada ao pagar/responder.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_cobranca_fila (
+    id            BIGSERIAL PRIMARY KEY,
+    cliente_id    INTEGER NOT NULL,
+    lead_id       INTEGER NOT NULL,
+    etapa_seq     INTEGER NOT NULL,
+    mensagem      TEXT NOT NULL,
+    proximo_envio TIMESTAMPTZ NOT NULL,
+    status        TEXT NOT NULL DEFAULT 'pendente',
+    enviado_em    TIMESTAMPTZ,
+    erro_envio    TEXT,
+    criado_em     TIMESTAMPTZ DEFAULT NOW()
+  )`, []).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_cobranca_fila_disparo ON movatak_cobranca_fila(status, proximo_envio)`, []).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_cobranca_fila_lead ON movatak_cobranca_fila(lead_id)`, []).catch(() => null);
 }
 
 // Garante colunas usadas pelo portal individual do vendedor.

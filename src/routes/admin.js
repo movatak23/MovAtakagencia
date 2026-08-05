@@ -316,7 +316,7 @@ app.patch('/movatak/admin/clientes/:id/ausencia', ...forcaClienteIdNaUrl, async 
 app.get('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
-      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg, comandos
+      `SELECT followup_msgs_v2, followup_msgs, boas_vindas_msg, verba_diaria, whatsapp_dono, trigger_msg, comandos, cobranca_v2
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -381,7 +381,10 @@ app.get('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async (r
       comando_followup: ((row.comandos || {}).followup || []).join(', '),
       comando_convertido: ((row.comandos || {}).convertido || []).join(', '),
       comando_descartar: ((row.comandos || {}).descartar || []).join(', '),
-      comando_desfazer: ((row.comandos || {}).desfazer || []).join(', ')
+      comando_desfazer: ((row.comandos || {}).desfazer || []).join(', '),
+      cobranca_v2: (row.cobranca_v2 && typeof row.cobranca_v2 === 'object' && Object.keys(row.cobranca_v2).length)
+        ? row.cobranca_v2
+        : { gatilho: '', ativo: false, msgs: [{ texto: '', horas: 3 }, { texto: '', horas: 24 }, { texto: '', horas: 48 }] }
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -405,13 +408,27 @@ app.patch('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async 
       }
     };
 
+    // Recuperação de carrinho / cobrança: { gatilho, ativo, msgs:[{texto,horas}] }.
+    // Só grava se o payload trouxe cobranca_v2 (COALESCE preserva o valor atual senão).
+    let cobrancaJson = null;
+    if (req.body.cobranca_v2 && typeof req.body.cobranca_v2 === 'object') {
+      const cb = req.body.cobranca_v2;
+      const msgs = Array.isArray(cb.msgs) ? cb.msgs.slice(0, 6) : [];
+      cobrancaJson = JSON.stringify({
+        gatilho: String(cb.gatilho || '').trim(),
+        ativo: !!cb.ativo,
+        msgs: msgs.map(m => ({ texto: String((m && m.texto) || '').trim(), horas: Math.max(0, Number((m && m.horas) || 0)) }))
+      });
+    }
+
     await query(
       `UPDATE movatak_clientes
          SET followup_msgs_v2 = $1::jsonb,
              boas_vindas_msg = $2,
              verba_diaria = COALESCE($3, verba_diaria),
              whatsapp_dono = COALESCE($4, whatsapp_dono),
-             trigger_msg = COALESCE($5, trigger_msg)
+             trigger_msg = COALESCE($5, trigger_msg),
+             cobranca_v2 = COALESCE($7::jsonb, cobranca_v2)
        WHERE id = $6`,
       [
         JSON.stringify(followup_v2),
@@ -419,7 +436,8 @@ app.patch('/movatak/admin/clientes/:id/followup', ...forcaClienteIdNaUrl, async 
         verba_diaria ? parseFloat(String(verba_diaria).replace(',', '.')) : null,
         whatsapp_dono ? String(whatsapp_dono).replace(/\D/g, '') : null,
         (trigger_msg && String(trigger_msg).trim()) ? String(trigger_msg).trim() : null,
-        req.params.id
+        req.params.id,
+        cobrancaJson
       ]
     );
 

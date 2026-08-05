@@ -38,6 +38,7 @@ function telefoneEhPlaceholderLid(tel) {
 }
 const { emitirStatusMensagem, emitirLeadFlags } = require('./realtime');
 const { zapiEtiquetar, MOVATAK_ADMIN_WA } = require('./zapi');
+const { textoDisparaCobranca, agendarCobranca, cancelarCobrancaLead } = require('./cobranca');
 
 // Deps ainda no index.js (compartilhadas com rotas), injetadas no boot via init().
 let textoBateGatilho, comandosDoVendedor, contemComando, localizarCampanhaPorGatilho,
@@ -599,6 +600,14 @@ async function handleZapi(req, res) {
         }
       }
 
+      // GATILHO DE RECUPERAÇÃO DE CARRINHO / cobrança: se a mensagem enviada pelo
+      // atendente (pelo painel ou pelo WhatsApp) contém a palavra-gatilho configurada,
+      // inicia a régua de lembretes de pagamento para este lead. Roda para qualquer
+      // envio (registrado ou não), pois a palavra-gatilho é distinta.
+      if (textoDisparaCobranca(texto, cliente)) {
+        await agendarCobranca(cliente, leadFromMe).catch(e => console.error('[cobranca][trigger]', e.message));
+      }
+
       if (!ehComandoInterno) {
         logDebug('[zapi][fromMe] mensagem normal registrada no histórico do Kanban');
         return;
@@ -780,6 +789,18 @@ async function handleZapi(req, res) {
       const msgIdEntrada = body.messageId || body.id || null;
       const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
       registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
+    }
+
+    // RESPOSTA interrompe a RÉGUA DE COBRANÇA: se o lead tinha lembretes de pagamento
+    // pendentes e respondeu, cancela a régua e acende prioridade no atendimento (lead
+    // quente — está falando de novo depois do link). Idempotente: 0 linhas = no-op.
+    if (lead) {
+      const canceladas = await cancelarCobrancaLead(lead.id, 'lead respondeu').catch(() => 0);
+      if (canceladas > 0) {
+        await query(`UPDATE movatak_leads SET pediu_atendente = true, pediu_atendente_em = NOW(), nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [lead.id]).catch(() => null);
+        emitirLeadFlags(cliente.id, lead.id, { pediu_atendente: true, nao_lida: true });
+        await registrarEventoLead(lead.id, cliente.id, 'cobranca_interrompida', 'Lead respondeu à cobrança — régua interrompida e prioridade acesa', {}).catch(() => null);
+      }
     }
 
     // Sem texto (ex: áudio ou foto sem legenda): já foi registrada acima.

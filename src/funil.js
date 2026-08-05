@@ -7,6 +7,7 @@
 const { query, garantirEstruturaFunil } = require('./db');
 const { registrarEventoLead } = require('./leads');
 const { zapiAtribuirEtiqueta, zapiRemoverEtiqueta } = require('./zapi');
+const { cancelarCobrancaLead } = require('./cobranca');
 
 // Deps ainda no index.js, injetadas no boot via init() (dependem de nicho/
 // zapi-extractors que sairao depois). Corpo movido byte-identico.
@@ -88,6 +89,8 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   if (etapa === 'cliente') {
     await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, convertido_em=COALESCE(convertido_em, NOW()), atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
     await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
+    // Pagou → encerra a régua de cobrança/recuperação de carrinho, se houver.
+    await cancelarCobrancaLead(leadId, 'lead virou cliente (pagou)').catch(() => null);
     // Distribuição balanceada: só atribui se ainda não tem vendedor
     const lr = await query(`SELECT vendedor_id FROM movatak_leads WHERE id=$1`, [leadId]);
     if (lr.rows[0] && !lr.rows[0].vendedor_id) {
@@ -96,6 +99,7 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   } else if (etapa === 'descartado') {
     await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
     await query(`UPDATE movatak_followup SET status='pausado' WHERE lead_id=$1 AND status='pendente'`, [leadId]).catch(() => null);
+    await cancelarCobrancaLead(leadId, 'lead descartado').catch(() => null);
   } else {
     await query(`UPDATE movatak_leads SET funil_coluna_id=$1, etapa=$2, atualizado_em=NOW() WHERE id=$3`, [colunaId, etapa, leadId]);
   }

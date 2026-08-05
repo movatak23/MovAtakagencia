@@ -69,6 +69,8 @@ const {
   migrarFU1ParaFU2, finalizarFollowupsEsgotados
 } = followups;
 
+const { processarCobrancaFila } = require('./src/cobranca');
+
 const webhook = require('./src/webhook');
 const {
   handleMensagem, handleEtiqueta, handleResposta, handleStatus, handleZapiStatus, handleZapi
@@ -533,6 +535,8 @@ app.post('/movatak/webhook/etiqueta', handleEtiqueta);
 // ============================================================
 cron.schedule('*/10 * * * *', async () => {
   console.log('[cron] Verificando fila de follow up (10 min)...');
+  // Régua de recuperação de carrinho / cobrança (isolada do follow-up).
+  try { await processarCobrancaFila(); } catch (e) { console.error('[cron][cobranca] erro:', e.message); }
   try {
     await migrarFU1ParaFU2();
 
