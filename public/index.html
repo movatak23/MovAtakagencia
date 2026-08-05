@@ -9906,7 +9906,17 @@ async function sincronizarColunaWhatsapp(colunaId) {
       <textarea class="fu-textarea" id="fu2-msg3" rows="3" placeholder="3 dias após entrar no follow up 2"></textarea>
     </div>
 
-    <!-- BLOCO 3.5: RECUPERAÇÃO DE CARRINHO / COBRANÇA -->
+    <!-- BLOCO 4: APÓS O FOLLOW-UP TERMINAR (faz parte da régua FU1 + FU2) -->
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:20px">
+      <label class="fu-label" style="margin-top:0">Após o follow-up terminar (lead não respondeu)</label>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Quando toda a régua (FU1 + FU2) for enviada sem resposta, o lead é movido automaticamente — pra não ficar preso em "novo contato" ou "autoatendimento".</div>
+      <select id="pos-followup-select" onchange="salvarPosFollowup()" style="width:100%;padding:9px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:13px">
+        <option value="nenhum">Não fazer nada (padrão)</option>
+      </select>
+      <span id="pos-followup-status" style="font-size:12px;margin-top:6px;display:inline-block"></span>
+    </div>
+
+    <!-- BLOCO 5: RECUPERAÇÃO DE CARRINHO / COBRANÇA (régua própria, separada do follow-up) -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px">
         <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase">🛒 Recuperação de Carrinho (Cobrança)</div>
@@ -9930,15 +9940,6 @@ async function sincronizarColunaWhatsapp(colunaId) {
         <div style="width:110px"><label class="fu-label">Horas</label><input type="number" min="0" step="0.5" id="cob-horas3" class="fu-textarea" style="min-height:auto;padding:11px 10px;resize:none;text-align:center" placeholder="48"></div>
       </div>
       <div class="fu-hint" style="margin-top:8px">"Horas" = quanto tempo após o gatilho cada mensagem é enviada (ex.: 3, 24, 48).</div>
-    </div>
-
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:16px">
-      <label class="fu-label" style="margin-top:0">Após o follow-up terminar (lead não respondeu)</label>
-      <div style="font-size:12px;color:var(--text2);margin-bottom:8px">Quando toda a régua (FU1 + FU2) for enviada sem resposta, o lead é movido automaticamente — pra não ficar preso em "novo contato" ou "autoatendimento".</div>
-      <select id="pos-followup-select" onchange="salvarPosFollowup()" style="width:100%;padding:9px;background:var(--bg4);border:1px solid var(--border2);border-radius:6px;color:var(--text);font-size:13px">
-        <option value="nenhum">Não fazer nada (padrão)</option>
-      </select>
-      <span id="pos-followup-status" style="font-size:12px;margin-top:6px;display:inline-block"></span>
     </div>
 
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;margin:-8px 0 20px">
