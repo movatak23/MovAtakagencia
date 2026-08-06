@@ -291,7 +291,7 @@ app.post('/movatak/vendedor/leads/:id/mensagem', authVendedor, async (req, res) 
   try {
     const lead = await vendedorPodeLead(req, req.params.id);
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
-    const { texto, mensagem, midia_url, midia_tipo, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
+    const { texto, mensagem, midia_url, midia_tipo, midia_nome, midia_ext, reply_to_conversa_id, reply_to_msg_id } = req.body || {};
     const conteudo = String(texto ?? mensagem ?? '').trim();
     if (!conteudo && !midia_url) return res.status(400).json({ error: 'Texto ou mídia obrigatório.' });
     const cli = await query('SELECT zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
@@ -301,10 +301,16 @@ app.post('/movatak/vendedor/leads/:id/mensagem', authVendedor, async (req, res) 
     const replyMsgIdZap = replyResolvido.msgId || null;
     let tipoFinal = null, msgId = null;
     if (midia_url) {
-      tipoFinal = tipoMidia(midia_url, midia_tipo);
-      if (tipoFinal === 'video') msgId = await zapiEnviarVideo(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, conteudo || '', replyMsgIdZap);
-      else if (tipoFinal === 'audio') msgId = await zapiEnviarAudio(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, replyMsgIdZap);
-      else msgId = await zapiEnviarImagem(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, conteudo || '', replyMsgIdZap);
+      if (midia_tipo === 'documento') {
+        tipoFinal = 'documento';
+        const ext = (midia_ext || (String(midia_url).match(/\.([a-z0-9]{1,8})(?:\?|$)/i) || [])[1] || 'bin').toLowerCase();
+        msgId = await zapiEnviarDocumento(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, midia_nome || ('arquivo.' + ext), conteudo || '', ext, replyMsgIdZap);
+      } else {
+        tipoFinal = tipoMidia(midia_url, midia_tipo);
+        if (tipoFinal === 'video') msgId = await zapiEnviarVideo(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, conteudo || '', replyMsgIdZap);
+        else if (tipoFinal === 'audio') msgId = await zapiEnviarAudio(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, replyMsgIdZap);
+        else msgId = await zapiEnviarImagem(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, midia_url, conteudo || '', replyMsgIdZap);
+      }
     } else {
       msgId = await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, conteudo, replyMsgIdZap);
     }
@@ -635,20 +641,23 @@ app.post('/movatak/vendedor/mensagens-rapidas/:id/usar', authVendedor, async (re
 app.post('/movatak/vendedor/upload-imagem', authVendedor, async (req, res) => {
   try {
     const dataUrl = (req.body && req.body.dataUrl) || '';
+    const nomeArquivo = String((req.body && req.body.fileName) || '').trim();
     const m = /^data:([a-z0-9.+-]+\/[a-z0-9.+-]+)(?:;[^;,]+)*;base64,(.+)$/i.exec(dataUrl);
-    const TIPOS_PERMITIDOS = ['image/png','image/jpeg','image/jpg','image/webp','video/mp4','video/webm','video/quicktime','audio/webm','audio/ogg','audio/mpeg','audio/mp4','audio/wav','audio/x-m4a','audio/aac'];
-    const contentType = m ? m[1].toLowerCase() : '';
-    if (!m || !TIPOS_PERMITIDOS.includes(contentType)) return res.status(400).json({ error: 'Arquivo inválido. Envie imagem, vídeo ou áudio.' });
+    if (!m) return res.status(400).json({ error: 'Arquivo inválido.' });
+    const contentType = m[1].toLowerCase();
+    // Qualquer extensão: mídia vai como mídia, o resto como DOCUMENTO. Só o tamanho limita.
     const ehVideo = contentType.startsWith('video/');
     const ehAudio = contentType.startsWith('audio/');
-    const tipo = ehVideo ? 'video' : (ehAudio ? 'audio' : 'imagem');
-    const extMap = { 'image/png':'png','image/jpeg':'jpg','image/jpg':'jpg','image/webp':'webp','video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/webm':'webm','audio/ogg':'ogg','audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/x-m4a':'m4a','audio/aac':'aac' };
-    const ext = extMap[contentType] || (ehVideo ? 'mp4' : (ehAudio ? 'webm' : 'jpg'));
+    const ehImagem = contentType.startsWith('image/');
+    const tipo = ehVideo ? 'video' : (ehAudio ? 'audio' : (ehImagem ? 'imagem' : 'documento'));
+    const extMap = { 'image/png':'png','image/jpeg':'jpg','image/jpg':'jpg','image/webp':'webp','image/gif':'gif','video/mp4':'mp4','video/webm':'webm','video/quicktime':'mov','audio/webm':'webm','audio/ogg':'ogg','audio/mpeg':'mp3','audio/mp4':'m4a','audio/wav':'wav','audio/x-m4a':'m4a','audio/aac':'aac' };
+    const extDoNome = (nomeArquivo.match(/\.([a-z0-9]{1,8})$/i) || [])[1];
+    const ext = (tipo === 'documento' ? (extDoNome || (contentType.split('/')[1] || 'bin').replace(/[^a-z0-9]/gi, '')) : (extMap[contentType] || (ehVideo ? 'mp4' : (ehAudio ? 'webm' : 'jpg')))).toLowerCase().slice(0, 8) || 'bin';
     const buffer = Buffer.from(m[2], 'base64');
-    const limite = ehVideo ? 20 * 1024 * 1024 : 8 * 1024 * 1024;
-    if (buffer.length > limite) return res.status(413).json({ error: ehVideo ? 'Vídeo muito grande (máx 20MB).' : 'Arquivo muito grande (máx 8MB).' });
-    const url = await uploadSupabase(buffer, contentType, ext);
-    res.json({ ok: true, url, tipo });
+    const limite = 20 * 1024 * 1024;
+    if (buffer.length > limite) return res.status(413).json({ error: 'Arquivo muito grande (máx. 20MB).' });
+    const url = await uploadSupabase(buffer, contentType || 'application/octet-stream', ext);
+    res.json({ ok: true, url, tipo, fileName: nomeArquivo || ('arquivo.' + ext), ext });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

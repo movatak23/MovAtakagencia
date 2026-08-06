@@ -929,9 +929,9 @@ async function iniciarAppVendedor() {
                      é injetado via JS dentro do grupo à esquerda (âncora: pai do btn-gravar-audio). -->
                 <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
                   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
-                    <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0">
+                    <label title="Anexar arquivo (qualquer tipo, até 20MB)" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0">
                       📎
-                      <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                      <input type="file" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
                     </label>
                     <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                       style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0">🎙️</button>
@@ -2456,9 +2456,14 @@ function renderMidiaMensagem(m) {
   const tipo = m.midia_tipo || (
     /\.(mp4|mov|m4v|3gp)(\?|$)/i.test(m.midia_url) ? 'video' :
     /\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(m.midia_url) ? 'audio' :
-    /\.webm(\?|$)/i.test(m.midia_url) ? 'video' : 'imagem'
+    /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(m.midia_url) ? 'imagem' :
+    /\.webm(\?|$)/i.test(m.midia_url) ? 'video' : 'documento'
   );
   const btnBaixar = `<button onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px">⬇ Baixar</button>`;
+  if (tipo === 'documento') {
+    const nomeDoc = (m.midia_nome || (String(m.midia_url).split('/').pop() || 'arquivo').split('?')[0] || 'arquivo').replace(/</g, '&lt;');
+    return `<div onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:8px 12px;margin-bottom:4px;cursor:pointer;max-width:230px"><span style="font-size:20px">📄</span><span style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nomeDoc}</span><span style="font-size:14px">⬇</span></div>`;
+  }
   let player;
   if (tipo === 'video') player = `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
   else if (tipo === 'audio') {
@@ -3049,8 +3054,8 @@ async function uploadArquivoPainel(file) {
   if (!file) return;
   const midiaEl = document.getElementById('painel-midia-el');
   const preview = document.getElementById('painel-midia-preview');
-  const ehVideo = file.type.startsWith('video/');
-  const limiteMb = ehVideo ? 20 : 8;
+  // Qualquer extensão: só o tamanho limita (20MB para todos).
+  const limiteMb = 20;
   if (file.size > limiteMb * 1024 * 1024) {
     alert('Arquivo muito grande (máx ' + limiteMb + 'MB).');
     return;
@@ -3064,31 +3069,37 @@ async function uploadArquivoPainel(file) {
       r.onerror = () => rej(new Error('Falha ao ler arquivo'));
       r.readAsDataURL(file);
     });
-    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl }) });
-    renderMidiaAnexadaPainel(resp.url, resp.tipo);
+    const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl, fileName: file.name || '' }) });
+    renderMidiaAnexadaPainel(resp.url, resp.tipo, resp.fileName || file.name || '', resp.ext || '');
   } catch (e) {
     if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--red)">Erro ao enviar arquivo: ' + e.message + '</span>';
   }
 }
 
-function renderMidiaAnexadaPainel(url, tipo) {
+function renderMidiaAnexadaPainel(url, tipo, fileName, ext) {
   const midiaEl = document.getElementById('painel-midia-el');
   const preview = document.getElementById('painel-midia-preview');
   if (!midiaEl) return;
   let prevHtml = '';
   if (tipo === 'video') prevHtml = `<video src="${url}" style="max-width:160px;max-height:90px;border-radius:6px" controls></video>`;
   else if (tipo === 'audio') prevHtml = `<audio src="${url}" controls style="height:32px"></audio>`;
+  else if (tipo === 'documento') {
+    const nome = (fileName || 'arquivo').replace(/</g, '&lt;');
+    prevHtml = `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--text);max-width:220px"><span>📄</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</span></span>`;
+  }
   else prevHtml = `<img src="${url}" style="max-width:160px;max-height:90px;border-radius:6px;object-fit:cover">`;
   midiaEl.innerHTML = prevHtml + ' <button type="button" onclick="removerMidiaPainel()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-left:6px;vertical-align:middle">✕ remover</button>';
   midiaEl.dataset.url = url;
   midiaEl.dataset.tipo = tipo;
+  midiaEl.dataset.nome = fileName || '';
+  midiaEl.dataset.ext = ext || '';
   if (preview) preview.style.display = '';
 }
 
 function removerMidiaPainel() {
   const midiaEl = document.getElementById('painel-midia-el');
   const preview = document.getElementById('painel-midia-preview');
-  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
+  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; midiaEl.dataset.nome = ''; midiaEl.dataset.ext = ''; }
   if (preview) preview.style.display = 'none';
 }
 
@@ -3589,6 +3600,8 @@ async function enviarMensagemPainel() {
   const midiaEl = document.getElementById('painel-midia-el');
   const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
   const midia_tipo = midiaEl && midiaEl.dataset.tipo ? midiaEl.dataset.tipo : null;
+  const midia_nome = midiaEl && midiaEl.dataset.nome ? midiaEl.dataset.nome : null;
+  const midia_ext = midiaEl && midiaEl.dataset.ext ? midiaEl.dataset.ext : null;
   const st = document.getElementById('painel-msg-status');
   if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem.'; return; }
   if (!window._painelLeadId) return;
@@ -3597,7 +3610,7 @@ async function enviarMensagemPainel() {
     const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
     const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
       method: 'POST', body: JSON.stringify({
-        texto, midia_url, midia_tipo,
+        texto, midia_url, midia_tipo, midia_nome, midia_ext,
         reply_to_conversa_id: replyTo ? replyTo.id : null,
         reply_to_msg_id: replyTo ? replyTo.msg_id : null
       })
@@ -8199,9 +8212,9 @@ async function iniciarPaginaFunilAtendimento() {
                      é injetado via JS dentro do grupo à esquerda (âncora: pai do btn-gravar-audio). -->
                 <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
                   <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
-                    <label title="Anexar imagem, vídeo ou áudio" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0">
+                    <label title="Anexar arquivo (qualquer tipo, até 20MB)" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0">
                       📎
-                      <input type="file" accept="image/*,video/*,audio/*" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                      <input type="file" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
                     </label>
                     <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                       style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0">🎙️</button>
