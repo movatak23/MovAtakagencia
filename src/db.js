@@ -240,6 +240,9 @@ async function garantirEstruturaQuestionario() {
   // read-message a cada saída/abertura quando não há mensagem nova pra marcar (anti-spam
   // do sync de leitura CRM->WhatsApp).
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS zap_lido_msg_id TEXT`).catch(() => null);
+  // Mutex por lead do auto-atendimento (anti-duplicação): serializa iniciar/responder
+  // questionário quando o lead manda várias mensagens rápidas. TTL na própria coluna.
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS quest_lock_ate TIMESTAMPTZ`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 

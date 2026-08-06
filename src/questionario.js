@@ -327,7 +327,32 @@ async function resolverQuestionarioDoLead(cliente, lead) {
   }
 }
 
+// ------------------------------------------------------------
+// TRAVA de concorrência por lead (anti-duplicação do auto-atendimento).
+// O bot envia os passos com delays (sleep); se o lead manda várias mensagens
+// rápidas (impaciência) OU manda algo durante o auto-avanço, dois processamentos
+// rodavam em paralelo e a régua saía DUPLICADA. A trava serializa: só um
+// iniciar/responder processa por vez para o mesmo lead; o concorrente é ignorado
+// (a mensagem dele viraria resposta duplicada de qualquer forma). Mutex via UPDATE
+// condicional na coluna movatak_leads.quest_lock_ate, com TTL (auto-libera se travar).
+async function travarQuest(leadId, segundos = 120) {
+  const r = await query(
+    `UPDATE movatak_leads SET quest_lock_ate = NOW() + ($2 || ' seconds')::interval
+      WHERE id = $1 AND (quest_lock_ate IS NULL OR quest_lock_ate < NOW())
+      RETURNING id`,
+    [leadId, String(segundos)]
+  ).catch(() => ({ rows: [] }));
+  return !!(r.rows && r.rows.length);
+}
+async function destravarQuest(leadId) {
+  await query(`UPDATE movatak_leads SET quest_lock_ate = NULL WHERE id = $1`, [leadId]).catch(() => null);
+}
+
 async function iniciarQuestionario(cliente, lead) {
+  if (!(await travarQuest(lead.id))) {
+    console.log(`[questionario][lock] iniciar ignorado — lead ${lead.id} já em processamento (evita duplicata)`);
+    return;
+  }
   try {
     // Defesa em profundidade: nunca inicia questionário para lead com automação
     // pausada — senão nasce um estado zumbi (pausado + questionário em_andamento),
@@ -376,10 +401,16 @@ async function iniciarQuestionario(cliente, lead) {
     await registrarEventoLead(lead.id, cliente.id, 'questionario_iniciado', 'Questionário consultivo iniciado', { total_perguntas: passos.length });
   } catch (e) {
     console.error('[questionario][iniciar] erro:', e.message);
+  } finally {
+    await destravarQuest(lead.id);
   }
 }
 
 async function processarRespostaQuestionario(cliente, lead, estado, texto) {
+  if (!(await travarQuest(lead.id))) {
+    console.log(`[questionario][lock] resposta ignorada — lead ${lead.id} já em processamento (evita duplicata)`);
+    return;
+  }
   try {
     // Prioridade: o template que o estado registrou (campanha OU início manual pelo
     // painel). Só cai no resolver-por-campanha se o estado não tiver template gravado
@@ -479,6 +510,8 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
     await avancarQuestionario(cliente, lead, estado.id, respostas, proximoIdx, notaCep);
   } catch (e) {
     console.error('[questionario][processar] erro:', e.message);
+  } finally {
+    await destravarQuest(lead.id);
   }
 }
 
