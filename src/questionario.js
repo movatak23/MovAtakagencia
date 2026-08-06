@@ -132,12 +132,19 @@ function interpretarResposta(passo, texto) {
   return { ok: true, valor: t }; // texto livre
 }
 
-function resolverSaltoQuestionario(passo, indiceOpcao, passos) {
+function resolverSaltoQuestionario(passo, indiceOpcao, passos, idxAtual = -1) {
   if (!passo || !passo.saltos || typeof passo.saltos !== 'object') return null;
   const destino = passo.saltos[String(indiceOpcao)];
   if (!destino) return null;
   if (destino === '__fim__') return -1;
-  const idxDestino = passos.findIndex(p => p.id === destino);
+  // GOTCHA: os IDs de passo podem estar DUPLICADOS no template (o editor reaproveita
+  // ids, ex.: dois passos "q1"). O findIndex simples pegava a PRIMEIRA ocorrência — e
+  // quando ela era o PRÓPRIO passo atual (mesmo id do menu), o salto voltava pro menu
+  // e o lead ficava preso em loop (a resposta "não era entendida"). Preferimos a
+  // ocorrência PARA FRENTE do id (salto avança); só se não houver, cai no global.
+  let idxDestino = -1;
+  if (idxAtual >= 0) idxDestino = passos.findIndex((p, i) => i > idxAtual && p.id === destino);
+  if (idxDestino < 0) idxDestino = passos.findIndex(p => p.id === destino);
   return idxDestino >= 0 ? idxDestino : null; // destino inválido → segue linear
 }
 
@@ -458,7 +465,7 @@ async function processarRespostaQuestionario(cliente, lead, estado, texto) {
     // opção escolhida, pula para essa pergunta ou encerra (__fim__). Senão, segue linear.
     let proximoIdx = idx + 1;
     if ((passo.tipo === 'opcoes' || passo.tipo === 'sim_nao') && interp.indice) {
-      const destino = resolverSaltoQuestionario(passo, interp.indice, passos);
+      const destino = resolverSaltoQuestionario(passo, interp.indice, passos, idx);
       if (destino === -1) {
         // Salto para o fim: grava respostas e finaliza.
         await query(`UPDATE movatak_questionario_estado SET respostas=$1::jsonb, status='concluido', atualizado_em=NOW() WHERE id=$2`, [JSON.stringify(respostas), estado.id]).catch(() => null);
