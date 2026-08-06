@@ -11,15 +11,13 @@
 // ============================================================
 const { query } = require('./db');
 const { zapiLerMensagem, zapiModificarChat } = require('./zapi');
-const { ehGrupoOuCanal } = require('./util');
 
-// Identificador do chat para a Z-API. read-message/modify-chat aceitam tanto o
-// número real quanto o @lid (testado: ambos retornam value:true). Usamos o telefone
-// e caímos no chat_lid quando não há telefone real.
+// Identificador do chat para a Z-API. read-message/modify-chat aceitam número real,
+// @lid E id de GRUPO ("120363...-group") — testado: os três retornam value:true.
+// Usa o telefone (que já guarda o id certo do chat, inclusive grupo) e cai no
+// chat_lid quando não há telefone.
 function alvoZap(row) {
-  const tel = row && row.telefone;
-  if (tel && !String(tel).includes('@lid') && !ehGrupoOuCanal(tel)) return tel;
-  return (row && row.chat_lid) || tel || null;
+  return (row && row.telefone) || (row && row.chat_lid) || null;
 }
 
 async function marcarChatLidoNoZap(leadId) {
@@ -37,7 +35,7 @@ async function marcarChatLidoNoZap(leadId) {
     // NÃO marca lido no WhatsApp — o aparelho deve continuar mostrando não-lido.
     if (row.nao_lida === true) return;
     const alvo = alvoZap(row);
-    if (!alvo || ehGrupoOuCanal(alvo)) return;
+    if (!alvo) return;
 
     // Última mensagem RECEBIDA com id: ler ela lê o chat inteiro no WhatsApp.
     const ult = await query(
@@ -69,7 +67,7 @@ async function marcarChatNaoLidoNoZap(leadId) {
     const row = r.rows[0];
     if (!row || !row.zapi_instance) return;
     const alvo = alvoZap(row);
-    if (!alvo || ehGrupoOuCanal(alvo)) return;
+    if (!alvo) return;
     await zapiModificarChat(row.zapi_instance, row.zapi_token, row.zapi_client_token, alvo, 'unread');
     // Resetar o marcador: ao voltar a NÃO-LIDA, uma futura leitura deve disparar de novo.
     await query(`UPDATE movatak_leads SET zap_lido_msg_id = NULL WHERE id = $1`, [leadId]).catch(() => null);
