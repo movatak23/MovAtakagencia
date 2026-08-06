@@ -236,6 +236,10 @@ async function garantirEstruturaQuestionario() {
   // (comando de parar ou transferência automática por respostas inválidas).
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS pediu_atendente BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS pediu_atendente_em TIMESTAMPTZ`).catch(() => null);
+  // Marcador do último inbound já marcado como LIDO no WhatsApp (Z-API). Evita reenviar
+  // read-message a cada saída/abertura quando não há mensagem nova pra marcar (anti-spam
+  // do sync de leitura CRM->WhatsApp).
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS zap_lido_msg_id TEXT`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
 }
 

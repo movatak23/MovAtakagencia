@@ -768,11 +768,14 @@ app.patch('/movatak/admin/leads/:id/marcar-lida', ...exigeLead, async (req, res)
   try {
     const naoLida = !!(req.body && req.body.nao_lida);
     const upd = await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2 AND nao_lida IS DISTINCT FROM $1 RETURNING id`, [naoLida, req.params.id]);
-    // Reflete no WhatsApp só quando REALMENTE mudou de estado, para não chamar a
-    // Z-API à toa ao reabrir conversas que já estavam no mesmo estado.
-    if (upd.rows.length) {
-      if (!naoLida) marcarChatLidoNoZap(req.params.id);
-      else marcarChatNaoLidoNoZap(req.params.id);
+    if (!naoLida) {
+      // Marcar LIDO: espelha no WhatsApp SEMPRE que o atendente abre/lê — mesmo que o
+      // CRM já estivesse nao_lida=false (ex.: automação respondeu antes). A função tem
+      // trava anti-spam (zap_lido_msg_id), então só chama a Z-API se há inbound novo.
+      marcarChatLidoNoZap(req.params.id);
+    } else if (upd.rows.length) {
+      // Marcar NÃO LIDO: só quando realmente mudou de estado (ação explícita do usuário).
+      marcarChatNaoLidoNoZap(req.params.id);
     }
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) {

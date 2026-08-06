@@ -877,55 +877,10 @@ app.post('/movatak/webhook/resposta', handleResposta);
 // lido no WhatsApp Web/app. Best-effort e em background (fire-and-forget): não
 // atrasa a resposta do painel e engole qualquer erro (Z-API fora, lead sem
 // telefone, grupo/canal). Chamado quando uma conversa é marcada como LIDA no CRM.
-async function marcarChatLidoNoZap(leadId) {
-  try {
-    const r = await query(
-      `SELECT l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
-         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1`,
-      [leadId]
-    );
-    const row = r.rows[0];
-    if (!row || !row.telefone || !row.zapi_instance) return;
-    if (ehGrupoOuCanal(row.telefone)) return;
-    // O modify-chat action:"read" NÃO limpa o não-lido no aparelho de forma confiável.
-    // O caminho que reflete de verdade é read-message na ÚLTIMA mensagem recebida
-    // (ler a última lê o chat inteiro no WhatsApp). Mantemos modify-chat como reforço
-    // e como fallback quando não há messageId conhecido.
-    const ult = await query(
-      `SELECT msg_id FROM movatak_conversas
-        WHERE lead_id = $1 AND direcao = 'entrada' AND msg_id IS NOT NULL AND msg_id <> ''
-        ORDER BY criado_em DESC LIMIT 1`,
-      [leadId]
-    );
-    const msgId = ult.rows[0] && ult.rows[0].msg_id;
-    if (msgId) {
-      await zapiLerMensagem(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, msgId);
-    }
-    await zapiModificarChat(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, 'read').catch(() => null);
-  } catch (e) {
-    console.error('[marcar-lida][zapi] falha ao marcar chat como lido no WhatsApp:', e.message);
-  }
-}
-
-// Reflete no WhatsApp (Z-API) que a conversa foi marcada como NÃO LIDA no CRM: usa
-// modify-chat action:"unread". Best-effort/fire-and-forget, igual ao marcarChatLidoNoZap.
-async function marcarChatNaoLidoNoZap(leadId) {
-  try {
-    const r = await query(
-      `SELECT l.telefone, c.zapi_instance, c.zapi_token, c.zapi_client_token
-         FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id
-        WHERE l.id = $1`,
-      [leadId]
-    );
-    const row = r.rows[0];
-    if (!row || !row.telefone || !row.zapi_instance) return;
-    if (ehGrupoOuCanal(row.telefone)) return;
-    await zapiModificarChat(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, 'unread');
-  } catch (e) {
-    console.error('[marcar-nao-lida][zapi] falha ao marcar chat como não lido no WhatsApp:', e.message);
-  }
-}
+// Sincronização de leitura CRM -> WhatsApp movida para src/leitura.js (para ser
+// reutilizada também pelo registro de conversa, sem dependência circular). Agora
+// espelha o estado nao_lida do CRM e tem trava anti-spam por zap_lido_msg_id.
+const { marcarChatLidoNoZap, marcarChatNaoLidoNoZap } = require('./src/leitura');
 
 // Marca o lead como lido (padrão) ou não lido (body: { nao_lida: true }) —
 // chamado ao abrir o painel de conversa, ou manualmente via "Marcar como não lida".

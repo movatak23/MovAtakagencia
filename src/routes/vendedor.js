@@ -388,10 +388,11 @@ app.patch('/movatak/vendedor/leads/:id/marcar-lida', authVendedor, async (req, r
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const naoLida = !!(req.body && req.body.nao_lida);
     const upd = await query(`UPDATE movatak_leads SET nao_lida = $1 WHERE id = $2 AND nao_lida IS DISTINCT FROM $1 RETURNING id`, [naoLida, lead.id]);
-    // Reflete no WhatsApp só quando REALMENTE mudou de estado.
-    if (upd.rows.length) {
-      if (!naoLida) marcarChatLidoNoZap(lead.id);
-      else marcarChatNaoLidoNoZap(lead.id);
+    if (!naoLida) {
+      // Marcar LIDO sempre que abre/lê (trava anti-spam interna por zap_lido_msg_id).
+      marcarChatLidoNoZap(lead.id);
+    } else if (upd.rows.length) {
+      marcarChatNaoLidoNoZap(lead.id);
     }
     res.json({ ok: true, nao_lida: naoLida });
   } catch (e) { res.status(500).json({ error: e.message }); }

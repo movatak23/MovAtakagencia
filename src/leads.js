@@ -136,7 +136,15 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
     // aba de não-lidas. Some só quando um humano assume (abre no painel = read, ou
     // responde = limparPedidoAtendente). Leads normais (pediu_atendente=false) seguem
     // igual: saída limpa o não-lido.
-    query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1 AND COALESCE(pediu_atendente, false) = false`, [leadId]).catch(() => null);
+    // Sync de leitura CRM->WhatsApp: assim que o CRM considera lido (saída limpou o
+    // não-lido), espelha no aparelho marcando o chat como lido — cobre o caso da
+    // automação (questionário/IA/follow-up) que responde sem ninguém abrir a conversa,
+    // que deixava o WhatsApp com badge de não-lido pra sempre. Encadeado após o UPDATE
+    // (evita corrida) e fire-and-forget. A própria função checa nao_lida e tem trava
+    // anti-spam (zap_lido_msg_id), então só chama a Z-API quando há inbound novo.
+    query(`UPDATE movatak_leads SET nao_lida = false, atualizado_em = NOW() WHERE id = $1 AND COALESCE(pediu_atendente, false) = false`, [leadId])
+      .then(() => require('./leitura').marcarChatLidoNoZap(leadId))
+      .catch(() => null);
   }
 
   // Avisa qualquer painel aberto desse cliente que chegou mensagem nova,
