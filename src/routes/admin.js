@@ -2536,79 +2536,6 @@ app.delete('/movatak/admin/leads/:id', ...exigeLead, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/movatak/admin/clientes/:id/planos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    const r = await query(
-      `SELECT p.id, p.nome, p.valor, p.nota_minima,
-              COALESCE(array_agg(pt.template_id) FILTER (WHERE pt.template_id IS NOT NULL), '{}') AS template_ids
-         FROM movatak_planos p
-         LEFT JOIN movatak_plano_templates pt ON pt.plano_id = p.id
-        WHERE p.cliente_id = $1
-        GROUP BY p.id, p.nome, p.valor, p.nota_minima
-        ORDER BY p.nota_minima ASC, p.valor ASC NULLS LAST, p.id ASC`,
-      [req.params.id]
-    );
-    res.json(r.rows);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/planos', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    const { nome, valor, nota_minima } = req.body || {};
-    if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'Informe o nome do plano.' });
-    const r = await query(
-      'INSERT INTO movatak_planos (cliente_id, nome, valor, nota_minima) VALUES ($1, $2, $3, $4) RETURNING id, nome, valor, nota_minima',
-      [req.params.id, String(nome).trim(), (valor !== '' && valor != null) ? parseMoedaParaNumero(valor) : null, parseInt(nota_minima, 10) || 0]
-    );
-    res.json(r.rows[0]);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.patch('/movatak/admin/planos/:id', ...exigePlano, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    const { nome, valor, nota_minima, template_ids } = req.body || {};
-    await query(
-      `UPDATE movatak_planos
-          SET nome = COALESCE($1, nome),
-              valor = CASE WHEN $2::text IS NULL THEN valor ELSE $2::numeric END,
-              nota_minima = COALESCE($3, nota_minima)
-        WHERE id = $4`,
-      [
-        nome ? String(nome).trim() : null,
-        (valor !== undefined && valor !== '' && valor !== null) ? parseMoedaParaNumero(valor) : null,
-        (nota_minima !== undefined && nota_minima !== '') ? (parseInt(nota_minima, 10) || 0) : null,
-        req.params.id
-      ]
-    );
-    // Atualiza os vínculos de template, se enviados (lista completa = substitui tudo).
-    if (Array.isArray(template_ids)) {
-      await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]);
-      for (const tid of template_ids) {
-        const t = parseInt(tid, 10);
-        if (Number.isFinite(t)) {
-          await query('INSERT INTO movatak_plano_templates (plano_id, template_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [req.params.id, t]).catch(() => null);
-        }
-      }
-    }
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/planos/:id', ...exigePlano, async (req, res) => {
-  try {
-    await garantirEstruturaPlanos();
-    // Desvincula os leads que usam este plano (evita o bloqueio da foreign key).
-    // Os leads continuam existindo, apenas sem plano associado.
-    await query('UPDATE movatak_leads SET plano_id = NULL, atualizado_em = NOW() WHERE plano_id = $1', [req.params.id]).catch(() => null);
-    await query('DELETE FROM movatak_plano_templates WHERE plano_id = $1', [req.params.id]).catch(() => null);
-    await query('DELETE FROM movatak_planos WHERE id = $1', [req.params.id]);
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
 app.post('/movatak/admin/upload-imagem', authMovatakOuApp, async (req, res) => {
   try {
     const dataUrl = (req.body && req.body.dataUrl) || '';
@@ -2659,7 +2586,6 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
     const rp = await query('SELECT id, nome, valor, nota_minima FROM movatak_planos WHERE cliente_id = $1 ORDER BY nota_minima ASC, valor ASC NULLS LAST, id ASC', [req.params.id]);
-    const cob = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
     const colr = await query('SELECT id, nome FROM movatak_funil_colunas WHERE cliente_id = $1 AND ativo = true ORDER BY ordem ASC, id ASC', [req.params.id]).catch(() => ({ rows: [] }));
     res.json({
       ativo: !!r.rows[0].questionario_ativo,
@@ -2673,7 +2599,6 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
       comando_ativar: r.rows[0].questionario_comando_ativar || '',
       msg_parar: r.rows[0].questionario_msg_parar || '',
       planos: rp.rows,
-      cobertura_total: cob.rows[0].total,
       acao_arquivar_ao_final: !!r.rows[0].acao_arquivar_ao_final,
       acao_marcar_nao_lido: !!r.rows[0].acao_marcar_nao_lido,
       enviar_msg_final: r.rows[0].enviar_msg_final !== false,
@@ -3745,48 +3670,6 @@ app.patch('/movatak/admin/leads/:id/funil', ...exigeLead, async (req, res) => {
     if (!colunaId) return res.status(400).json({ error: 'Informe a coluna de destino.' });
     const result = await moverLeadParaColunaFunil(req.params.id, colunaId, true);
     res.json(result);
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.get('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const r = await query('SELECT cep FROM movatak_cobertura_cep WHERE cliente_id = $1 ORDER BY cep ASC', [req.params.id]);
-    res.json({ total: r.rows.length, ceps: r.rows.map(x => x.cep) });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.post('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    const modo = (req.body && req.body.modo) || 'substituir';
-    const lista = String((req.body && req.body.ceps) || '')
-      .split(/[\n,;\s]+/)
-      .map(s => s.replace(/\D/g, ''))
-      .filter(Boolean)
-      .filter((v, i, a) => a.indexOf(v) === i);
-    if (modo === 'substituir') {
-      await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    }
-    let inseridos = 0;
-    for (const cep of lista) {
-      const r = await query(
-        `INSERT INTO movatak_cobertura_cep (cliente_id, cep) VALUES ($1, $2)
-         ON CONFLICT (cliente_id, cep) DO NOTHING`,
-        [req.params.id, cep]
-      );
-      inseridos += r.rowCount || 0;
-    }
-    const tot = await query('SELECT COUNT(*)::int AS total FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({ ok: true, inseridos, total: tot.rows[0].total });
-  } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.delete('/movatak/admin/clientes/:id/cobertura', ...forcaClienteIdNaUrl, async (req, res) => {
-  try {
-    await garantirEstruturaQuestionario();
-    await query('DELETE FROM movatak_cobertura_cep WHERE cliente_id = $1', [req.params.id]);
-    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
