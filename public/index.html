@@ -581,18 +581,6 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
           <input type="number" id="f-boasvindas-delay" min="1" max="60" value="5" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;width:80px">
         </div>
       </div>
-      <div class="form-field full" id="planos-section" style="display:none">
-        <label>PLANOS / PACOTES (usados na recomendação)</label>
-        <div class="fu-hint" style="margin-bottom:8px">A recomendação soma a pontuação das perguntas de "opções numeradas" e sugere o plano de maior <strong>nota mínima</strong> que o lead alcançar. Cadastre do menor (nota baixa) para o maior (nota alta).</div>
-        <div id="planos-lista"></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center">
-          <input type="text" id="plano-novo-nome" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:2;min-width:140px" placeholder="Nome do plano">
-          <input type="text" id="plano-novo-valor" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="R$ 99,90" inputmode="decimal">
-          <input type="number" id="plano-novo-nota" class="fu-textarea" style="min-height:auto;padding:8px 10px;resize:none;flex:1;min-width:90px" placeholder="Nota mín.">
-          <button class="btn-add-small" onclick="adicionarPlano()">Adicionar plano</button>
-        </div>
-        <div id="plano-status" class="fu-hint" style="margin-top:6px"></div>
-      </div>
 
       <!-- TREINAMENTO DA IA -->
       <div class="form-field full" id="ia-section" style="display:none">
@@ -1999,7 +1987,6 @@ function abrirModal() {
   document.getElementById('lbl-client-token').textContent = 'Z-API CLIENT TOKEN';
   document.getElementById('bloco-empresa-conexao').style.display = 'contents';
   document.getElementById('f-planos').closest('.form-field').style.display = '';
-  document.getElementById('planos-section').style.display = 'none';
   document.getElementById('ausencia-section').style.display = 'none';
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Cadastrar';
@@ -2024,11 +2011,8 @@ async function abrirEdicao(id) {
   document.getElementById('bloco-empresa-conexao').style.display = 'none';
   // Planos: editados aqui (modo edição), com valor e nota mínima
   document.getElementById('f-planos').closest('.form-field').style.display = 'none';
-  document.getElementById('planos-section').style.display = '';
   document.getElementById('ausencia-section').style.display = '';
   document.getElementById('ia-section').style.display = '';
-  planosClienteId = id;
-  carregarPlanos(id);
   carregarAusencia(id);
   const btn = document.getElementById('btn-salvar');
   btn.textContent = 'Carregando...';
