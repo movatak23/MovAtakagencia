@@ -5891,6 +5891,7 @@ function renderQuestPassos() {
   const wrap = document.getElementById('quest-passos');
   if (!questState.passos.length) {
     wrap.innerHTML = '<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhuma pergunta. Adicione a primeira abaixo.</div>';
+    renderQuestValidacao();
     return;
   }
   wrap.innerHTML = questState.passos.map((p, i) => {
@@ -5946,6 +5947,7 @@ function renderQuestPassos() {
       <label class="quest-aguardar"><input type="checkbox" ${p.encerrar_apos ? 'checked' : ''} onchange="questSetPasso(${i},'encerrar_apos',this.checked)"> Encerrar após esta pergunta <span class="quest-aguardar-hint">(vai direto para a mensagem final, ignorando as perguntas abaixo)</span></label>
     </div>`;
   }).join('');
+  renderQuestValidacao();
 }
 
 function questSetSalto(i, indiceOpcao, destino) {
@@ -5953,6 +5955,7 @@ function questSetSalto(i, indiceOpcao, destino) {
   if (!questState.passos[i].saltos) questState.passos[i].saltos = {};
   if (destino) questState.passos[i].saltos[String(indiceOpcao)] = destino;
   else delete questState.passos[i].saltos[String(indiceOpcao)];
+  renderQuestValidacao();
 }
 
 function questSetPasso(i, campo, valor) {
@@ -5965,7 +5968,86 @@ function questSetPasso(i, campo, valor) {
     questState.passos[i][campo] = valor;
   }
   if (campo === 'tipo') renderQuestPassos();
+  renderQuestValidacao();
 }
+
+// ===== Validação de saltos quebrados + simulador do fluxo =====
+function questProblemasSaltos() {
+  const ids = new Set((questState.passos || []).map(p => p.id));
+  const probs = [];
+  (questState.passos || []).forEach(p => {
+    if (p.tipo !== 'opcoes' && p.tipo !== 'sim_nao') return;
+    const labels = p.tipo === 'sim_nao' ? ['Sim', 'Não'] : (p.opcoes || []);
+    Object.entries(p.saltos || {}).forEach(([oi, dest]) => {
+      if (dest && !ids.has(dest)) probs.push({ pergunta: p.pergunta || ('#' + p.id), opcao: labels[oi] || ('opção ' + (Number(oi) + 1)), dest });
+    });
+  });
+  return probs;
+}
+function renderQuestValidacao() {
+  const probs = questProblemasSaltos();
+  const html = probs.length
+    ? '<div style="background:color-mix(in srgb,var(--red) 13%,transparent);border:1px solid var(--red);border-radius:8px;padding:10px 12px;font-size:12.5px;color:var(--red)"><strong>⚠️ ' + probs.length + ' salto(s) quebrado(s)</strong><ul style="margin:6px 0 0;padding-left:16px">' + probs.map(p => '<li>Pergunta “' + escapeHtml(p.pergunta) + '”, opção “' + escapeHtml(p.opcao) + '” salta para “' + escapeHtml(p.dest) + '”, que não existe.</li>').join('') + '</ul></div>'
+    : ((questState.passos || []).length ? '<div style="background:color-mix(in srgb,var(--green) 13%,transparent);border:1px solid var(--green);border-radius:8px;padding:8px 12px;font-size:12.5px;color:var(--green)">✓ Fluxo válido — nenhum salto quebrado.</div>' : '');
+  const a = document.getElementById('quest-validacao'); if (a) a.innerHTML = html;
+  const b = document.getElementById('quest-sim-valid'); if (b) b.innerHTML = html;
+}
+function _simBolha(texto, saida) {
+  const chat = document.getElementById('quest-sim-chat'); if (!chat) return;
+  const d = document.createElement('div');
+  d.style.cssText = 'max-width:82%;padding:8px 11px;border-radius:12px;font-size:12.5px;line-height:1.4;color:var(--text);' + (saida ? 'align-self:flex-end;background:var(--msg-out)' : 'align-self:flex-start;background:var(--msg-in);border:1px solid var(--border2)');
+  d.textContent = texto; chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+}
+function _simIdxById(id) { return (questState.passos || []).findIndex(p => p.id === id); }
+function _simPerguntar(i) {
+  const opts = document.getElementById('quest-sim-opts'); if (!opts) return; opts.innerHTML = '';
+  const passos = questState.passos || [];
+  if (i < 0 || i >= passos.length) {
+    const fim = (document.getElementById('quest-final').value || '').trim();
+    if (fim) _simBolha(fim.replace(/{nome}/g, 'Fulano').replace(/{plano}/g, '[plano]'), false);
+    opts.innerHTML = '<div style="font-size:11px;color:var(--text3);padding:4px">— fim do fluxo —</div>';
+    return;
+  }
+  const p = passos[i];
+  _simBolha((p.pergunta || '(pergunta em branco)').replace(/{nome}/g, 'Fulano'), false);
+  const branch = (p.tipo === 'opcoes' || p.tipo === 'sim_nao');
+  const labels = p.tipo === 'sim_nao' ? ['Sim', 'Não'] : (p.opcoes || []);
+  if (branch && labels.length) {
+    labels.forEach((o, oi) => {
+      const bt = document.createElement('button'); bt.className = 'btn-add-small'; bt.textContent = o || ('opção ' + (oi + 1));
+      bt.onclick = () => {
+        _simBolha(o, true); opts.innerHTML = '';
+        if (p.encerrar_apos) return _simPerguntar(passos.length);
+        const dest = p.saltos && p.saltos[String(oi)];
+        if (dest) {
+          const di = _simIdxById(dest);
+          if (di >= 0) _simPerguntar(di);
+          else { _simBolha('⚠️ salto quebrado: "' + dest + '" não existe — a conversa travaria aqui.', false); opts.innerHTML = '<div style="font-size:11px;color:var(--red);padding:4px">— fluxo interrompido —</div>'; }
+        } else _simPerguntar(i + 1);
+      };
+      opts.appendChild(bt);
+    });
+  } else {
+    const bt = document.createElement('button'); bt.className = 'btn-add-small'; bt.textContent = '↳ responder (simular)';
+    bt.onclick = () => { _simBolha('(resposta do lead)', true); opts.innerHTML = ''; if (p.encerrar_apos) _simPerguntar(passos.length); else _simPerguntar(i + 1); };
+    opts.appendChild(bt);
+  }
+}
+function reiniciarSimuladorQuest() {
+  renderQuestValidacao();
+  const chat = document.getElementById('quest-sim-chat'); if (chat) chat.innerHTML = '';
+  const intro = (document.getElementById('quest-intro').value || '').trim();
+  if (intro) _simBolha(intro.replace(/{nome}/g, 'Fulano'), false);
+  _simPerguntar(0);
+}
+function abrirSimuladorQuest() {
+  const m = document.getElementById('modal-quest-sim'); if (m) m.classList.add('open');
+  reiniciarSimuladorQuest();
+}
+function fecharSimuladorQuest() {
+  const m = document.getElementById('modal-quest-sim'); if (m) m.classList.remove('open');
+}
+
 function questAddPasso() {
   questState.passos.push({ id: 'q' + (++questSeq), tipo: 'texto', pergunta: '', pergunta_curta: '', opcoes: [], imagem: '', delay_segundos: 0, aguardar: true, encerrar_apos: false, saltos: {} });
   renderQuestPassos();
@@ -10482,6 +10564,8 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">A ordem aqui é a ordem enviada. O <strong>ID</strong> é o nome do campo usado nas regras de recomendação.</div>
     <div id="quest-passos"></div>
     <button class="btn-add-small" style="margin-top:4px" onclick="questAddPasso()">+ Adicionar pergunta</button>
+    <div id="quest-validacao" style="margin-top:14px"></div>
+    <button class="btn-add-small" style="margin-top:10px" onclick="abrirSimuladorQuest()">▶ Pré-visualizar / simular fluxo</button>
 
     </div>
     <div class="quest-col">
@@ -10559,6 +10643,21 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
         <button class="tour-next" id="tour-btn-next" onclick="tourProximo()">Avançar</button>
       </div>
     </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-quest-sim">
+  <div class="modal" style="max-width:460px;position:relative;max-height:90vh">
+    <button class="modal-x" onclick="fecharSimuladorQuest()" title="Fechar">✕</button>
+    <h3>▶ Pré-visualização do fluxo</h3>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Simula a conversa com as perguntas atuais. Clique nas opções para caminhar pelo fluxo. Avisa se algum salto aponta para um passo que não existe.</div>
+    <div id="quest-sim-valid"></div>
+    <div style="border:1px solid var(--border2);border-radius:12px;overflow:hidden;margin-top:12px;display:flex;flex-direction:column">
+      <div style="padding:9px 12px;border-bottom:1px solid var(--border2);font-size:12px;font-weight:700;display:flex;align-items:center;gap:8px;background:var(--bg3)">💬 Simulação da conversa <button class="btn-add-small" style="margin-left:auto" onclick="reiniciarSimuladorQuest()">↻ Reiniciar</button></div>
+      <div id="quest-sim-chat" style="padding:12px;min-height:150px;max-height:340px;overflow-y:auto;display:flex;flex-direction:column;gap:8px;background:var(--bg2)"></div>
+      <div id="quest-sim-opts" style="padding:0 12px 12px;display:flex;flex-wrap:wrap;gap:6px;background:var(--bg2)"></div>
+    </div>
+    <div class="modal-btns"><button class="btn-cancel" onclick="fecharSimuladorQuest()">Fechar</button></div>
   </div>
 </div>
 
