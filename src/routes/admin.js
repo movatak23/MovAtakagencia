@@ -1,6 +1,7 @@
 'use strict';
 
 const { pool } = require('../db');
+const { agendarCobranca, lerConfigCobranca } = require('../cobranca');
 
 // ============================================================
 // src/routes/admin.js — Fase 5a da refatoracao.
@@ -2435,6 +2436,54 @@ app.post('/movatak/admin/clientes/:id/testar-zapi', authMovatak, async (req, res
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// Cobrar = inicia a régua de recuperação de carrinho manualmente (o antigo
+// disparo por palavra-gatilho, agora num botão do card). Reusa agendarCobranca.
+app.patch('/movatak/admin/leads/:id/cobrar', ...exigeLead, async (req, res) => {
+  try {
+    const lr = await query('SELECT id, nome, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lr.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = lr.rows[0];
+    const cr = await query('SELECT id, cobranca_v2 FROM movatak_clientes WHERE id = $1', [lead.cliente_id]);
+    if (!cr.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const cliente = cr.rows[0];
+    const cfg = lerConfigCobranca(cliente);
+    if (!cfg.msgs.some(m => m.texto)) {
+      return res.status(400).json({ error: 'Configure a régua de recuperação de carrinho primeiro (menu Follow-up).' });
+    }
+    await agendarCobranca(cliente, lead);
+    await registrarEventoLead(lead.id, cliente.id, 'cobranca_manual', 'Recuperação de carrinho iniciada pelo painel');
+    res.json({ ok: true, lembretes: cfg.msgs.filter(m => m.texto).length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Chamar atendente = sinaliza que um humano precisa assumir (pausa automação,
+// acende o chip de atendente e marca não lida). O antigo #ATENDENTE num botão.
+app.patch('/movatak/admin/leads/:id/atendente', ...exigeLead, async (req, res) => {
+  try {
+    const lr = await query('SELECT id, cliente_id FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lr.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = lr.rows[0];
+    await query(`UPDATE movatak_leads SET automacao_pausada = true, pediu_atendente = true, pediu_atendente_em = NOW(), nao_lida = true, atualizado_em = NOW() WHERE id = $1`, [lead.id]);
+    await query(`UPDATE movatak_followup SET status = 'pausado' WHERE lead_id = $1 AND status = 'pendente'`, [lead.id]).catch(() => null);
+    try { emitirLeadFlags(lead.cliente_id, lead.id, { pediu_atendente: true, nao_lida: true, automacao_pausada: true }); } catch (e) {}
+    await registrarEventoLead(lead.id, lead.cliente_id, 'atendente_manual', 'Atendente humano acionado pelo painel');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Desfazer venda = reverte a conversão (só se o lead estiver como cliente).
+app.patch('/movatak/admin/leads/:id/desfazer-venda', ...exigeLead, async (req, res) => {
+  try {
+    const lr = await query('SELECT id, cliente_id, etapa FROM movatak_leads WHERE id = $1', [req.params.id]);
+    if (!lr.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = lr.rows[0];
+    if (lead.etapa !== 'cliente') return res.status(400).json({ error: 'Este lead não está marcado como cliente.' });
+    await query(`UPDATE movatak_leads SET etapa = 'lead', vendedor_id = NULL, convertido_em = NULL, atualizado_em = NOW() WHERE id = $1`, [lead.id]);
+    await registrarEventoLead(lead.id, lead.cliente_id, 'venda_desfeita', 'Conversão revertida pelo painel');
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.patch('/movatak/admin/leads/:id/cliente', ...exigeLead, async (req, res) => {
