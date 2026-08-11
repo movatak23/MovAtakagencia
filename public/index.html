@@ -302,6 +302,10 @@ tr:hover td{background:var(--bg3)}
 .funil-card.lead-aceso{border:2px solid var(--amber)!important;animation:pulseLeadAceso 1.6s ease-in-out infinite}
 
 .modal-fu { max-width: 1320px; width: calc(100vw - 32px); }
+/* Questionário (Auto Atendimento) em 2 colunas: Fluxo | Configurações */
+.quest-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:24px;align-items:start;margin-top:4px}
+.quest-col{min-width:0}
+@media (max-width:820px){ .quest-grid{grid-template-columns:1fr;gap:0} }
 .fu-label { font-size: 12px; color: var(--text2); letter-spacing: .4px; margin-bottom: 6px; margin-top: 14px; display: block; }
 .fu-tag { font-size: 11px; color: var(--accent); background: rgba(91,127,255,.15); border-radius: 4px; padding: 2px 8px; margin-left: 6px; }
 .fu-textarea { width: 100%; background: var(--bg3); border: 1px solid var(--border2); border-radius: 8px; padding: 12px 14px; font-size: 14px; color: var(--text); font-family: var(--mono); outline: none; resize: vertical; min-height: 72px; transition: border-color .2s; }
@@ -10511,6 +10515,8 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     </div>
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:-8px;margin-bottom:16px">Desligado, o lead segue no fluxo normal (boas-vindas + follow-up), sem perguntas.</div>
 
+    <div class="quest-grid">
+    <div class="quest-col">
     <label class="fu-label" style="margin-top:0">Introdução (enviada após as boas-vindas)</label>
     <textarea class="fu-textarea" id="quest-intro" rows="2" placeholder="Pra te indicar o plano ideal, vou te fazer algumas perguntas rápidas."></textarea>
     <div id="quest-intro-img"></div>
@@ -10543,7 +10549,9 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     <label class="perm-item" style="margin-top:10px"><input type="checkbox" id="quest-enviar-final" checked> Enviar a mensagem final ao lead quando ele concluir o questionário</label>
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:4px">Se desmarcado, o lead NÃO recebe mensagem ao terminar — o fluxo segue normalmente (resumo pro vendedor, mover no funil, etc.), só a mensagem para o lead deixa de ser enviada.</div>
 
-    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comando para parar atendimento <span class="fu-tag">encaminha p/ humano</span></label>
+    </div>
+    <div class="quest-col">
+    <label class="fu-label" style="margin-top:0;border-top:0;padding-top:0">Comando para parar atendimento <span class="fu-tag">encaminha p/ humano</span></label>
     <input type="text" class="fu-textarea" id="quest-comando-parar" placeholder="Ex: #atendente">
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:6px">Quando o cliente (ou você) enviar esse comando na conversa, a automação do lead é encerrada e ele vai para atendimento humano. Após 2 respostas inválidas, o bot avisa o cliente que pode usar este comando.</div>
 
@@ -10581,6 +10589,8 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
       </select>
     </div>
 
+    </div>
+    </div>
     <div class="login-err" id="quest-err" style="margin-top:12px"></div>
     <div class="modal-btns">
       <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
