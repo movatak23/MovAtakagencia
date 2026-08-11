@@ -916,12 +916,14 @@ async function iniciarAppVendedor() {
                   <div id="painel-historico"><div style="font-size:12px;color:var(--text2)">Carregando...</div></div>
                 </div>
               </div>
+              <div class="painel-resize-handle" title="Arraste para redimensionar a área de digitação" role="separator" aria-orientation="horizontal" tabindex="0"></div>
               <div class="painel-composer" style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
                 <div id="painel-reply-preview" style="display:none;margin-bottom:8px"></div>
                 <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
+                <div class="painel-composer-row">
                 <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:70px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
                   onpaste="painelColarArea(event)"
@@ -930,8 +932,8 @@ async function iniciarAppVendedor() {
                      enviar, recursos, resposta rápida e IA à direita. Antes eram duas linhas —
                      fundidas para a área de mensagens ganhar mais altura. O badge da etiqueta
                      é injetado via JS dentro do grupo à esquerda (âncora: pai do btn-gravar-audio). -->
-                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-                  <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
+                <div class="painel-composer-cluster">
+                  <div class="ccrow">
                     <label title="Anexar arquivo (qualquer tipo, até 20MB)" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-attach"></use></svg>
                       <input type="file" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
                     </label>
@@ -944,6 +946,7 @@ async function iniciarAppVendedor() {
                     <button type="button" class="btn-descartar-audio" onclick="cancelarGravacaoAudio(this)" title="Descartar áudio (não envia)"
                       style="display:none;cursor:pointer;background:transparent;border:1px solid var(--red);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--red);flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-trash"></use></svg></button>
                   </div>
+                  <div class="ccrow ccrow-b">
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
@@ -976,6 +979,8 @@ async function iniciarAppVendedor() {
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
                   <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-ai"></use></svg> IA</button>
+                  </div>
+                </div>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
@@ -8198,12 +8203,14 @@ async function iniciarPaginaFunilAtendimento() {
                   <div id="painel-historico"><div style="font-size:12px;color:var(--text2)">Carregando...</div></div>
                 </div>
               </div>
+              <div class="painel-resize-handle" title="Arraste para redimensionar a área de digitação" role="separator" aria-orientation="horizontal" tabindex="0"></div>
               <div class="painel-composer" style="padding:12px 16px;border-top:1px solid var(--border);flex-shrink:0">
                 <div id="painel-reply-preview" style="display:none;margin-bottom:8px"></div>
                 <div id="painel-midia-preview" style="display:none;margin-bottom:8px">
                   <div style="font-size:11px;color:var(--accent);margin-bottom:3px">📎 Anexo incluído:</div>
                   <div id="painel-midia-el"></div>
                 </div>
+                <div class="painel-composer-row">
                 <textarea id="painel-msg-texto" class="fu-textarea" style="min-height:70px;margin-bottom:8px" placeholder="Mensagem... (ENTER envia, Shift+ENTER quebra linha)"
                   onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();enviarMensagemPainel();}"
                   onpaste="painelColarArea(event)"
@@ -8212,8 +8219,8 @@ async function iniciarPaginaFunilAtendimento() {
                      enviar, recursos, resposta rápida e IA à direita. Antes eram duas linhas —
                      fundidas para a área de mensagens ganhar mais altura. O badge da etiqueta
                      é injetado via JS dentro do grupo à esquerda (âncora: pai do btn-gravar-audio). -->
-                <div style="display:flex;gap:8px;align-items:center;justify-content:flex-end">
-                  <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;overflow:hidden">
+                <div class="painel-composer-cluster">
+                  <div class="ccrow">
                     <label title="Anexar arquivo (qualquer tipo, até 20MB)" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-attach"></use></svg>
                       <input type="file" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
                     </label>
@@ -8226,6 +8233,7 @@ async function iniciarPaginaFunilAtendimento() {
                     <button type="button" class="btn-descartar-audio" onclick="cancelarGravacaoAudio(this)" title="Descartar áudio (não envia)"
                       style="display:none;cursor:pointer;background:transparent;border:1px solid var(--red);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--red);flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-trash"></use></svg></button>
                   </div>
+                  <div class="ccrow ccrow-b">
                   <button class="btn-save" style="padding:9px 18px;display:flex;align-items:center;gap:6px" onclick="enviarMensagemPainel()" title="Enviar mensagem"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg></button>
                   <div style="position:relative">
                     <button type="button" id="btn-recursos-whatsapp" onclick="toggleMenuRecursosWhatsapp(event)" style="padding:8px 10px;border:1px solid var(--green);color:var(--green);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap">＋</button>
@@ -8258,6 +8266,8 @@ async function iniciarPaginaFunilAtendimento() {
                     <div id="painel-msgs-rapidas-grid" class="msgs-rapidas-grid quick-menu-dropdown"></div>
                   </div>
                   <button type="button" class="btn-sugerir-ia" onclick="sugerirRespostaIA()" title="A IA sugere uma resposta baseada na conversa" style="padding:8px 12px;border:1px solid var(--accent);color:var(--accent);background:none;border-radius:8px;cursor:pointer;font-size:12px;white-space:nowrap"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-ai"></use></svg> IA</button>
+                  </div>
+                </div>
                 </div>
                 <div id="painel-msg-status" style="font-size:12px;margin-top:6px"></div>
               </div>
@@ -9341,6 +9351,56 @@ async function desfazerVendaLead(leadId, nome) {
   } catch (e) { mostrarToast('Erro: ' + e.message, 'erro'); }
 }
 
+// Divisor arrastável entre a conversa e o compositor. A altura escolhida fica
+// salva por atendente (localStorage) e vale para os dois chats (painel e modal).
+const COMP_H_KEY = 'movatak-comp-h';
+const COMP_H_MIN = 92;
+function _clampCompH(h, ref) { return Math.min(Math.round((ref || 600) * 0.55), Math.max(COMP_H_MIN, Math.round(h))); }
+function _aplicarCompH(h) {
+  document.querySelectorAll('.painel-composer').forEach(c => { c.style.height = h ? h + 'px' : ''; });
+}
+function initComposerResize() {
+  const saved = parseInt(localStorage.getItem(COMP_H_KEY) || '', 10);
+  if (saved) _aplicarCompH(saved);
+  document.querySelectorAll('.painel-resize-handle').forEach(handle => {
+    if (handle._rzInit) return; handle._rzInit = true;
+    let dragging = false, startY = 0, startH = 0, comp = null, ref = 600;
+    handle.addEventListener('pointerdown', e => {
+      comp = handle.nextElementSibling;
+      if (!comp || !comp.classList.contains('painel-composer')) return;
+      e.preventDefault();
+      dragging = true; startY = e.clientY; startH = comp.offsetHeight;
+      const box = handle.closest('#funil-chat-conteudo') || handle.parentElement;
+      ref = box ? box.clientHeight : 600;
+      handle.classList.add('dragging');
+      try { handle.setPointerCapture(e.pointerId); } catch (_) {}
+      document.body.style.userSelect = 'none';
+    });
+    handle.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      comp.style.height = _clampCompH(startH + (startY - e.clientY), ref) + 'px';
+    });
+    const finish = () => {
+      if (!dragging) return; dragging = false;
+      handle.classList.remove('dragging'); document.body.style.userSelect = '';
+      const h = comp.offsetHeight;
+      try { localStorage.setItem(COMP_H_KEY, h); } catch (_) {}
+      _aplicarCompH(h);
+    };
+    handle.addEventListener('pointerup', finish);
+    handle.addEventListener('pointercancel', finish);
+    handle.addEventListener('dblclick', () => { try { localStorage.removeItem(COMP_H_KEY); } catch (_) {} _aplicarCompH(0); });
+    handle.addEventListener('keydown', e => {
+      const cur = (handle.nextElementSibling && handle.nextElementSibling.offsetHeight) || 132;
+      let nova = null;
+      if (e.key === 'ArrowUp') nova = _clampCompH(cur + 16, 600);
+      if (e.key === 'ArrowDown') nova = _clampCompH(cur - 16, 600);
+      if (nova != null) { _aplicarCompH(nova); try { localStorage.setItem(COMP_H_KEY, nova); } catch (_) {} e.preventDefault(); }
+    });
+  });
+}
+window.addEventListener('load', initComposerResize);
+
 function renderFunilCard(lead, colunaAtualId) {
   const nome = lead.nome || 'Lead sem nome';
   const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}${lead.plano_valor != null ? ' — R$ ' + formatarValorPlanoBR(lead.plano_valor) : ''}</div>` : '';
@@ -10173,6 +10233,20 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
   #painel-msg-texto{min-height:30px !important}
   .painel-chat-head{padding:4px 12px !important}
 }
+/* COMPOSITOR — layout de 1 faixa (input à esquerda, botões agrupados à direita
+   em 2 fileiras) + divisor arrastável entre a conversa e o compositor. */
+.painel-composer{display:flex;flex-direction:column}
+.painel-composer > #painel-reply-preview,
+.painel-composer > #painel-midia-preview,
+.painel-composer > #painel-msg-status{flex:none}
+.painel-composer-row{display:flex;gap:10px;align-items:stretch;flex:1;min-height:0}
+.painel-composer-row .fu-textarea{flex:1;min-width:0;margin-bottom:0 !important;min-height:60px;resize:none}
+.painel-composer-cluster{flex:none;display:flex;flex-direction:column;gap:6px;justify-content:flex-end}
+.painel-composer-cluster .ccrow{display:flex;align-items:center;gap:6px;justify-content:flex-end}
+.painel-composer-cluster .ccrow-b{flex-direction:row-reverse}
+.painel-resize-handle{height:11px;flex:none;cursor:ns-resize;display:grid;place-items:center;border-top:1px solid var(--border);background:var(--bg2);touch-action:none;position:relative}
+.painel-resize-handle::before{content:"";width:42px;height:4px;border-radius:999px;background:var(--border2)}
+.painel-resize-handle:hover::before,.painel-resize-handle.dragging::before{background:var(--green)}
 .funil-layout-controls .layout-label{font-size:11px;color:var(--text2);margin-right:2px}
 .funil-layout-btn{background:var(--bg3);border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:11px;padding:7px 10px;cursor:pointer;font-family:var(--sans);display:inline-flex;align-items:center;gap:5px}
 .funil-layout-btn:hover{border-color:var(--accent);color:var(--text)}
