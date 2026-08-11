@@ -1879,17 +1879,23 @@ function renderClientes(clientes) {
       <td><span class="badge ${c.ativo ? 'badge-green' : 'badge-gray'}">${c.ativo ? 'Ativo' : 'Inativo'}</span></td>
       <td class="td-mono" style="font-size:13px">—</td>
       <td>
+        <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
         <button onclick="event.stopPropagation();abrirCredenciais(${c.id})" class="so-admin" style="background:transparent;border:1px solid var(--accent);border-radius:6px;color:var(--accent);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">🔑 Credenciais</button>
         <button onclick="event.stopPropagation();abrirEdicao(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-right:6px">Editar</button>
         <button onclick="event.stopPropagation();abrirFU(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans)">Followup</button>
         <button onclick="event.stopPropagation();abrirCampanhasOperacao(${c.id}, '${c.nome.replace(/'/g, "")}')" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">📊 Campanhas &amp; Operação</button>
         <button onclick="event.stopPropagation();abrirQuestionario(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Auto Atendimento</button>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
         <button onclick="event.stopPropagation();abrirFunilAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Funil de Atendimento</button>
         <button onclick="event.stopPropagation();abrirMenuAtendimento(${c.id}, '${c.nome.replace(/'/g, "")}' )" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">Menu de Atendimento</button>
         <button onclick="event.stopPropagation();abrirDiagnostico(${c.id})" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">🔍 Diagnóstico</button>
         <button onclick="event.stopPropagation();baixarBackupClientePorId(${c.id})" title="Baixar backup deste cliente" style="background:transparent;border:1px solid var(--border2);border-radius:6px;color:var(--text2);font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px">💾 Backup</button>
         ${_botoesGestaoCliente(c)}
         <span class="inst-status" data-cliente="${c.id}" onclick="event.stopPropagation();abrirConexaoWhatsapp(${c.id})" title="Status da instância Z-API — clique para ver/reconectar" style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border2);border-radius:6px;font-size:12px;padding:4px 10px;cursor:pointer;font-family:var(--sans);margin-left:6px;color:var(--text2)">Instância <span class="inst-dot" style="width:9px;height:9px;border-radius:50%;background:var(--text3);display:inline-block;flex-shrink:0"></span></span>
+        </div>
+        </div>
       </td>
     </tr>`;
   }).join('');
