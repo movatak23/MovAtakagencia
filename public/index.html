@@ -10444,6 +10444,9 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
       <button class="btn-save" onclick="rodarDiagnostico()">Buscar</button>
     </div>
     <div id="diag-resultado"></div>
+    <div class="modal-btns" style="margin-top:16px">
+      <button class="btn-cancel" onclick="document.getElementById('modal-diagnostico').classList.remove('open')">Fechar</button>
+    </div>
   </div>
 </div>
 
@@ -10727,6 +10730,7 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     <div class="modal-btns" style="justify-content:center;flex-wrap:wrap;gap:8px">
       <button class="btn-cancel" onclick="reiniciarConexao()">🔄 Reiniciar conexão</button>
       <button class="btn-save" onclick="mostrarQrConexao()">📷 Mostrar QR Code</button>
+      <button class="btn-cancel" onclick="fecharConexaoModal()">Fechar</button>
     </div>
     <div class="fu-hint" style="font-size:11px;margin-top:12px">Reiniciar resolve quedas rápidas sem QR. Use o QR só quando pedir pra reconectar de verdade.</div>
   </div>
