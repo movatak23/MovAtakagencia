@@ -5837,12 +5837,10 @@ async function carregarQuestNoEditor() {
       else if (min > 0) { ltEl.value = min; luEl.value = 'minutos'; }
       else { ltEl.value = ''; luEl.value = 'horas'; }
     }
-    document.getElementById('quest-cob-total').textContent = (r.cobertura_total || 0) + ' CEPs cadastrados';
     renderQuestPassos();
     renderQuestRegras();
     renderQuestImg('intro');
     renderQuestImg('final');
-    if (!ehTemplate) carregarCobertura(id);
   } catch (e) {
     document.getElementById('quest-err').textContent = 'Erro ao carregar: ' + e.message;
   }
@@ -6147,38 +6145,6 @@ async function salvarQuestionario() {
     document.getElementById('quest-err').textContent = 'Erro ao salvar: ' + e.message;
     btn.disabled = false; btn.textContent = 'Salvar Auto Atendimento';
   }
-}
-
-async function carregarCobertura(id) {
-  try {
-    const r = await api('/movatak/admin/clientes/' + id + '/cobertura');
-    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
-  } catch (e) { /* silencioso */ }
-}
-async function salvarCobertura() {
-  const btn = document.getElementById('btn-cob-save');
-  btn.disabled = true; btn.textContent = 'Salvando...';
-  try {
-    const modo = document.querySelector('input[name="cob-modo"]:checked').value;
-    const r = await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', {
-      method: 'POST',
-      body: JSON.stringify({ modo, ceps: document.getElementById('quest-ceps').value })
-    });
-    document.getElementById('quest-cob-total').textContent = (r.total || 0) + ' CEPs cadastrados';
-    document.getElementById('quest-ceps').value = '';
-    btn.textContent = '✓ ' + (r.inseridos || 0) + ' adicionados';
-    setTimeout(() => { btn.disabled = false; btn.textContent = 'Salvar CEPs'; }, 1800);
-  } catch (e) {
-    document.getElementById('quest-err').textContent = 'Erro nos CEPs: ' + e.message;
-    btn.disabled = false; btn.textContent = 'Salvar CEPs';
-  }
-}
-async function limparCobertura() {
-  if (!confirm('Apagar todos os CEPs cadastrados deste cliente?')) return;
-  try {
-    await api('/movatak/admin/clientes/' + questState.clienteId + '/cobertura', { method: 'DELETE' });
-    document.getElementById('quest-cob-total').textContent = '0 CEPs cadastrados';
-  } catch (e) { document.getElementById('quest-err').textContent = 'Erro ao limpar: ' + e.message; }
 }
 
 // ── Credenciais & Dados do cliente (empresa, conexão Z-API, acessos, login do portal) ──
@@ -10562,17 +10528,6 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Comando para ativar autoatendimento <span class="fu-tag">reinicia do zero</span></label>
     <input type="text" class="fu-textarea" id="quest-comando-ativar" placeholder="Ex: #iniciar">
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:6px">Enviado por você/vendedor em qualquer lugar da mensagem (na conversa do lead), reinicia o questionário do zero para esse lead e religa a automação.</div>
-
-    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Cobertura por CEP</label>
-    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:8px"><span id="quest-cob-total" style="color:var(--accent);font-weight:700">0 CEPs cadastrados</span>. Cole os CEPs atendidos (um por linha ou separados por vírgula). Aceita CEP completo ou prefixo (ex: 50000 cobre toda a faixa).</div>
-    <textarea class="fu-textarea" id="quest-ceps" rows="4" style="font-family:var(--mono)" placeholder="50000000&#10;50010000&#10;52000"></textarea>
-    <div style="display:flex;align-items:center;gap:16px;margin:8px 0 4px;flex-wrap:wrap">
-      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="substituir" checked> Substituir lista</label>
-      <label style="font-size:13px;color:var(--text2)"><input type="radio" name="cob-modo" value="adicionar"> Adicionar à lista</label>
-      <span style="flex:1"></span>
-      <button class="btn-add-small" id="btn-cob-save" onclick="salvarCobertura()">Salvar CEPs</button>
-      <button class="btn-add-small" style="background:transparent;border:1px solid var(--red);color:var(--red)" onclick="limparCobertura()">Limpar tudo</button>
-    </div>
 
     <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">Ações automáticas ao final do fluxo</label>
     <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Executadas no WhatsApp Business do cliente via Z-API após o lead concluir o questionário.</div>
