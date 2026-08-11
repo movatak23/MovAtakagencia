@@ -5910,7 +5910,7 @@ function renderQuestPassos() {
             .map((pp, j) => ({ pp, num: j + 1 }))
             .filter(x => x.num - 1 !== i && (x.pp.id || '').trim())
             .map(x => `<option value="${escAttr(x.pp.id)}" ${atual === x.pp.id ? 'selected' : ''}>→ Pergunta #${x.num}${x.pp.pergunta_curta ? ' ('+escAttr(x.pp.pergunta_curta)+')' : ''}</option>`).join('');
-          return `<option value="" ${!atual ? 'selected' : ''}>Seguir normal</option>${optsPerg}<option value="__fim__" ${atual === '__fim__' ? 'selected' : ''}>Encerrar (recomendar)</option>`;
+          return `<option value="" ${!atual ? 'selected' : ''}>Seguir normal</option>${optsPerg}<option value="__fim__" ${atual === '__fim__' ? 'selected' : ''}>Ir para a Mensagem final</option>`;
         };
         saltosField = `<div style="background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:8px;margin:4px 0">
           <div class="fu-hint" style="margin-bottom:6px">Saltos condicionais — para onde ir conforme a escolha:</div>
@@ -5979,7 +5979,7 @@ function questProblemasSaltos() {
     if (p.tipo !== 'opcoes' && p.tipo !== 'sim_nao') return;
     const labels = p.tipo === 'sim_nao' ? ['Sim', 'Não'] : (p.opcoes || []);
     Object.entries(p.saltos || {}).forEach(([oi, dest]) => {
-      if (dest && !ids.has(dest)) probs.push({ pergunta: p.pergunta || ('#' + p.id), opcao: labels[oi] || ('opção ' + (Number(oi) + 1)), dest });
+      if (dest && dest !== '__fim__' && !ids.has(dest)) probs.push({ pergunta: p.pergunta || ('#' + p.id), opcao: labels[oi] || ('opção ' + (Number(oi) + 1)), dest });
     });
   });
   return probs;
@@ -6019,7 +6019,8 @@ function _simPerguntar(i) {
         _simBolha(o, true); opts.innerHTML = '';
         if (p.encerrar_apos) return _simPerguntar(passos.length);
         const dest = p.saltos && p.saltos[String(oi)];
-        if (dest) {
+        if (dest === '__fim__') { _simPerguntar(passos.length); }
+        else if (dest) {
           const di = _simIdxById(dest);
           if (di >= 0) _simPerguntar(di);
           else { _simBolha('⚠️ salto quebrado: "' + dest + '" não existe — a conversa travaria aqui.', false); opts.innerHTML = '<div style="font-size:11px;color:var(--red);padding:4px">— fluxo interrompido —</div>'; }
