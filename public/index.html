@@ -508,7 +508,8 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
 
 <!-- MODAL NOVO CLIENTE -->
 <div class="modal-overlay" id="modal">
-  <div class="modal modal-cliente">
+  <div class="modal modal-cliente" style="position:relative">
+    <button class="modal-x" onclick="fecharModal()" title="Fechar">✕</button>
     <h3 id="modal-titulo">Config. Inicial</h3>
     <div class="form-grid">
       <!-- Bloco Empresa + Conexão: no modo EDITAR fica oculto (editado no menu 🔑 Credenciais). Aparece só ao CADASTRAR novo cliente. -->
