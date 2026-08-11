@@ -4546,7 +4546,6 @@ async function abrirCampanhasOperacao(id, nome) {
   document.getElementById('modal-campop').classList.add('open');
   try {
     const msgs = await api('/movatak/admin/clientes/' + id + '/followup');
-    document.getElementById('fu-verba').value = msgs.verba_diaria || '';
     document.getElementById('fu-whatsapp-dono').value = msgs.whatsapp_dono || '';
     await carregarTemplatesFollowup();
     carregarCampanhas(id);
@@ -4562,15 +4561,14 @@ function fecharCampanhasOperacao() {
 async function salvarInvestimentoAlertas() {
   if (!fuId) return;
   const st = document.getElementById('campop-inv-status');
-  const verba_diaria = document.getElementById('fu-verba').value.trim();
   const whatsapp_dono = document.getElementById('fu-whatsapp-dono').value.trim();
   if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Salvando...'; }
   try {
     await api('/movatak/admin/clientes/' + fuId + '/investimento-alertas', {
       method: 'PATCH',
-      body: JSON.stringify({ verba_diaria, whatsapp_dono })
+      body: JSON.stringify({ whatsapp_dono })
     });
-    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Investimento e alertas salvos.'; }
+    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Alertas salvos.'; }
   } catch (e) {
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
   }
@@ -4652,7 +4650,7 @@ async function salvarFU() {
       ]
     };
 
-    // Investimento/WhatsApp do dono saíram daqui (menu "Campanhas & Operação").
+    // Investimento/WhatsApp do Gestor saíram daqui (menu "Campanhas & Operação").
     // Salvar follow up com estrutura dos 2 blocos
     await api('/movatak/admin/clientes/' + fuId + '/followup', {
       method: 'PATCH',
@@ -5053,7 +5051,7 @@ async function enviarRelatorioDiarioAgora() {
     const r = await api('/movatak/admin/clientes/' + fuId + '/relatorio-diario/enviar', {
       method: 'POST', body: JSON.stringify({})
     });
-    document.getElementById('fu-err').textContent = 'Relatório enviado para o WhatsApp do dono.';
+    document.getElementById('fu-err').textContent = 'Relatório enviado para o WhatsApp do Gestor.';
   } catch(e) {
     document.getElementById('fu-err').textContent = 'Erro ao enviar relatório: ' + e.message;
   }
@@ -5274,7 +5272,7 @@ async function testarGatilhoAtual() {
 
 async function testarZapiAgora() {
   try {
-    const telefone = prompt('Telefone para receber o teste Z-API. Deixe em branco para usar o WhatsApp do dono ou o admin Movatak.') || '';
+    const telefone = prompt('Telefone para receber o teste Z-API. Deixe em branco para usar o WhatsApp do Gestor ou o admin Movatak.') || '';
     await api('/movatak/admin/clientes/' + fuId + '/testar-zapi', {
       method: 'POST',
       body: JSON.stringify({ telefone })
@@ -10569,24 +10567,9 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     <button class="modal-x" onclick="fecharCampanhasOperacao()" title="Fechar">✕</button>
     <h3>📊 Campanhas &amp; Operação<span id="campop-cliente-nome" style="color:var(--text2);font-weight:500"></span></h3>
     <div style="font-size:13px;color:var(--text2);margin:6px 0 16px">Investimento em anúncios, campanhas/origens (atribuição do lead) e o acompanhamento operacional. Separado das mensagens de follow-up.</div>
-    <!-- BLOCO 5: AUTOMAÇÃO E DADOS -->
-    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Investimento consolidado</div>
-      <label class="fu-label">Investimento total/diário em campanhas (R$)</label>
-      <input type="number" class="fu-textarea" id="fu-verba" style="min-height:auto;padding:12px 14px;resize:none" placeholder="Ex: 50">
-      <div class="fu-hint">Campo legado/opcional. A mensuração confiável agora vem da soma dos investimentos cadastrados em cada campanha ativa.</div>
-      <label class="fu-label" style="margin-top:12px">WhatsApp do dono para alertas</label>
-      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
-      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
-      <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
-        <button class="btn-add-small" onclick="salvarInvestimentoAlertas()">Salvar investimento e alertas</button>
-        <span id="campop-inv-status" class="fu-hint" style="margin:0"></span>
-      </div>
-    </div>
-
     <!-- BLOCO 7: CAMPANHAS/ORIGENS -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Campanhas e origens</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Campanhas e origens</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
       <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
       <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
@@ -10606,7 +10589,7 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
 
     <!-- BLOCO 8: STATUS OPERACIONAL -->
     <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
-      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">3. Status operacional</div>
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">2. Status operacional</div>
       <div id="fu-operacao-box"></div>
       <label class="fu-label" style="margin-top:14px">Teste da frase-gatilho</label>
       <div style="display:flex;gap:8px;align-items:center">
@@ -10621,6 +10604,18 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
         <button class="btn-add-small" onclick="testarZapiAgora()">Testar Z-API</button>
       </div>
       <div class="fu-hint">O relatório automático diário precisa da variável MOVATAK_RELATORIO_DIARIO=true no Railway.</div>
+    </div>
+
+    <!-- ALERTAS DO GESTOR -->
+    <div style="background:var(--bg3);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:20px">
+      <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">Alertas</div>
+      <label class="fu-label" style="margin-top:0">WhatsApp do Gestor para alertas</label>
+      <input type="text" class="fu-textarea" id="fu-whatsapp-dono" style="min-height:auto;padding:12px 14px;resize:none;font-family:var(--mono)" placeholder="5581999990000">
+      <div class="fu-hint">Recebe alertas de CPL, troca de vendedor e leads parados.</div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+        <button class="btn-add-small" onclick="salvarInvestimentoAlertas()">Salvar alertas</button>
+        <span id="campop-inv-status" class="fu-hint" style="margin:0"></span>
+      </div>
     </div>
 
     <div class="modal-btns">
