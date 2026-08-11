@@ -9467,7 +9467,7 @@ function renderFunilCard(lead, colunaAtualId) {
       <input type="checkbox" class="funil-lead-check" data-lead-id="${lead.id}" data-coluna-id="${colunaAtualId}"
         style="margin-right:6px;cursor:pointer;flex-shrink:0"
         onclick="event.stopPropagation()" onchange="atualizarSelecaoLote()">
-      <span class="funil-card-avatar" style="background:${corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</span>
+      <span class="funil-card-avatar" style="background:${(colAtualResumo && colAtualResumo.cor) || corAvatarLead(lead.nome)}">${iniciaisAvatarLead(lead.nome)}</span>
       <strong>${escapeHtml(nome)}</strong>${pend}${seloSetor}
       ${dotNaoLida}
     </div>
