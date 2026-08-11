@@ -9354,10 +9354,16 @@ async function desfazerVendaLead(leadId, nome) {
 // Divisor arrastável entre a conversa e o compositor. A altura escolhida fica
 // salva por atendente (localStorage) e vale para os dois chats (painel e modal).
 const COMP_H_KEY = 'movatak-comp-h';
-const COMP_H_MIN = 92;
+const COMP_H_MIN = 56;
 function _clampCompH(h, ref) { return Math.min(Math.round((ref || 600) * 0.55), Math.max(COMP_H_MIN, Math.round(h))); }
 function _aplicarCompH(h) {
-  document.querySelectorAll('.painel-composer').forEach(c => { c.style.height = h ? h + 'px' : ''; });
+  // A altura escolhida vai na LINHA de digitação, não no compositor inteiro —
+  // senão, quando o preview de anexo aparece, ele rouba o espaço e o campo some.
+  document.querySelectorAll('.painel-composer').forEach(c => {
+    c.style.height = '';
+    const row = c.querySelector('.painel-composer-row');
+    if (row) row.style.height = h ? h + 'px' : '';
+  });
 }
 function initComposerResize() {
   const saved = parseInt(localStorage.getItem(COMP_H_KEY) || '', 10);
@@ -9368,8 +9374,10 @@ function initComposerResize() {
     handle.addEventListener('pointerdown', e => {
       comp = handle.nextElementSibling;
       if (!comp || !comp.classList.contains('painel-composer')) return;
+      const row = comp.querySelector('.painel-composer-row');
+      if (!row) return;
       e.preventDefault();
-      dragging = true; startY = e.clientY; startH = comp.offsetHeight;
+      dragging = true; startY = e.clientY; startH = row.offsetHeight;
       const box = handle.closest('#funil-chat-conteudo') || handle.parentElement;
       ref = box ? box.clientHeight : 600;
       handle.classList.add('dragging');
@@ -9378,12 +9386,14 @@ function initComposerResize() {
     });
     handle.addEventListener('pointermove', e => {
       if (!dragging) return;
-      comp.style.height = _clampCompH(startH + (startY - e.clientY), ref) + 'px';
+      const row = comp.querySelector('.painel-composer-row');
+      if (row) row.style.height = _clampCompH(startH + (startY - e.clientY), ref) + 'px';
     });
     const finish = () => {
       if (!dragging) return; dragging = false;
       handle.classList.remove('dragging'); document.body.style.userSelect = '';
-      const h = comp.offsetHeight;
+      const row = comp.querySelector('.painel-composer-row');
+      const h = row ? row.offsetHeight : 120;
       try { localStorage.setItem(COMP_H_KEY, h); } catch (_) {}
       _aplicarCompH(h);
     };
@@ -9391,7 +9401,8 @@ function initComposerResize() {
     handle.addEventListener('pointercancel', finish);
     handle.addEventListener('dblclick', () => { try { localStorage.removeItem(COMP_H_KEY); } catch (_) {} _aplicarCompH(0); });
     handle.addEventListener('keydown', e => {
-      const cur = (handle.nextElementSibling && handle.nextElementSibling.offsetHeight) || 132;
+      const _row = handle.nextElementSibling && handle.nextElementSibling.querySelector('.painel-composer-row');
+      const cur = (_row && _row.offsetHeight) || 120;
       let nova = null;
       if (e.key === 'ArrowUp') nova = _clampCompH(cur + 16, 600);
       if (e.key === 'ArrowDown') nova = _clampCompH(cur - 16, 600);
@@ -10239,7 +10250,7 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .painel-composer > #painel-reply-preview,
 .painel-composer > #painel-midia-preview,
 .painel-composer > #painel-msg-status{flex:none}
-.painel-composer-row{display:flex;gap:10px;align-items:stretch;flex:1;min-height:0}
+.painel-composer-row{display:flex;gap:10px;align-items:stretch;min-height:60px}
 .painel-composer-row .fu-textarea{flex:1;min-width:0;margin-bottom:0 !important;min-height:60px;resize:none}
 .painel-composer-cluster{flex:none;display:flex;flex-direction:column;gap:6px;justify-content:flex-end}
 .painel-composer-cluster .ccrow{display:flex;align-items:center;gap:6px;justify-content:flex-end}
