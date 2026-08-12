@@ -10,6 +10,7 @@
 const { query } = require('./db');
 const envio = require('./envio');
 const { registrarConversa } = require('./leads');
+const { moverLeadParaColunaFunil } = require('./funil');
 
 const INTERVALO_MIN_SEG = 8;    // piso-duro de plataforma (anti-ban)
 const TETO_DIA_MAX = 300;       // teto-duro por número/dia (acima do editável)
@@ -60,6 +61,7 @@ async function criarDisparo(clienteId, dados = {}) {
   const dias = (dados.dias_semana && String(dados.dias_semana).trim()) || '1,2,3,4,5,6';
   const agendado = dados.agendado_para ? new Date(dados.agendado_para) : null;
   const status = (agendado && !isNaN(agendado.getTime())) ? 'agendado' : 'em_andamento';
+  const respCol = parseInt(dados.resp_coluna_id, 10) || null; // coluna p/ quando o lead responder
 
   // Snapshot: só WhatsApp com telefone, não arquivado e não opt-out.
   const leads = await query(
@@ -75,11 +77,11 @@ async function criarDisparo(clienteId, dados = {}) {
   const ins = await query(
     `INSERT INTO movatak_disparos
        (cliente_id, nome, coluna_id, tipo, texto, midia_url, midia_nome, intervalo_seg,
-        janela_inicio, janela_fim, dias_semana, agendado_para, teto_dia, status, total)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id`,
+        janela_inicio, janela_fim, dias_semana, agendado_para, teto_dia, status, total, resp_coluna_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING id`,
     [clienteId, (dados.nome || 'Disparo').toString().slice(0, 120), coluna_id, tipo, texto, midia_url,
       dados.midia_nome || null, intervalo, jIni, jFim, dias,
-      (status === 'agendado') ? agendado : null, teto, status, leads.rows.length]
+      (status === 'agendado') ? agendado : null, teto, status, leads.rows.length, respCol]
   );
   const disparoId = ins.rows[0].id;
 
@@ -217,4 +219,28 @@ async function registrarOptOutSeAplicavel(clienteId, telefone, texto) {
   } catch (e) { /* silencioso */ }
 }
 
-module.exports = { criarDisparo, processarDisparoFila, controlarDisparo, listarDisparos, registrarOptOutSeAplicavel };
+// Quando um lead que RECEBEU um disparo responde, move-o para a coluna configurada
+// (resp_coluna_id). One-shot: marca respondeu_em para não repetir. Chamado do webhook inbound.
+async function processarRespostaDisparo(clienteId, leadId) {
+  try {
+    if (!clienteId || !leadId) return;
+    const r = await query(
+      `SELECT d.resp_coluna_id
+         FROM movatak_disparo_fila f
+         JOIN movatak_disparos d ON d.id = f.disparo_id
+        WHERE f.cliente_id = $1 AND f.lead_id = $2
+          AND f.status = 'enviado' AND f.respondeu_em IS NULL
+          AND d.resp_coluna_id IS NOT NULL
+        ORDER BY f.enviado_em DESC NULLS LAST, f.id DESC LIMIT 1`,
+      [clienteId, leadId]);
+    if (!r.rows.length) return;
+    const destino = r.rows[0].resp_coluna_id;
+    await query(
+      `UPDATE movatak_disparo_fila SET respondeu_em = NOW()
+        WHERE cliente_id = $1 AND lead_id = $2 AND status = 'enviado' AND respondeu_em IS NULL`,
+      [clienteId, leadId]).catch(() => null);
+    await moverLeadParaColunaFunil(leadId, destino, false).catch(() => null);
+  } catch (e) { /* silencioso */ }
+}
+
+module.exports = { criarDisparo, processarDisparoFila, controlarDisparo, listarDisparos, registrarOptOutSeAplicavel, processarRespostaDisparo };

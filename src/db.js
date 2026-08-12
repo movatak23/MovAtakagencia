@@ -632,6 +632,24 @@ async function garantirEstruturaDisparos() {
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_optout ON movatak_optout(cliente_id, telefone)`).catch(() => null);
+
+  // Aditivos (tabelas já podem existir de deploy anterior):
+  // resp_coluna_id = coluna do kanban p/ onde o lead vai quando RESPONDER o disparo.
+  await query(`ALTER TABLE movatak_disparos ADD COLUMN IF NOT EXISTS resp_coluna_id INTEGER`).catch(() => null);
+  await query(`ALTER TABLE movatak_disparo_fila ADD COLUMN IF NOT EXISTS respondeu_em TIMESTAMPTZ`).catch(() => null);
+
+  // Modelos de mensagem de disparo (salvos e reutilizáveis na tela de disparo).
+  await query(`CREATE TABLE IF NOT EXISTS movatak_disparo_templates (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    nome TEXT,
+    tipo TEXT DEFAULT 'texto',
+    texto TEXT,
+    midia_url TEXT,
+    midia_nome TEXT,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_disparo_templates_cliente ON movatak_disparo_templates(cliente_id)`).catch(() => null);
 }
 
 // [perf] Executa uma migracao idempotente no maximo UMA vez por processo. As

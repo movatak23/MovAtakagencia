@@ -39,7 +39,7 @@ function telefoneEhPlaceholderLid(tel) {
 const { emitirStatusMensagem, emitirLeadFlags } = require('./realtime');
 const { zapiEtiquetar, zapiEnviar, MOVATAK_ADMIN_WA } = require('./zapi');
 const { textoDisparaCobranca, agendarCobranca, cancelarCobrancaLead } = require('./cobranca');
-const { registrarOptOutSeAplicavel } = require('./disparo');
+const { registrarOptOutSeAplicavel, processarRespostaDisparo } = require('./disparo');
 
 // Deps ainda no index.js (compartilhadas com rotas), injetadas no boot via init().
 let textoBateGatilho, comandosDoVendedor, contemComando, localizarCampanhaPorGatilho,
@@ -896,6 +896,8 @@ async function handleZapi(req, res) {
     // Opt-out do disparo em massa: se o lead responder "sair/parar/cancelar", suprime
     // e cancela os disparos pendentes dele. Não bloqueia o fluxo normal de atendimento.
     if (texto) registrarOptOutSeAplicavel(cliente.id, telefone, texto).catch(() => null);
+    // Lead que recebeu um disparo respondeu → move p/ a coluna configurada (resp_coluna_id).
+    if (lead) processarRespostaDisparo(cliente.id, lead.id).catch(() => null);
 
     // RESPOSTA interrompe a RÉGUA DE COBRANÇA: se o lead tinha lembretes de pagamento
     // pendentes e respondeu, cancela a régua e acende prioridade no atendimento (lead

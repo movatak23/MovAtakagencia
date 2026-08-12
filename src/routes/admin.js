@@ -2720,6 +2720,34 @@ app.post('/movatak/admin/clientes/:id/disparos/:did/:acao', ...forcaClienteIdNaU
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
+// Modelos de mensagem de disparo (salvar / listar / excluir).
+app.get('/movatak/admin/clientes/:id/disparo-templates', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaDisparos();
+    const r = await query('SELECT id, nome, tipo, texto, midia_url, midia_nome FROM movatak_disparo_templates WHERE cliente_id=$1 ORDER BY criado_em DESC LIMIT 50', [req.params.id]);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post('/movatak/admin/clientes/:id/disparo-templates', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaDisparos();
+    const { nome, tipo, texto, midia_url, midia_nome } = req.body || {};
+    const t = ['texto', 'imagem', 'video', 'audio', 'documento'].includes(tipo) ? tipo : 'texto';
+    if ((!texto || !String(texto).trim()) && !midia_url) return res.status(400).json({ error: 'Escreva a mensagem ou anexe uma mídia antes de salvar o modelo.' });
+    const r = await query(
+      'INSERT INTO movatak_disparo_templates (cliente_id, nome, tipo, texto, midia_url, midia_nome) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
+      [req.params.id, (nome || 'Modelo').toString().slice(0, 80), t, texto || '', midia_url || null, midia_nome || null]);
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.delete('/movatak/admin/clientes/:id/disparo-templates/:tid', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaDisparos();
+    await query('DELETE FROM movatak_disparo_templates WHERE id=$1 AND cliente_id=$2', [parseInt(req.params.tid, 10), req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/movatak/admin/clientes/:id/questionario-templates', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaQuestionario();
