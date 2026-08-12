@@ -2580,7 +2580,8 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
               questionario_comando_parar, questionario_comando_ativar,
               questionario_msg_parar,
               acao_arquivar_ao_final, acao_marcar_nao_lido, enviar_msg_final,
-              quest_lembrete_msg, quest_lembrete_minutos, questionario_coluna_destino_id
+              quest_lembrete_msg, quest_lembrete_minutos, questionario_coluna_destino_id,
+              ligacao_perdida_ativo, ligacao_perdida_msg, ligacao_coluna_destino_id, ligacao_antispam_horas
          FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -2605,6 +2606,10 @@ app.get('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, asyn
       quest_lembrete_msg: r.rows[0].quest_lembrete_msg || '',
       quest_lembrete_minutos: r.rows[0].quest_lembrete_minutos || null,
       questionario_coluna_destino_id: r.rows[0].questionario_coluna_destino_id || null,
+      ligacao_perdida_ativo: !!r.rows[0].ligacao_perdida_ativo,
+      ligacao_perdida_msg: r.rows[0].ligacao_perdida_msg || '',
+      ligacao_coluna_destino_id: r.rows[0].ligacao_coluna_destino_id || null,
+      ligacao_antispam_horas: r.rows[0].ligacao_antispam_horas || 12,
       colunas: colr.rows
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2657,6 +2662,25 @@ app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, as
       const raw = req.body.questionario_coluna_destino_id;
       const colDestino = (raw === '' || raw === null || raw === undefined) ? null : (parseInt(raw, 10) || null);
       await query('UPDATE movatak_clientes SET questionario_coluna_destino_id = $1 WHERE id = $2', [colDestino, req.params.id]);
+    }
+    // Ligação perdida → auto-resposta + lead (config vive no menu Auto Atendimento).
+    // Campos independentes, atualizados à parte pra ligar/desligar e limpar cada um.
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'ligacao_perdida_ativo')) {
+      await query('UPDATE movatak_clientes SET ligacao_perdida_ativo = $1 WHERE id = $2', [!!req.body.ligacao_perdida_ativo, req.params.id]);
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'ligacao_perdida_msg')) {
+      const m = req.body.ligacao_perdida_msg;
+      await query('UPDATE movatak_clientes SET ligacao_perdida_msg = $1 WHERE id = $2', [(typeof m === 'string' ? m : ''), req.params.id]);
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'ligacao_coluna_destino_id')) {
+      const raw = req.body.ligacao_coluna_destino_id;
+      const col = (raw === '' || raw === null || raw === undefined) ? null : (parseInt(raw, 10) || null);
+      await query('UPDATE movatak_clientes SET ligacao_coluna_destino_id = $1 WHERE id = $2', [col, req.params.id]);
+    }
+    if (req.body && Object.prototype.hasOwnProperty.call(req.body, 'ligacao_antispam_horas')) {
+      const n = parseInt(req.body.ligacao_antispam_horas, 10);
+      const horas = Number.isFinite(n) ? Math.max(0, Math.min(168, n)) : 12;
+      await query('UPDATE movatak_clientes SET ligacao_antispam_horas = $1 WHERE id = $2', [horas, req.params.id]);
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

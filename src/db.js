@@ -244,6 +244,27 @@ async function garantirEstruturaQuestionario() {
   // questionário quando o lead manda várias mensagens rápidas. TTL na própria coluna.
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS quest_lock_ate TIMESTAMPTZ`).catch(() => null);
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_movatak_cobertura_unq ON movatak_cobertura_cep(cliente_id, cep)`).catch(() => null);
+
+  // Ligação perdida → auto-resposta + lead. Config no menu Auto Atendimento (coluna
+  // Configurações). Campos no cliente + tabela de ligações (dedup por callId + anti-spam).
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS ligacao_perdida_ativo BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS ligacao_perdida_msg TEXT,
+    ADD COLUMN IF NOT EXISTS ligacao_coluna_destino_id INTEGER,
+    ADD COLUMN IF NOT EXISTS ligacao_antispam_horas INTEGER DEFAULT 12`).catch(() => null);
+  await query(`CREATE TABLE IF NOT EXISTS movatak_ligacoes (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER,
+    lead_id INTEGER,
+    call_id TEXT,
+    telefone TEXT,
+    is_video BOOLEAN DEFAULT false,
+    notification TEXT,
+    mensagem_enviada BOOLEAN DEFAULT false,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_ligacoes_call_id ON movatak_ligacoes(call_id) WHERE call_id IS NOT NULL`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_ligacoes_lead ON movatak_ligacoes(cliente_id, lead_id, criado_em)`).catch(() => null);
 }
 
 async function garantirEstruturaPlanos() {

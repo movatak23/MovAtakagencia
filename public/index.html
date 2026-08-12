@@ -5727,6 +5727,20 @@ async function carregarQuestNoEditor() {
         .concat(colsDest.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`)).join('');
       selColDest.value = cfgCli.questionario_coluna_destino_id != null ? String(cfgCli.questionario_coluna_destino_id) : '';
     }
+    // Ligação perdida (config do cliente, editada nesta mesma tela)
+    const ligAtivo = document.getElementById('lig-perdida-ativo');
+    if (ligAtivo) ligAtivo.checked = !!cfgCli.ligacao_perdida_ativo;
+    const ligMsg = document.getElementById('lig-perdida-msg');
+    if (ligMsg) ligMsg.value = cfgCli.ligacao_perdida_msg || '';
+    const ligHoras = document.getElementById('lig-antispam-horas');
+    if (ligHoras) ligHoras.value = (cfgCli.ligacao_antispam_horas != null ? cfgCli.ligacao_antispam_horas : 12);
+    const ligColDest = document.getElementById('lig-coluna-destino');
+    if (ligColDest) {
+      const colsLig = Array.isArray(cfgCli.colunas) ? cfgCli.colunas : [];
+      ligColDest.innerHTML = ['<option value="">Padrão (1ª coluna do funil)</option>']
+        .concat(colsLig.map(c => `<option value="${c.id}">${escapeHtml(c.nome)}</option>`)).join('');
+      ligColDest.value = cfgCli.ligacao_coluna_destino_id != null ? String(cfgCli.ligacao_coluna_destino_id) : '';
+    }
     document.getElementById('quest-enviar-final').checked = (cfgCli.enviar_msg_final !== false);
     document.getElementById('quest-intro').value = r.intro || '';
     document.getElementById('quest-final').value = r.final || '';
@@ -6103,7 +6117,11 @@ async function salvarQuestionario() {
           msg_parar: document.getElementById('quest-msg-parar').value.trim(),
           quest_lembrete_msg: lembreteMsg,
           quest_lembrete_minutos: lembreteMinutos,
-          questionario_coluna_destino_id: document.getElementById('quest-coluna-destino').value || ''
+          questionario_coluna_destino_id: document.getElementById('quest-coluna-destino').value || '',
+          ligacao_perdida_ativo: document.getElementById('lig-perdida-ativo').checked,
+          ligacao_perdida_msg: document.getElementById('lig-perdida-msg').value,
+          ligacao_coluna_destino_id: document.getElementById('lig-coluna-destino').value || '',
+          ligacao_antispam_horas: parseInt(document.getElementById('lig-antispam-horas').value, 10) || 12
         })
       });
       await carregarListaTemplatesQuest(questState.clienteId);
@@ -6126,7 +6144,11 @@ async function salvarQuestionario() {
           enviar_msg_final: document.getElementById('quest-enviar-final').checked,
           quest_lembrete_msg: lembreteMsg,
           quest_lembrete_minutos: lembreteMinutos,
-          questionario_coluna_destino_id: document.getElementById('quest-coluna-destino').value || ''
+          questionario_coluna_destino_id: document.getElementById('quest-coluna-destino').value || '',
+          ligacao_perdida_ativo: document.getElementById('lig-perdida-ativo').checked,
+          ligacao_perdida_msg: document.getElementById('lig-perdida-msg').value,
+          ligacao_coluna_destino_id: document.getElementById('lig-coluna-destino').value || '',
+          ligacao_antispam_horas: parseInt(document.getElementById('lig-antispam-horas').value, 10) || 12
         })
       });
     }
@@ -10534,6 +10556,27 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
       <select id="quest-coluna-destino" style="width:100%;max-width:420px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
         <option value="">Padrão (Em negociação)</option>
       </select>
+    </div>
+
+    <label class="fu-label" style="margin-top:20px;border-top:1px solid var(--border);padding-top:16px">📞 Ligação perdida <span class="fu-tag">auto-resposta + lead</span></label>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-bottom:10px">Quando alguém liga no WhatsApp da empresa e a chamada não é atendida, o bot responde na hora e registra o contato como lead no funil. Requer a instância com eventos de ligação ativos (<code>withCalls</code>).</div>
+    <label class="perm-item"><input type="checkbox" id="lig-perdida-ativo"> Ativar auto-resposta de ligação perdida</label>
+
+    <label class="fu-label" style="margin-top:14px">Mensagem enviada ao cliente que ligou</label>
+    <textarea class="fu-textarea" id="lig-perdida-msg" rows="3" placeholder="Oi {nome}! 👋 Vi que você tentou ligar e não consegui atender agora. Como posso te ajudar por aqui? 😊"></textarea>
+    <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:4px">Aceita {nome}. Se ficar em branco, o texto do exemplo acima é usado.</div>
+
+    <div style="margin-top:14px">
+      <label class="fu-label" for="lig-coluna-destino" style="display:block;margin-bottom:6px">Mover o lead para a coluna do kanban</label>
+      <select id="lig-coluna-destino" style="width:100%;max-width:420px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+        <option value="">Padrão (1ª coluna do funil)</option>
+      </select>
+    </div>
+
+    <div style="margin-top:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label class="fu-label" for="lig-antispam-horas" style="margin:0">Não repetir a mensagem por</label>
+      <input type="number" id="lig-antispam-horas" min="0" max="168" value="12" style="width:80px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+      <span style="font-size:13px;color:var(--text2)">horas (quem liga várias vezes recebe só uma vez)</span>
     </div>
 
     </div>

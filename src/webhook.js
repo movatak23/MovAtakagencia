@@ -37,7 +37,7 @@ function telefoneEhPlaceholderLid(tel) {
   return d.length >= 13 && !d.startsWith('55');
 }
 const { emitirStatusMensagem, emitirLeadFlags } = require('./realtime');
-const { zapiEtiquetar, MOVATAK_ADMIN_WA } = require('./zapi');
+const { zapiEtiquetar, zapiEnviar, MOVATAK_ADMIN_WA } = require('./zapi');
 const { textoDisparaCobranca, agendarCobranca, cancelarCobrancaLead } = require('./cobranca');
 
 // Deps ainda no index.js (compartilhadas com rotas), injetadas no boot via init().
@@ -314,6 +314,93 @@ async function handleZapiStatus(req, res) {
   } catch(e) { res.status(500).json({ error: e.message }); }
 }
 
+// Ligação perdida → auto-resposta + lead. A Z-API entrega o evento no mesmo webhook
+// /webhook/zapi (ReceivedCallback com `notification`: CALL_RECEIVED, CALL_MISSED_VOICE,
+// CALL_MISSED_VIDEO). Só reagimos à PERDIDA. Requer a instância criada com withCalls=true.
+// Consentimento forte: é resposta a quem LIGOU pra empresa (contato iniciado pelo cliente).
+async function processarLigacao(body) {
+  try {
+    const notif = String(body.notification || '');
+    if (!/^CALL_MISSED/i.test(notif)) return; // só ligação perdida (voz ou vídeo)
+
+    const instanceId = body.instanceId || body.instance || '';
+    if (!instanceId) return;
+    const rc = await query('SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
+    const cliente = rc.rows[0];
+    if (!cliente) return;
+    if (!cliente.ligacao_perdida_ativo) return; // recurso desligado (padrão)
+
+    const telefone = extrairDigitosTelefone(body);
+    if (!telefone) return; // sem número real → ignora
+    const connected = String(body.connectedPhone || '').replace(/\D/g, '');
+    if (connected && telefonesEquivalentes(telefone, connected)) return; // é a própria empresa
+
+    // Dedup exato por callId (a Z-API pode reenviar o mesmo evento).
+    const callId = body.callId || null;
+    if (callId) {
+      const dup = await query('SELECT id FROM movatak_ligacoes WHERE call_id = $1', [callId]);
+      if (dup.rows.length) return;
+    }
+
+    // Acha ou cria o lead.
+    let lead = await localizarLeadPorPayload(cliente.id, telefone, null, false);
+    if (!lead) {
+      const ins = await query(
+        `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, nao_lida, atualizado_em)
+         VALUES ($1, $2, $3, 'followup', true, NOW()) RETURNING id, nome`,
+        [cliente.id, telefone, body.senderName || body.chatName || null]
+      );
+      lead = { id: ins.rows[0].id, nome: ins.rows[0].nome, telefone };
+      await registrarEventoLead(lead.id, cliente.id, 'lead_criado', 'Lead criado por ligação perdida', { telefone, callId, origem: 'ligacao_perdida' }).catch(() => null);
+    }
+
+    // Move para a coluna de destino, se configurada.
+    if (cliente.ligacao_coluna_destino_id) {
+      await moverLeadParaColunaFunil(lead.id, cliente.ligacao_coluna_destino_id, false).catch(() => null);
+    }
+
+    // Anti-spam: não reenvia auto-resposta ao mesmo lead dentro da janela configurada
+    // (quem liga várias vezes não leva várias mensagens). Registra a ligação de todo jeito.
+    const horas = Number.isInteger(cliente.ligacao_antispam_horas) ? cliente.ligacao_antispam_horas : 12;
+    const jaEnviou = await query(
+      `SELECT 1 FROM movatak_ligacoes
+        WHERE cliente_id = $1 AND lead_id = $2 AND mensagem_enviada = true
+          AND criado_em >= NOW() - make_interval(hours => $3)
+        LIMIT 1`,
+      [cliente.id, lead.id, horas]
+    );
+    let enviou = false;
+    if (!jaEnviou.rows.length) {
+      const nome = String(lead.nome || body.senderName || '').split(' ')[0] || '';
+      const padrao = 'Oi' + (nome ? ' ' + nome : '') + '! 👋 Vi que você tentou ligar e não consegui atender agora. Como posso te ajudar por aqui? 😊';
+      const msg = (cliente.ligacao_perdida_msg && cliente.ligacao_perdida_msg.trim())
+        ? cliente.ligacao_perdida_msg.replace(/\{nome\}/g, nome)
+        : padrao;
+      try {
+        await zapiEnviar(cliente.zapi_instance, cliente.zapi_token, cliente.zapi_client_token, telefone, msg);
+        await registrarConversa(lead.id, cliente.id, 'saida', msg, null, null, null, null, 'ligacao').catch(() => null);
+        enviou = true;
+      } catch (e) {
+        console.error('[ligacao] falha ao enviar auto-resposta:', e.message);
+      }
+    }
+
+    // Registra a ligação (base do dedup + anti-spam + histórico).
+    await query(
+      `INSERT INTO movatak_ligacoes (cliente_id, lead_id, call_id, telefone, is_video, notification, mensagem_enviada)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [cliente.id, lead.id, callId, telefone, !!body.isVideo, notif, enviou]
+    ).catch(() => null);
+
+    await registrarEventoLead(lead.id, cliente.id, 'ligacao_perdida',
+      'Ligação perdida' + (body.isVideo ? ' (vídeo)' : '') + (enviou ? ' — auto-resposta enviada' : ' — sem auto-resposta (anti-spam)'),
+      { callId, isVideo: !!body.isVideo }).catch(() => null);
+    emitirLeadFlags(cliente.id, lead.id, { nao_lida: true });
+  } catch (e) {
+    console.error('[ligacao] erro ao processar:', e.message);
+  }
+}
+
 async function handleZapi(req, res) {
   res.json({ ok: true }); // responde imediato
 
@@ -446,6 +533,13 @@ async function handleZapi(req, res) {
     // Notificações de status (leitura, entrega, etc.) — não são mensagens reais
     if (body.type && ['ack', 'status', 'delivery', 'read', 'presence'].includes(String(body.type).toLowerCase())) {
       logDebug('[zapi][ignorado] evento de status: ' + body.type);
+      return;
+    }
+
+    // Notificação de LIGAÇÃO (mesmo webhook, ReceivedCallback com campo `notification`).
+    // Ex.: CALL_MISSED_VOICE → auto-resposta + lead. Tratada à parte do fluxo de mensagem.
+    if (body.notification && /^CALL_/i.test(String(body.notification))) {
+      await processarLigacao(body);
       return;
     }
 
