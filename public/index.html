@@ -10596,7 +10596,7 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
   </div>
 </div>
 <div class="modal-overlay" id="modal-disparo">
-  <div class="modal modal-fu">
+  <div class="modal modal-fu" style="max-width:760px;width:96%">
     <button class="modal-x" onclick="fecharDisparo()" title="Fechar">✕</button>
     <h3>📢 Disparo em massa</h3>
     <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Envia uma mensagem para todos os leads de uma coluna do kanban, com intervalo seguro entre cada envio. Use <strong>{nome}</strong> na mensagem.</p>
@@ -10622,47 +10622,41 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
       </div>
       <div id="disp-templates" style="margin-top:8px"></div>
 
-      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px">
-        <div style="flex:1;min-width:150px">
-          <label class="fu-label" style="margin-top:0">Intervalo entre mensagens</label>
-          <div style="display:flex;align-items:center;gap:6px">
-            <input type="number" id="disp-intervalo" min="8" value="12" style="width:80px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
-            <span style="font-size:13px;color:var(--text2)">seg (mín. 8)</span>
-          </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:16px">
+        <div>
+          <label class="fu-label" style="margin-top:0">Intervalo <span style="color:var(--text3);font-weight:400">(seg, mín. 8)</span></label>
+          <input type="number" id="disp-intervalo" min="8" value="12" style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
         </div>
-        <div style="flex:1;min-width:150px">
+        <div>
           <label class="fu-label" style="margin-top:0">Teto por dia</label>
-          <input type="number" id="disp-teto" min="1" max="300" value="250" style="width:90px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+          <input type="number" id="disp-teto" min="1" max="300" value="250" style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
         </div>
-      </div>
-
-      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;align-items:flex-end">
-        <div style="flex:1;min-width:200px">
-          <label class="fu-label" style="margin-top:0">Janela de envio <span style="color:var(--text3);font-weight:400">(paradas programadas)</span></label>
+        <div>
+          <label class="fu-label" style="margin-top:0">Enviar das … às (h)</label>
           <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:13px;color:var(--text2)">das</span>
-            <input type="number" id="disp-jini" min="0" max="23" value="8" style="width:62px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
-            <span style="font-size:13px;color:var(--text2)">h às</span>
-            <input type="number" id="disp-jfim" min="1" max="24" value="20" style="width:62px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
-            <span style="font-size:13px;color:var(--text2)">h</span>
+            <input type="number" id="disp-jini" min="0" max="23" value="8" style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+            <span style="font-size:13px;color:var(--text2)">às</span>
+            <input type="number" id="disp-jfim" min="1" max="24" value="20" style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
           </div>
         </div>
-        <div style="flex:1;min-width:160px">
+        <div>
           <label class="fu-label" style="margin-top:0">Dias</label>
-          <select id="disp-dias" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none">
+          <select id="disp-dias" style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
             <option value="1,2,3,4,5,6">Seg a Sáb</option>
             <option value="1,2,3,4,5">Seg a Sex</option>
             <option value="0,1,2,3,4,5,6">Todos os dias</option>
           </select>
         </div>
+        <div>
+          <label class="fu-label" style="margin-top:0">Agendar <span style="color:var(--text3);font-weight:400">(vazio = agora)</span></label>
+          <input type="datetime-local" id="disp-agendar" style="width:100%;box-sizing:border-box;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+        </div>
       </div>
 
-      <div style="margin-top:14px">
-        <label class="fu-label" style="margin-top:0">Agendar início <span style="color:var(--text3);font-weight:400">(opcional — vazio = agora)</span></label>
-        <input type="datetime-local" id="disp-agendar" style="padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:14px">🛡️ Envia só para leads da coluna (com telefone). Quem responde <strong>"sair/parar"</strong> é removido automaticamente. Intervalo mínimo e teto diário ajudam a proteger seu número.</div>
+      <div style="font-size:12px;color:var(--amber);background:rgba(245,158,11,.08);border:1px solid var(--amber);border-radius:8px;padding:10px 12px;margin-top:10px;line-height:1.5">
+        ⚠️ <strong>Aviso importante:</strong> disparos em massa no WhatsApp podem levar ao <strong>bloqueio ou banimento do número</strong>, mesmo respeitando os limites. O uso deste recurso é de <strong>total responsabilidade do usuário</strong> — envie apenas para contatos que autorizaram receber suas mensagens. A plataforma <strong>não se responsabiliza</strong> por bloqueios, banimentos ou quaisquer consequências decorrentes do uso do disparo em massa.
       </div>
-
-      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:12px;border-top:1px solid var(--border);padding-top:10px">🛡️ Envia só para leads da coluna (com telefone). Quem responde <strong>"sair/parar"</strong> é removido automaticamente. Intervalo mínimo e teto diário protegem seu número contra bloqueio.</div>
 
       <div class="login-err" id="disp-err" style="margin-top:10px"></div>
       <div style="margin-top:12px;display:flex;justify-content:flex-end">
