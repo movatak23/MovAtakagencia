@@ -128,6 +128,7 @@ header{
   align-items: center;
   gap: 8px;
   background: transparent;
+  color: var(--text2);
   border: 1px solid var(--border2);
   border-radius: 8px;
   padding: 6px 12px;
@@ -400,6 +401,7 @@ tr.cliente-row.selecionado td:first-child{border-left:2px solid var(--accent)}
       <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-template"></use></svg> Template</button>
       <button class="btn-sair" id="btn-msgs-rapidas" style="display:none" onclick="abrirGerenciarMsgsRapidas()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-msgs"></use></svg> Msgs rápidas</button>
       <button class="btn-sair" id="btn-agenda" style="display:none" onclick="abrirAgendaFunil()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-agenda"></use></svg> Agenda</button>
+      <button class="btn-sair" id="btn-disparo-funil" style="display:none" onclick="abrirDisparo(funilState.clienteId)"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-zap"></use></svg> Disparo</button>
       <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--amber);color:#1a1a2e;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-sla"></use></svg> SLA</button>
       <button class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
@@ -819,6 +821,7 @@ async function iniciarAppVendedor() {
         <button class="btn-sair" id="btn-template-funil" style="display:none" onclick="abrirTemplateFunil()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-template"></use></svg> Template</button>
         <button class="btn-sair" id="btn-msgs-rapidas" onclick="abrirGerenciarMsgsRapidas()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-msgs"></use></svg> Msgs rápidas</button>
         <button class="btn-sair" id="btn-agenda" onclick="abrirAgendaFunil()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-agenda"></use></svg> Agenda</button>
+        <button class="btn-sair" id="btn-disparo-funil" onclick="abrirDisparo(funilState.clienteId)"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-zap"></use></svg> Disparo</button>
         <button class="btn-prioridades btn-sair" style="display:none;align-items:center;gap:6px" onclick="abrirPainelPrioridades()">🔥 Prioridades<span class="badge-prioridades" style="display:none;background:var(--amber);color:#1a1a2e;border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">0</span></button>
       <button class="btn-sla btn-sair" style="display:none" onclick="abrirDashboardSLA()"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-sla"></use></svg> SLA</button>
         <button id="btn-lembrete-agenda" class="btn-lembrete-sino" onclick="abrirLembreteAtivo()" style="display:none;align-items:center;gap:6px;background:var(--amber);border:none;border-radius:8px;padding:6px 12px;color:#1a1a2e;font-size:12px;font-weight:700;cursor:pointer;animation:pulseLembrete 1.5s ease-in-out infinite"><span style="font-size:14px">🔔</span><span class="lembrete-sino-texto">Retornar contato</span></button>
@@ -8095,6 +8098,8 @@ async function iniciarPaginaFunilAtendimento() {
   if (btnMsgs) btnMsgs.style.display = '';
   const btnAgenda = document.getElementById('btn-agenda');
   if (btnAgenda) btnAgenda.style.display = '';
+  const btnDisparo = document.getElementById('btn-disparo-funil');
+  if (btnDisparo) btnDisparo.style.display = '';
   const btnTemplate = document.getElementById('btn-template-funil');
   if (btnTemplate) btnTemplate.style.display = '';
   document.querySelectorAll('.btn-sla').forEach(b => { b.style.display = 'inline-flex'; });
@@ -10665,9 +10670,12 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
 
 <script>
 function fecharDisparo(){ document.getElementById('modal-disparo').classList.remove('open'); }
-async function abrirDisparo(){
-  const cid = (typeof questState!=='undefined' && questState.clienteId) ? questState.clienteId : window._dispClienteId;
-  if(!cid){ alert('Abra o Auto Atendimento de um cliente primeiro.'); return; }
+async function abrirDisparo(cid){
+  cid = cid
+    || (typeof funilState !== 'undefined' && funilState.clienteId)
+    || (typeof questState !== 'undefined' && questState.clienteId)
+    || window._dispClienteId;
+  if(!cid){ alert('Abra o Funil de Atendimento de um cliente primeiro.'); return; }
   window._dispClienteId = cid; window._dispMidia = null;
   document.getElementById('disp-err').textContent='';
   document.getElementById('disp-texto').value='';
