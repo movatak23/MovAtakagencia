@@ -2094,7 +2094,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (
             WHERE c.cliente_id = $1
               AND c.excluida_em IS NULL
         )
-        SELECT c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em,
+        SELECT c.id, c.cliente_id, c.nome, c.apelido, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em,
               t.nome AS template_nome,
               qt.nome AS questionario_template_nome,
               c.qtd_mesmo_gatilho::int AS campanhas_mesmo_gatilho,
@@ -2113,7 +2113,7 @@ app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (
                     THEN LOWER(TRIM(COALESCE(l.gatilho_detectado,''))) = LOWER(TRIM(COALESCE(c.gatilho,'')))
                     ELSE l.campanha_id = c.id
                END)
-        GROUP BY c.id, c.cliente_id, c.nome, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome, qt.nome
+        GROUP BY c.id, c.cliente_id, c.nome, c.apelido, c.gatilho, c.verba_diaria, c.investimento_tipo, c.investimento_valor, c.template_id, c.ativo, c.questionario_ativo, c.questionario_template_id, c.criado_em, c.atualizado_em, c.qtd_mesmo_gatilho, t.nome, qt.nome
         ORDER BY c.ativo DESC, c.criado_em DESC`,
       [req.params.id]
     );
@@ -2129,8 +2129,9 @@ app.get('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (
 app.post('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id } = req.body || {};
+    const { nome, apelido, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id } = req.body || {};
     if (!nome) return res.status(400).json({ error: 'Nome da campanha é obrigatório.' });
+    const apelidoFinal = apelido ? String(apelido).trim().slice(0, 60) || null : null;
     const gatilhoFinal = gatilho ? String(gatilho).trim() : null;
     if (!gatilhoFinal) return res.status(400).json({ error: 'Frase-gatilho da campanha é obrigatória para atribuição confiável.' });
     const investimentoTipo = ['diario','total'].includes(String(investimento_tipo || '').toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario';
@@ -2140,9 +2141,9 @@ app.post('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async 
     const templateDbId = await resolverTemplateCampanha(req.params.id, template_id);
     const questTplId = (questionario_template_id !== undefined && questionario_template_id !== null && String(questionario_template_id) !== '') ? parseInt(questionario_template_id, 10) : null;
     const r = await query(
-      `INSERT INTO movatak_campanhas (cliente_id, nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id, ativo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true) RETURNING *`,
-      [req.params.id, String(nome).trim(), gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId, typeof questionario_ativo === 'boolean' ? questionario_ativo : true, questTplId]
+      `INSERT INTO movatak_campanhas (cliente_id, nome, apelido, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, questionario_ativo, questionario_template_id, ativo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true) RETURNING *`,
+      [req.params.id, String(nome).trim(), apelidoFinal, gatilhoFinal, investimentoValor, investimentoTipo, investimentoValor, templateDbId, typeof questionario_ativo === 'boolean' ? questionario_ativo : true, questTplId]
     );
     res.json(r.rows[0]);
   } catch (e) {
@@ -2155,7 +2156,9 @@ app.post('/movatak/admin/clientes/:id/campanhas', ...forcaClienteIdNaUrl, async 
 app.patch('/movatak/admin/campanhas/:id', ...exigeCampanha, async (req, res) => {
   try {
     await garantirEstruturaCampanhasTemplates();
-    const { nome, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo, questionario_template_id } = req.body || {};
+    const { nome, apelido, gatilho, verba_diaria, investimento_tipo, investimento_valor, template_id, ativo, questionario_ativo, questionario_template_id } = req.body || {};
+    // apelido: undefined = preserva; string vazia = limpa (volta a usar o nome); valor = define.
+    const apelidoParam = apelido === undefined ? null : String(apelido).trim().slice(0, 60);
     const investimentoValor = investimento_valor !== undefined ? parseMoedaParaNumero(investimento_valor) : (verba_diaria !== undefined ? parseMoedaParaNumero(verba_diaria) : null);
     const investimentoTipo = investimento_tipo === undefined ? null : (['diario','total'].includes(String(investimento_tipo).toLowerCase()) ? String(investimento_tipo).toLowerCase() : 'diario');
     // template_id: quando enviado (mesmo null), sobrescreve — permite DESVINCULAR o follow-up
@@ -2175,12 +2178,18 @@ app.patch('/movatak/admin/campanhas/:id', ...exigeCampanha, async (req, res) => 
               ativo = COALESCE($6, ativo),
               questionario_ativo = COALESCE($8, questionario_ativo),
               questionario_template_id = CASE WHEN $9::boolean THEN $10::int ELSE questionario_template_id END,
+              apelido = CASE WHEN $12::text IS NULL THEN apelido ELSE NULLIF($12, '') END,
               atualizado_em = NOW()
         WHERE id = $7 RETURNING *`,
-      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null, questTplProvided, questTplId, templateProvided]
+      [nome ? String(nome).trim() : null, gatilho === undefined ? null : String(gatilho || '').trim(), investimentoValor, investimentoTipo, templateDbId, typeof ativo === 'boolean' ? ativo : null, req.params.id, typeof questionario_ativo === 'boolean' ? questionario_ativo : null, questTplProvided, questTplId, templateProvided, apelidoParam]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'Campanha não encontrada.' });
-    res.json(r.rows[0]);
+    // Propaga a etiqueta (apelido, ou o nome se sem apelido) para os leads já
+    // atribuídos a esta campanha, para a mudança refletir nos cards existentes.
+    const camp = r.rows[0];
+    const rotulo = camp.apelido || camp.nome || null;
+    await query('UPDATE movatak_leads SET anuncio_apelido = $1 WHERE campanha_id = $2', [rotulo, camp.id]).catch(() => null);
+    res.json(camp);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

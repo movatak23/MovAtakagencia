@@ -212,6 +212,10 @@ body.modo-portal-cliente #btn-credenciais-header{display:none !important}
 .badge{display:inline-flex;align-items:center;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600}
 .badge-green{background:rgba(0,208,132,.12);color:var(--green)}
 .badge-gray{background:var(--bg4);color:var(--text2)}
+.lead-anuncio-badge{display:inline-flex;align-items:center;gap:5px;background:rgba(37,211,102,.12);color:#1fae54;border:1px solid rgba(37,211,102,.35);font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;max-width:210px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;cursor:default}
+.lead-anuncio-badge img{width:15px;height:15px;border-radius:3px;object-fit:cover;flex-shrink:0}
+.lead-anuncio-badge .la-tt{overflow:hidden;text-overflow:ellipsis}
+.funil-card .lead-anuncio-badge{margin-top:5px}
 
 table{width:100%;border-collapse:collapse}
 th{font-size:11px;color:var(--text3);font-weight:600;letter-spacing:.5px;text-transform:uppercase;padding:10px 16px;text-align:left;border-bottom:1px solid var(--border)}
@@ -2740,6 +2744,23 @@ function linhaBadgesHeaderPainel() {
   return linha;
 }
 
+// Mostra/atualiza a etiqueta do anúncio no cabeçalho da conversa (linha de badges
+// sob o telefone). Reusa o mesmo badge do card. Some quando o lead não veio de anúncio.
+function mostrarAnuncioLeadPainel(lead) {
+  const linha = linhaBadgesHeaderPainel();
+  if (!linha) return;
+  let el = linha.querySelector('.painel-anuncio-wrap');
+  const html = badgeAnuncioLead(lead);
+  if (!html) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('span');
+    el.className = 'painel-anuncio-wrap';
+    el.style.cssText = 'display:inline-flex;min-width:0';
+    linha.appendChild(el);
+  }
+  el.innerHTML = html;
+}
+
 async function abrirPainelLead(leadId, nomeAbrev) {
   window._painelLeadId = leadId;
   ativarColarGlobalPainel(); // habilita colar print (Ctrl+V) na conversa e no histórico
@@ -2774,6 +2795,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
     atualizarBadgePediuAtendente(lead);
     document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
     mostrarSetorLeadPainel(lead);
+    mostrarAnuncioLeadPainel(lead);
     renderConversaPainel(convData);
     renderHistoricoPainel(histData);
   } catch (e) {
@@ -5401,7 +5423,7 @@ async function carregarCampanhas(id) {
           </thead>
           <tbody>${rows.map(c => `
             <tr>
-              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong>${c.questionario_ativo === false ? '<div style="margin-top:4px;font-size:10px;color:var(--amber);font-family:var(--sans)">Sem autoatendimento (só follow-up)</div>' : ''}</td>
+              <td style="white-space:normal"><strong>${escapeHtml(c.nome || '')}</strong>${c.apelido ? '<div style="margin-top:4px"><span class="lead-anuncio-badge">📣<span class="la-tt">' + escapeHtml(c.apelido) + '</span></span></div>' : ''}${c.questionario_ativo === false ? '<div style="margin-top:4px;font-size:10px;color:var(--amber);font-family:var(--sans)">Sem autoatendimento (só follow-up)</div>' : ''}</td>
               <td class="td-mono" style="white-space:normal;line-height:1.35">${escapeHtml(c.gatilho || '')}${c.gatilho_compartilhado ? '<div style="margin-top:6px;color:var(--amber);font-family:var(--sans);font-size:11px">Gatilho compartilhado com ' + c.campanhas_mesmo_gatilho + ' campanhas. Métrica por gatilho, não por campanha única.</div>' : ''}</td>
               <td style="white-space:normal">${c.template_nome ? escapeHtml(c.template_nome) : (c.questionario_ativo !== false ? ('🤖 ' + escapeHtml(c.questionario_template_nome || 'Autoatendimento (padrão)')) : '—')}</td>
               <td class="td-mono">${c.investimento ? 'R$ ' + c.investimento : '—'}<br><span style="color:var(--text3)">${c.investimento_tipo === 'total' ? 'total' : 'diário'}</span></td>
@@ -5466,6 +5488,7 @@ async function excluirTemplateFollowupSelecionado() {
 async function adicionarCampanha(btn) {
   const statusEl = document.getElementById('fu-campanha-status');
   const nome = document.getElementById('fu-campanha-nome').value.trim();
+  const apelido = document.getElementById('fu-campanha-apelido').value.trim();
   const gatilho = document.getElementById('fu-campanha-gatilho').value.trim();
   const investimento_tipo = document.getElementById('fu-campanha-investimento-tipo').value;
   const investimento_valor = document.getElementById('fu-campanha-investimento').value.trim();
@@ -5486,12 +5509,12 @@ async function adicionarCampanha(btn) {
     if (editandoCampanhaId) {
       await api('/movatak/admin/campanhas/' + editandoCampanhaId, {
         method: 'PATCH',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, ...camposTemplate })
+        body: JSON.stringify({ nome, apelido, gatilho, investimento_tipo, investimento_valor, ...camposTemplate })
       });
     } else {
       await api('/movatak/admin/clientes/' + fuId + '/campanhas', {
         method: 'POST',
-        body: JSON.stringify({ nome, gatilho, investimento_tipo, investimento_valor, ...camposTemplate })
+        body: JSON.stringify({ nome, apelido, gatilho, investimento_tipo, investimento_valor, ...camposTemplate })
       });
     }
     cancelarEdicaoCampanha();
@@ -5510,6 +5533,7 @@ function editarCampanha(id) {
   const c = (fuCampanhas || []).find(x => x.id === id);
   if (!c) return;
   document.getElementById('fu-campanha-nome').value = c.nome || '';
+  document.getElementById('fu-campanha-apelido').value = c.apelido || '';
   document.getElementById('fu-campanha-gatilho').value = c.gatilho || '';
   document.getElementById('fu-campanha-investimento-tipo').value = c.investimento_tipo === 'total' ? 'total' : 'diario';
   document.getElementById('fu-campanha-investimento').value = (c.investimento_valor != null ? c.investimento_valor : (c.investimento != null ? c.investimento : ''));
@@ -5542,7 +5566,7 @@ function editarCampanha(id) {
 
 function cancelarEdicaoCampanha() {
   editandoCampanhaId = null;
-  ['fu-campanha-nome','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['fu-campanha-nome','fu-campanha-apelido','fu-campanha-gatilho','fu-campanha-investimento'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
   const t = document.getElementById('fu-campanha-template');
   if (t) {
     // Remove opções injetadas como fallback (não são do cache oficial)
@@ -9174,6 +9198,7 @@ function renderFunilCardVendedor(lead, vendedorAtualId) {
     ondragstart="funilDragStart(event,${lead.id})" ondragend="funilDragEnd(event)">
     <div class="funil-card-top"><strong>${escapeHtml(nome)}</strong></div>
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
+    ${badgeAnuncioLead(lead)}
     ${plano}${etapa}
     <div class="funil-card-actions">
       <button onclick="abrirMensagemRapidaLead(${lead.id}, '${String(lead.nome||'').replace(/'/g,'').slice(0,20)}')">Mensagem</button>
@@ -9401,6 +9426,27 @@ function initComposerResize() {
 }
 window.addEventListener('load', initComposerResize);
 
+// Etiqueta do lead: mostra o APELIDO da campanha (definido no menu Campanhas &
+// Operação) e, quando houver, a miniatura do anúncio Click-to-WhatsApp. Cai para o
+// título do anúncio se não houver apelido. Retorna '' quando o lead não tem origem.
+function badgeAnuncioLead(lead) {
+  if (!lead) return '';
+  const apelido = lead.anuncio_apelido || '';
+  const titulo = lead.anuncio_titulo || '';
+  const temEtiqueta = apelido || titulo || lead.anuncio_source_id || lead.anuncio_imagem_url;
+  if (!temEtiqueta) return '';
+  const rotulo = apelido || titulo || 'Veio de anúncio';
+  const tip = [apelido ? 'Campanha: ' + apelido : 'Veio de anúncio (Click-to-WhatsApp)',
+    titulo ? 'Anúncio: ' + titulo : '',
+    lead.anuncio_corpo ? 'Texto: ' + lead.anuncio_corpo : '',
+    lead.anuncio_source_id ? 'ID do anúncio: ' + lead.anuncio_source_id : ''
+  ].filter(Boolean).join('\n');
+  const icone = lead.anuncio_imagem_url
+    ? `<img src="${escapeHtml(lead.anuncio_imagem_url)}" alt="" onerror="this.remove()">`
+    : '📣';
+  return `<span class="lead-anuncio-badge" title="${escapeHtml(tip)}">${icone}<span class="la-tt">${escapeHtml(rotulo)}</span></span>`;
+}
+
 function renderFunilCard(lead, colunaAtualId) {
   const nome = lead.nome || 'Lead sem nome';
   const plano = lead.plano_nome ? `<div class="funil-card-line">Plano: ${escapeHtml(lead.plano_nome)}${lead.plano_valor != null ? ' — R$ ' + formatarValorPlanoBR(lead.plano_valor) : ''}</div>` : '';
@@ -9461,6 +9507,7 @@ function renderFunilCard(lead, colunaAtualId) {
       ${dotNaoLida}
     </div>
     <div class="funil-card-phone">${escapeHtml(lead.telefone || '')}</div>
+    ${badgeAnuncioLead(lead)}
     ${preview}
     ${plano}${vendedor}
     <div class="funil-card-line funil-card-updated">Atualizado: ${formatarDataCurta(lead.atualizado_em || lead.criado_em)}</div>
@@ -10915,6 +10962,9 @@ function iniciarPollDisparo(){
       <div style="font-size:12px;font-weight:700;color:var(--text2);letter-spacing:.5px;text-transform:uppercase;margin-bottom:12px">1. Campanhas e origens</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:14px;background:var(--bg2);padding:10px;border-radius:6px">Cada campanha ativa precisa ter nome, frase-gatilho, investimento e template vinculado. É isso que permite ligar o lead recebido no WhatsApp à venda finalizada.</div>
       <label class="fu-label" style="margin-top:0">Cadastrar campanha/origem</label>
+      <div style="margin-bottom:10px">
+        <input type="text" class="fu-textarea" id="fu-campanha-apelido" maxlength="60" style="min-height:auto;padding:10px 14px;resize:none;width:100%" placeholder="Apelido / etiqueta curta (ex: Óculos Julho) — é o que aparece no card do lead. Se vazio, usa o nome da campanha.">
+      </div>
       <div style="display:grid;grid-template-columns:minmax(170px,1.1fr) minmax(260px,1.8fr) minmax(110px,.6fr) minmax(120px,.7fr) minmax(180px,1fr) auto;gap:10px;align-items:center">
         <input type="text" class="fu-textarea" id="fu-campanha-nome" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Nome da campanha/origem">
         <input type="text" class="fu-textarea" id="fu-campanha-gatilho" style="min-height:auto;padding:10px 14px;resize:none" placeholder="Frase-gatilho desta campanha">

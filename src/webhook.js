@@ -464,6 +464,10 @@ async function handleZapi(req, res) {
     // texto — só o anexo era gravado.
     const texto      = extrairTextoPayloadZapi(body);
     const replyPayload = extrairReplyPayloadZapi(body);
+    // Anúncio Click-to-WhatsApp: se a mensagem veio de um anúncio Meta, a Z-API
+    // envia o objeto externalAdReply (título/frase, imagem, id do anúncio, ctwaClid).
+    // Capturamos aqui para gravar a "etiqueta do anúncio" no lead (novo ou existente).
+    const anuncio    = extrairAnuncioPayloadZapi(body);
 
 
     logDebug('[zapi][entrada]', JSON.stringify({
@@ -885,6 +889,12 @@ async function handleZapi(req, res) {
       lead.telefone = telefone;
     }
 
+    // Se o lead já existe e esta mensagem veio de um anúncio, grava os metadados do
+    // anúncio (só se ainda não tiver — primeiro toque de anúncio prevalece).
+    if (lead && anuncio) {
+      await aplicarAnuncioNoLead(lead.id, cliente.id, anuncio);
+    }
+
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
     if (lead && (texto || midiaRecebida.url)) {
@@ -996,6 +1006,9 @@ async function handleZapi(req, res) {
         campanhaDetectada = await localizarCampanhaPorIA(cliente.id, texto);
       }
     }
+    // Rótulo/etiqueta da campanha para gravar no lead (apelido curto, ou o nome se
+    // não houver apelido). É o que aparece na etiqueta do card/conversa.
+    const rotuloCampanha = campanhaDetectada ? (campanhaDetectada.apelido || campanhaDetectada.nome || null) : null;
     const msg = normalizarGatilho(texto);
     const trigger = normalizarGatilho(campanhaDetectada ? campanhaDetectada.gatilho : cliente.trigger_msg);
     const triggerOk = !!campanhaDetectada || textoBateGatilho(texto, cliente.trigger_msg);
@@ -1035,7 +1048,7 @@ async function handleZapi(req, res) {
           [body.senderName || null, lead.id]
         );
         if (campanhaDetectada) {
-          await query('UPDATE movatak_leads SET campanha_id = COALESCE(campanha_id, $1), campanha_id_ultimo_toque = $1, template_id_origem = COALESCE(template_id_origem, $2), gatilho_detectado = $3 WHERE id = $4', [campanhaDetectada.id, campanhaDetectada.template_id || null, campanhaDetectada.gatilho || null, lead.id]).catch(() => null);
+          await query('UPDATE movatak_leads SET campanha_id = COALESCE(campanha_id, $1), campanha_id_ultimo_toque = $1, template_id_origem = COALESCE(template_id_origem, $2), gatilho_detectado = $3, anuncio_apelido = COALESCE(anuncio_apelido, $5) WHERE id = $4', [campanhaDetectada.id, campanhaDetectada.template_id || null, campanhaDetectada.gatilho || null, lead.id, rotuloCampanha]).catch(() => null);
         }
         await agendarFollowupV2(lead.id, cliente.id, 1, true);
         await enviarFollowupsPendentesDoLead(lead.id, 1);
@@ -1084,10 +1097,10 @@ async function handleZapi(req, res) {
     if (triggerOk && telefone) {
       const novoLead = await query(
         `INSERT INTO movatak_leads
-           (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado)
-         VALUES ($1, $2, $3, 'followup', $4, $5, $5, $6, $7)
+           (cliente_id, telefone, nome, etapa, chat_lid, campanha_id, campanha_id_ultimo_toque, template_id_origem, gatilho_detectado, anuncio_apelido)
+         VALUES ($1, $2, $3, 'followup', $4, $5, $5, $6, $7, $8)
          RETURNING id`,
-        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null]
+        [cliente.id, telefone, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid, campanhaDetectada ? campanhaDetectada.id : null, campanhaDetectada ? (campanhaDetectada.template_id || null) : null, campanhaDetectada ? (campanhaDetectada.gatilho || null) : null, rotuloCampanha]
       );
       await registrarEventoLead(novoLead.rows[0].id, cliente.id, 'lead_criado', 'Lead criado pela rota unificada da Z-API', { telefone, chatLid, texto, campanha_id: campanhaDetectada ? campanhaDetectada.id : null });
       // Registra também a primeira mensagem do lead que criou o atendimento.
@@ -1095,6 +1108,7 @@ async function handleZapi(req, res) {
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
       const msgIdNovoLead = body.messageId || body.id || null;
       await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload).catch(() => null);
+      if (anuncio) await aplicarAnuncioNoLead(novoLead.rows[0].id, cliente.id, anuncio);
 
       // Decide se inicia o questionário:
       // - Campanha com template de questionário vinculado → usa o questionário do template.
@@ -1143,6 +1157,7 @@ async function handleZapi(req, res) {
       const msgIdNovoContato = body.messageId || body.id || null;
       await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload).catch(() => null);
       await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
+      if (anuncio) await aplicarAnuncioNoLead(novoContato.rows[0].id, cliente.id, anuncio);
       console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
     }
   } catch (e) {
@@ -1343,6 +1358,77 @@ function extrairMidiaPayloadZapi(body) {
   if (body.document && (body.document.documentUrl || body.document.url)) return { url: body.document.documentUrl || body.document.url, tipo: 'documento' };
   const fallback = body.fileUrl || body.mediaUrl || null;
   return fallback ? { url: fallback, tipo: null } : { url: null, tipo: null };
+}
+
+// Busca o objeto de anúncio Click-to-WhatsApp no payload. A Z-API o envia como
+// `externalAdReply`; outros formatos usam `adReply`/`referral`. Faz uma varredura
+// rasa (até 5 níveis) porque o objeto pode vir aninhado dependendo do tipo de evento.
+function acharExternalAdReply(obj, depth) {
+  if (!obj || typeof obj !== 'object' || depth > 5) return null;
+  if (obj.externalAdReply && typeof obj.externalAdReply === 'object') return obj.externalAdReply;
+  if (obj.adReply && typeof obj.adReply === 'object') return obj.adReply;
+  if (obj.referral && typeof obj.referral === 'object') return obj.referral;
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === 'object') {
+      const achado = acharExternalAdReply(v, depth + 1);
+      if (achado) return achado;
+    }
+  }
+  return null;
+}
+
+// Normaliza o objeto de anúncio para os campos que gravamos no lead.
+// Retorna null se não houver anúncio (mensagem normal, sem tráfego pago).
+function extrairAnuncioPayloadZapi(body) {
+  const ad = acharExternalAdReply(body, 0);
+  if (!ad || typeof ad !== 'object') return null;
+  const titulo   = ad.title || ad.headline || null;
+  const corpo    = ad.body || ad.description || null;
+  const imagem   = ad.thumbnailUrl || ad.imageUrl || ad.thumbnail || ad.mediaUrl || ad.thumbnailImage || null;
+  const sourceId = ad.sourceId || ad.source_id || ad.adId || ad.ad_id || null;
+  const sourceUrl = ad.sourceUrl || ad.source_url || ad.url || null;
+  const ctwa     = ad.ctwaClid || ad.ctwa_clid || ad.clickId || ad.click_id || null;
+  // Se não veio nada de útil, trata como mensagem normal.
+  if (!titulo && !corpo && !imagem && !sourceId && !ctwa) return null;
+  return {
+    titulo:     titulo   ? String(titulo).slice(0, 300)   : null,
+    corpo:      corpo    ? String(corpo).slice(0, 1000)   : null,
+    imagem_url: imagem   ? String(imagem)                 : null,
+    source_id:  sourceId ? String(sourceId)               : null,
+    source_url: sourceUrl ? String(sourceUrl)             : null,
+    ctwa_clid:  ctwa     ? String(ctwa)                    : null,
+  };
+}
+
+// Grava os metadados do anúncio no lead. COALESCE garante que o PRIMEIRO anúncio
+// que trouxe o lead prevaleça (não sobrescreve se o lead clicar em outro depois).
+async function aplicarAnuncioNoLead(leadId, clienteId, anuncio) {
+  if (!leadId || !anuncio) return;
+  try {
+    const r = await query(
+      `UPDATE movatak_leads SET
+         anuncio_source_id    = COALESCE(anuncio_source_id, $2),
+         anuncio_titulo       = COALESCE(anuncio_titulo, $3),
+         anuncio_corpo        = COALESCE(anuncio_corpo, $4),
+         anuncio_imagem_url   = COALESCE(anuncio_imagem_url, $5),
+         anuncio_source_url   = COALESCE(anuncio_source_url, $6),
+         anuncio_ctwa_clid    = COALESCE(anuncio_ctwa_clid, $7),
+         anuncio_capturado_em = COALESCE(anuncio_capturado_em, NOW())
+       WHERE id = $1 AND anuncio_capturado_em IS NULL
+       RETURNING id`,
+      [leadId, anuncio.source_id, anuncio.titulo, anuncio.corpo, anuncio.imagem_url, anuncio.source_url, anuncio.ctwa_clid]
+    );
+    if (r.rows && r.rows.length) {
+      await registrarEventoLead(leadId, clienteId, 'anuncio_capturado',
+        'Lead veio de anúncio Click-to-WhatsApp: ' + (anuncio.titulo || anuncio.source_id || 'sem título'),
+        { source_id: anuncio.source_id, titulo: anuncio.titulo, ctwa_clid: anuncio.ctwa_clid }
+      ).catch(() => null);
+      console.log(`[zapi][anuncio] lead ${leadId} etiquetado com anúncio "${anuncio.titulo || anuncio.source_id || '—'}"`);
+    }
+  } catch (e) {
+    console.error('[zapi][anuncio] falha ao gravar anúncio no lead', leadId, e.message);
+  }
 }
 
 function primeiroValor(...vals) {

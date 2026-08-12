@@ -137,6 +137,7 @@ async function garantirEstruturaCampanhasTemplates() {
   await query(`ALTER TABLE movatak_campanhas
     ADD COLUMN IF NOT EXISTS cliente_id INTEGER,
     ADD COLUMN IF NOT EXISTS nome TEXT,
+    ADD COLUMN IF NOT EXISTS apelido TEXT,
     ADD COLUMN IF NOT EXISTS gatilho TEXT,
     ADD COLUMN IF NOT EXISTS verba_diaria NUMERIC,
     ADD COLUMN IF NOT EXISTS investimento_tipo TEXT DEFAULT 'diario',
@@ -160,6 +161,22 @@ async function garantirEstruturaCampanhasTemplates() {
     ADD COLUMN IF NOT EXISTS campanha_id_ultimo_toque INTEGER,
     ADD COLUMN IF NOT EXISTS template_id_origem INTEGER,
     ADD COLUMN IF NOT EXISTS gatilho_detectado TEXT`).catch(() => null);
+
+  // Metadados do anúncio Click-to-WhatsApp (externalAdReply da Z-API). Capturados
+  // quando o lead chega direto de um anúncio Meta: título/frase, imagem, id do
+  // anúncio e ctwaClid. Preenchidos uma única vez (primeiro toque de anúncio).
+  await query(`ALTER TABLE movatak_leads
+    ADD COLUMN IF NOT EXISTS anuncio_source_id TEXT,
+    ADD COLUMN IF NOT EXISTS anuncio_titulo TEXT,
+    ADD COLUMN IF NOT EXISTS anuncio_corpo TEXT,
+    ADD COLUMN IF NOT EXISTS anuncio_imagem_url TEXT,
+    ADD COLUMN IF NOT EXISTS anuncio_source_url TEXT,
+    ADD COLUMN IF NOT EXISTS anuncio_ctwa_clid TEXT,
+    ADD COLUMN IF NOT EXISTS anuncio_capturado_em TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS anuncio_apelido TEXT`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_movatak_leads_anuncio_source ON movatak_leads(cliente_id, anuncio_source_id)`).catch(() => null);
+  // anuncio_apelido no lead = apelido da CAMPANHA à qual o lead foi atribuído
+  // (denormalizado no momento da atribuição para aparecer na etiqueta via SELECT l.*).
 
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_cliente_ativo ON movatak_campanhas(cliente_id, ativo)`).catch(() => null);
   await query(`CREATE INDEX IF NOT EXISTS idx_movatak_campanhas_template ON movatak_campanhas(template_id)`).catch(() => null);
