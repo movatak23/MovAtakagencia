@@ -10583,11 +10583,179 @@ body.funil-view-clean .funil-page .funil-card-preview{margin-top:6px}
     </div>
     <div class="login-err" id="quest-err" style="margin-top:12px"></div>
     <div class="modal-btns">
+      <button class="btn-cancel" onclick="abrirDisparo()" style="margin-right:auto;border-color:var(--accent);color:var(--accent)">📢 Disparo em massa</button>
       <button class="btn-cancel" onclick="fecharQuestionario()">Fechar</button>
       <button class="btn-save" id="btn-quest-save" onclick="salvarQuestionario()">Salvar Auto Atendimento</button>
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="modal-disparo">
+  <div class="modal modal-fu">
+    <button class="modal-x" onclick="fecharDisparo()" title="Fechar">✕</button>
+    <h3>📢 Disparo em massa</h3>
+    <p style="font-size:13px;color:var(--text2);margin-bottom:16px">Envia uma mensagem para todos os leads de uma coluna do kanban, com intervalo seguro entre cada envio. Use <strong>{nome}</strong> na mensagem.</p>
+
+    <div style="background:var(--bg);border:1px solid var(--border2);border-radius:10px;padding:14px;margin-bottom:16px">
+      <label class="fu-label" style="margin-top:0">Coluna do kanban de destino</label>
+      <select id="disp-coluna" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none"></select>
+
+      <label class="fu-label">Mensagem</label>
+      <textarea class="fu-textarea" id="disp-texto" rows="4" placeholder="Escreva a mensagem... (aceita {nome})"></textarea>
+
+      <label class="fu-label">Anexo <span style="color:var(--text3);font-weight:400">(opcional — imagem, vídeo, áudio ou documento)</span></label>
+      <input type="file" id="disp-midia" onchange="anexarMidiaDisparo(this)" style="font-size:13px;color:var(--text2)">
+      <div class="fu-hint" id="disp-midia-info" style="font-size:12px;color:var(--text3);margin-top:4px"></div>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px">
+        <div style="flex:1;min-width:150px">
+          <label class="fu-label" style="margin-top:0">Intervalo entre mensagens</label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <input type="number" id="disp-intervalo" min="8" value="12" style="width:80px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+            <span style="font-size:13px;color:var(--text2)">seg (mín. 8)</span>
+          </div>
+        </div>
+        <div style="flex:1;min-width:150px">
+          <label class="fu-label" style="margin-top:0">Teto por dia</label>
+          <input type="number" id="disp-teto" min="1" max="300" value="250" style="width:90px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+        </div>
+      </div>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;align-items:flex-end">
+        <div style="flex:1;min-width:200px">
+          <label class="fu-label" style="margin-top:0">Janela de envio <span style="color:var(--text3);font-weight:400">(paradas programadas)</span></label>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:13px;color:var(--text2)">das</span>
+            <input type="number" id="disp-jini" min="0" max="23" value="8" style="width:62px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+            <span style="font-size:13px;color:var(--text2)">h às</span>
+            <input type="number" id="disp-jfim" min="1" max="24" value="20" style="width:62px;padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+            <span style="font-size:13px;color:var(--text2)">h</span>
+          </div>
+        </div>
+        <div style="flex:1;min-width:160px">
+          <label class="fu-label" style="margin-top:0">Dias</label>
+          <select id="disp-dias" class="fu-textarea" style="min-height:auto;padding:9px 12px;resize:none">
+            <option value="1,2,3,4,5,6">Seg a Sáb</option>
+            <option value="1,2,3,4,5">Seg a Sex</option>
+            <option value="0,1,2,3,4,5,6">Todos os dias</option>
+          </select>
+        </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <label class="fu-label" style="margin-top:0">Agendar início <span style="color:var(--text3);font-weight:400">(opcional — vazio = agora)</span></label>
+        <input type="datetime-local" id="disp-agendar" style="padding:9px 10px;background:var(--bg4);border:1px solid var(--border2);border-radius:8px;color:var(--text);font-family:var(--sans);font-size:13px">
+      </div>
+
+      <div class="fu-hint" style="font-size:12px;color:var(--text3);margin-top:12px;border-top:1px solid var(--border);padding-top:10px">🛡️ Envia só para leads da coluna (com telefone). Quem responde <strong>"sair/parar"</strong> é removido automaticamente. Intervalo mínimo e teto diário protegem seu número contra bloqueio.</div>
+
+      <div class="login-err" id="disp-err" style="margin-top:10px"></div>
+      <div style="margin-top:12px;display:flex;justify-content:flex-end">
+        <button class="btn-save" id="btn-disp-enviar" onclick="enviarDisparo()">Iniciar disparo</button>
+      </div>
+    </div>
+
+    <label class="fu-label">Disparos</label>
+    <div id="disp-lista" style="margin-top:8px"></div>
+
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="fecharDisparo()">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function fecharDisparo(){ document.getElementById('modal-disparo').classList.remove('open'); }
+async function abrirDisparo(){
+  const cid = (typeof questState!=='undefined' && questState.clienteId) ? questState.clienteId : window._dispClienteId;
+  if(!cid){ alert('Abra o Auto Atendimento de um cliente primeiro.'); return; }
+  window._dispClienteId = cid; window._dispMidia = null;
+  document.getElementById('disp-err').textContent='';
+  document.getElementById('disp-texto').value='';
+  document.getElementById('disp-midia').value='';
+  document.getElementById('disp-midia-info').textContent='';
+  document.getElementById('modal-disparo').classList.add('open');
+  await carregarDisparoColunas();
+  await carregarDisparos();
+}
+async function carregarDisparoColunas(){
+  try{
+    const cols = await api('/movatak/admin/clientes/'+window._dispClienteId+'/disparo-colunas');
+    const sel = document.getElementById('disp-coluna');
+    sel.innerHTML = (cols&&cols.length) ? cols.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)} (${c.leads} leads)</option>`).join('') : '<option value="">Nenhuma coluna</option>';
+  }catch(e){ document.getElementById('disp-err').textContent='Erro ao carregar colunas: '+e.message; }
+}
+async function anexarMidiaDisparo(input){
+  const f = input.files && input.files[0];
+  const info = document.getElementById('disp-midia-info');
+  if(!f){ window._dispMidia=null; info.textContent=''; return; }
+  info.textContent='Enviando anexo...';
+  try{
+    const dataUrl = await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(f); });
+    const up = await api('/movatak/admin/upload-imagem',{method:'POST',body:JSON.stringify({dataUrl,fileName:f.name})});
+    window._dispMidia = { url: up.url, tipo: up.tipo, nome: up.fileName || f.name };
+    info.textContent = '✓ '+up.tipo+': '+(up.fileName||f.name);
+  }catch(e){ window._dispMidia=null; info.textContent='Erro no anexo: '+e.message; }
+}
+async function enviarDisparo(){
+  const btn=document.getElementById('btn-disp-enviar'); const err=document.getElementById('disp-err'); err.textContent='';
+  const coluna_id = document.getElementById('disp-coluna').value;
+  if(!coluna_id){ err.textContent='Escolha a coluna de destino.'; return; }
+  const texto = document.getElementById('disp-texto').value;
+  const m = window._dispMidia;
+  if((!m) && !texto.trim()){ err.textContent='Escreva a mensagem ou anexe um arquivo.'; return; }
+  const payload = {
+    coluna_id,
+    tipo: m ? m.tipo : 'texto',
+    texto,
+    midia_url: m ? m.url : null,
+    midia_nome: m ? m.nome : null,
+    intervalo_seg: parseInt(document.getElementById('disp-intervalo').value,10)||12,
+    teto_dia: parseInt(document.getElementById('disp-teto').value,10)||250,
+    janela_inicio: parseInt(document.getElementById('disp-jini').value,10),
+    janela_fim: parseInt(document.getElementById('disp-jfim').value,10),
+    dias_semana: document.getElementById('disp-dias').value,
+    agendado_para: document.getElementById('disp-agendar').value || null
+  };
+  btn.disabled=true; btn.textContent='Iniciando...';
+  try{
+    const r = await api('/movatak/admin/clientes/'+window._dispClienteId+'/disparos',{method:'POST',body:JSON.stringify(payload)});
+    btn.textContent = r.status==='agendado' ? '✓ Agendado' : ('✓ Disparando p/ '+r.total+' leads');
+    document.getElementById('disp-texto').value=''; document.getElementById('disp-midia').value=''; document.getElementById('disp-midia-info').textContent=''; window._dispMidia=null;
+    await carregarDisparos();
+    setTimeout(()=>{ btn.disabled=false; btn.textContent='Iniciar disparo'; },2500);
+  }catch(e){ err.textContent='Erro: '+e.message; btn.disabled=false; btn.textContent='Iniciar disparo'; }
+}
+async function carregarDisparos(){
+  const cont=document.getElementById('disp-lista');
+  try{
+    const lista = await api('/movatak/admin/clientes/'+window._dispClienteId+'/disparos');
+    if(!lista || !lista.length){ cont.innerHTML='<div class="fu-hint" style="font-size:12px;color:var(--text3)">Nenhum disparo ainda.</div>'; return; }
+    const stMap={em_andamento:'⏳ Em andamento',agendado:'🕒 Agendado',pausado:'⏸ Pausado',concluido:'✅ Concluído',cancelado:'✖ Cancelado'};
+    cont.innerHTML = lista.map(d=>{
+      const pct = d.total? Math.round((d.enviados/d.total)*100):0;
+      const acoes=[];
+      if(d.status==='em_andamento') acoes.push(`<button class="btn-add-small" onclick="controlarDisparoUI(${d.id},'pausar')">Pausar</button>`);
+      if(d.status==='pausado') acoes.push(`<button class="btn-add-small" onclick="controlarDisparoUI(${d.id},'retomar')">Retomar</button>`);
+      if(['em_andamento','pausado','agendado'].includes(d.status)) acoes.push(`<button class="btn-remove" onclick="controlarDisparoUI(${d.id},'cancelar')" title="Cancelar">×</button>`);
+      return `<div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <strong style="font-size:13px">${escapeHtml(d.coluna_nome||'Coluna')}</strong>
+          <span style="font-size:12px;color:var(--text2)">${stMap[d.status]||d.status}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin:6px 0">${d.enviados}/${d.total} enviados${d.erros?(' · '+d.erros+' erros'):''} · ${escapeHtml(d.tipo)}</div>
+        <div style="background:var(--bg4);border-radius:6px;height:6px;overflow:hidden"><div style="background:var(--accent);height:100%;width:${pct}%"></div></div>
+        ${acoes.length?`<div style="display:flex;gap:6px;margin-top:8px">${acoes.join('')}</div>`:''}
+      </div>`;
+    }).join('');
+  }catch(e){ cont.innerHTML='<div class="login-err">Erro: '+escapeHtml(e.message)+'</div>'; }
+}
+async function controlarDisparoUI(did,acao){
+  if(acao==='cancelar' && !confirm('Cancelar este disparo? Os envios pendentes não serão feitos.')) return;
+  try{ await api('/movatak/admin/clientes/'+window._dispClienteId+'/disparos/'+did+'/'+acao,{method:'POST'}); await carregarDisparos(); }
+  catch(e){ alert('Erro: '+e.message); }
+}
+</script>
+
 <style>
 .modal-x{position:absolute;top:14px;right:16px;background:transparent;border:none;color:var(--text2);font-size:18px;cursor:pointer;line-height:1;padding:4px;z-index:2}
 .modal-x:hover{color:var(--text)}

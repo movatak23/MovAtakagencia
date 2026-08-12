@@ -17,7 +17,7 @@ const {
   garantirEstruturaCampanhasTemplates, garantirEstruturaQuestionario, garantirEstruturaPlanos,
   garantirEstruturaConversas, garantirEstruturaMensagensRapidas, garantirEstruturaFunil,
   garantirEstruturaAgenda, garantirEstruturaCaptacao, garantirEstruturaAssinaturas,
-  garantirEstruturaCanais
+  garantirEstruturaCanais, garantirEstruturaDisparos
 } = db;
 
 const {
@@ -70,6 +70,7 @@ const {
 } = followups;
 
 const { processarCobrancaFila } = require('./src/cobranca');
+const { processarDisparoFila } = require('./src/disparo');
 
 const webhook = require('./src/webhook');
 const {
@@ -130,6 +131,8 @@ webhook.init({ textoBateGatilho, comandosDoVendedor, contemComando, localizarCam
 // Materializa o schema de assinaturas/mensalidade no boot (idempotente,
 // defaults nao-bloqueantes). Fase A da feature de mensalidade. Ver ASSINATURAS.md.
 garantirEstruturaAssinaturas().catch(() => null);
+// Materializa o schema do disparo em massa (broadcast + fila + opt-out) no boot.
+garantirEstruturaDisparos().catch(() => null);
 
 // Injeta no funil os sub-helpers que ainda vivem no index.js
 // (dependem de nicho/zapi-extractors). Function declarations sao hoisted.
@@ -529,6 +532,14 @@ app.post('/movatak/webhook/mensagem', handleMensagem);
 // Z-API → POST /webhook/etiqueta
 // ============================================================
 app.post('/movatak/webhook/etiqueta', handleEtiqueta);
+
+// ============================================================
+// CRON — Disparo em massa (broadcast): manda os pendentes respeitando
+// janela/throttle/teto. Roda a cada minuto; mutex interno evita reentrada.
+// ============================================================
+cron.schedule('* * * * *', async () => {
+  try { await processarDisparoFila(); } catch (e) { console.error('[cron][disparo] erro:', e.message); }
+});
 
 // ============================================================
 // CRON — Disparador de follow up (roda a cada hora)

@@ -585,6 +585,55 @@ async function garantirEstruturaCanais() {
     ADD COLUMN IF NOT EXISTS ig_verify_token TEXT`).catch(() => null);
 }
 
+// Disparo em massa (broadcast p/ leads de uma coluna do kanban) + opt-out/supressão.
+async function garantirEstruturaDisparos() {
+  await query(`CREATE TABLE IF NOT EXISTS movatak_disparos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    nome TEXT,
+    coluna_id INTEGER,
+    tipo TEXT DEFAULT 'texto',
+    texto TEXT,
+    midia_url TEXT,
+    midia_nome TEXT,
+    intervalo_seg INTEGER DEFAULT 12,
+    janela_inicio INTEGER DEFAULT 8,
+    janela_fim INTEGER DEFAULT 20,
+    dias_semana TEXT DEFAULT '1,2,3,4,5,6',
+    agendado_para TIMESTAMPTZ,
+    teto_dia INTEGER DEFAULT 250,
+    status TEXT DEFAULT 'em_andamento',
+    total INTEGER DEFAULT 0,
+    enviados INTEGER DEFAULT 0,
+    erros INTEGER DEFAULT 0,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_disparos_cliente ON movatak_disparos(cliente_id, status)`).catch(() => null);
+
+  await query(`CREATE TABLE IF NOT EXISTS movatak_disparo_fila (
+    id SERIAL PRIMARY KEY,
+    disparo_id INTEGER NOT NULL,
+    cliente_id INTEGER,
+    lead_id INTEGER,
+    telefone TEXT,
+    status TEXT DEFAULT 'pendente',
+    enviado_em TIMESTAMPTZ,
+    erro TEXT,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_disparo_fila ON movatak_disparo_fila(disparo_id, lead_id)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_disparo_fila_proc ON movatak_disparo_fila(disparo_id, status)`).catch(() => null);
+
+  await query(`CREATE TABLE IF NOT EXISTS movatak_optout (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    telefone TEXT NOT NULL,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS ux_optout ON movatak_optout(cliente_id, telefone)`).catch(() => null);
+}
+
 // [perf] Executa uma migracao idempotente no maximo UMA vez por processo. As
 // garantirEstrutura*/garantirColunas* rodam CREATE/ALTER ... IF NOT EXISTS, que
 // so precisam acontecer uma vez; sem isso rodavam a cada chamada — inclusive no
@@ -616,4 +665,5 @@ module.exports = {
   garantirEstruturaCaptacao: umaVez(garantirEstruturaCaptacao),
   garantirEstruturaAssinaturas: umaVez(garantirEstruturaAssinaturas),
   garantirEstruturaCanais: umaVez(garantirEstruturaCanais),
+  garantirEstruturaDisparos: umaVez(garantirEstruturaDisparos),
 };

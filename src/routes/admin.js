@@ -2,6 +2,8 @@
 
 const { pool } = require('../db');
 const { agendarCobranca, lerConfigCobranca } = require('../cobranca');
+const { criarDisparo, controlarDisparo, listarDisparos } = require('../disparo');
+const { garantirEstruturaDisparos } = require('../db');
 
 // ============================================================
 // src/routes/admin.js — Fase 5a da refatoracao.
@@ -2684,6 +2686,38 @@ app.patch('/movatak/admin/clientes/:id/questionario', ...forcaClienteIdNaUrl, as
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Disparo em massa (broadcast p/ leads de uma coluna do kanban) ──────────
+// Colunas do kanban + contagem de leads elegíveis (com telefone, não arquivados).
+app.get('/movatak/admin/clientes/:id/disparo-colunas', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaDisparos();
+    const r = await query(
+      `SELECT c.id, c.nome,
+              (SELECT count(*)::int FROM movatak_leads l
+                WHERE l.cliente_id = $1 AND l.funil_coluna_id = c.id
+                  AND l.telefone IS NOT NULL AND l.telefone <> '' AND COALESCE(l.arquivado,false)=false) AS leads
+         FROM movatak_funil_colunas c
+        WHERE c.cliente_id = $1 AND c.ativo = true
+        ORDER BY c.ordem ASC NULLS LAST, c.id ASC`, [req.params.id]);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/admin/clientes/:id/disparos', ...forcaClienteIdNaUrl, async (req, res) => {
+  try { await garantirEstruturaDisparos(); res.json(await listarDisparos(req.params.id)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/disparos', ...forcaClienteIdNaUrl, async (req, res) => {
+  try { await garantirEstruturaDisparos(); res.json({ ok: true, ...(await criarDisparo(req.params.id, req.body || {})) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/disparos/:did/:acao', ...forcaClienteIdNaUrl, async (req, res) => {
+  try { await garantirEstruturaDisparos(); res.json({ ok: true, ...(await controlarDisparo(req.params.id, parseInt(req.params.did, 10), req.params.acao)) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
 });
 
 app.get('/movatak/admin/clientes/:id/questionario-templates', ...forcaClienteIdNaUrl, async (req, res) => {
