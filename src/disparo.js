@@ -243,4 +243,25 @@ async function processarRespostaDisparo(clienteId, leadId) {
   } catch (e) { /* silencioso */ }
 }
 
-module.exports = { criarDisparo, processarDisparoFila, controlarDisparo, listarDisparos, registrarOptOutSeAplicavel, processarRespostaDisparo };
+// Envia UMA mensagem de teste (a mensagem atual do compositor) para um número,
+// sem criar disparo nem fila. {nome} vira "Teste" só para o preview ficar natural.
+async function enviarTesteDisparo(clienteId, dados = {}) {
+  const digitos = String(dados.telefone || '').replace(/\D/g, '');
+  if (!digitos || digitos.length < 10) throw new Error('Informe um número válido (com DDD).');
+  const telefone = digitos.startsWith('55') ? digitos : '55' + digitos; // normaliza p/ Brasil
+
+  const tipo = ['texto', 'imagem', 'video', 'audio', 'documento'].includes(dados.tipo) ? dados.tipo : 'texto';
+  const texto = (dados.texto || '').toString();
+  if (tipo === 'texto' && !texto.trim()) throw new Error('Escreva a mensagem antes de testar.');
+  if (tipo !== 'texto' && !dados.midia_url) throw new Error('Anexe a mídia antes de testar.');
+
+  const cr = await query('SELECT id, zapi_instance, zapi_token, zapi_client_token FROM movatak_clientes WHERE id=$1', [clienteId]);
+  const conta = cr.rows[0];
+  if (!conta || !conta.zapi_instance) throw new Error('Cliente sem conexão de WhatsApp (Z-API).');
+
+  const lead = { telefone, canal: 'whatsapp' };
+  const d = { tipo, texto: texto.replace(/\{nome\}/g, 'Teste'), midia_url: dados.midia_url || null, midia_nome: dados.midia_nome || null };
+  await enviarPorTipo(conta, lead, d);
+}
+
+module.exports = { criarDisparo, processarDisparoFila, controlarDisparo, listarDisparos, registrarOptOutSeAplicavel, processarRespostaDisparo, enviarTesteDisparo };

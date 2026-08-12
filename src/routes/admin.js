@@ -2,7 +2,7 @@
 
 const { pool } = require('../db');
 const { agendarCobranca, lerConfigCobranca } = require('../cobranca');
-const { criarDisparo, controlarDisparo, listarDisparos } = require('../disparo');
+const { criarDisparo, controlarDisparo, listarDisparos, enviarTesteDisparo } = require('../disparo');
 const { garantirEstruturaDisparos } = require('../db');
 
 // ============================================================
@@ -2712,6 +2712,11 @@ app.get('/movatak/admin/clientes/:id/disparos', ...forcaClienteIdNaUrl, async (r
 
 app.post('/movatak/admin/clientes/:id/disparos', ...forcaClienteIdNaUrl, async (req, res) => {
   try { await garantirEstruturaDisparos(); res.json({ ok: true, ...(await criarDisparo(req.params.id, req.body || {})) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/clientes/:id/disparos/teste', ...forcaClienteIdNaUrl, async (req, res) => {
+  try { await garantirEstruturaDisparos(); await enviarTesteDisparo(req.params.id, req.body || {}); res.json({ ok: true }); }
   catch (e) { res.status(400).json({ error: e.message }); }
 });
 
