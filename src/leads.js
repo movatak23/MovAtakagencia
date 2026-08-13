@@ -95,7 +95,7 @@ function normalizarReplyInfoConversa(replyInfo) {
   };
 }
 
-async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId, replyInfo = null, origem = 'humano') {
+async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl, midiaTipo, msgId, replyInfo = null, origem = 'humano', midiaNome = null) {
   if (!leadId || !clienteId) return null;
   await garantirEstruturaConversas();
   // Evita duplicar a mesma mensagem do WhatsApp: se já existe uma conversa com esse
@@ -110,12 +110,12 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
   const reply = normalizarReplyInfoConversa(replyInfo);
   const ins = await query(
     `INSERT INTO movatak_conversas
-       (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, msg_id,
+       (lead_id, cliente_id, direcao, conteudo, midia_url, midia_tipo, midia_nome, msg_id,
         reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
         reply_to_midia_url, reply_to_midia_tipo, reply_payload, origem)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15) RETURNING id`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,$16) RETURNING id`,
     [
-      leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, msgId || null,
+      leadId, clienteId, direcao, conteudo || null, midiaUrl || null, midiaTipo || null, midiaNome || null, msgId || null,
       reply.reply_to_conversa_id, reply.reply_to_msg_id, reply.reply_to_direcao, reply.reply_to_conteudo,
       reply.reply_to_midia_url, reply.reply_to_midia_tipo, JSON.stringify(reply.reply_payload || {}),
       direcao === 'entrada' ? 'lead' : (origem || 'humano')
@@ -155,6 +155,7 @@ async function registrarConversa(leadId, clienteId, direcao, conteudo, midiaUrl,
     conteudo: conteudo || '',
     midia_url: midiaUrl || null,
     midia_tipo: midiaTipo || null,
+    midia_nome: midiaNome || null,
     msg_id: msgId || null,
     reply_to_conversa_id: reply.reply_to_conversa_id,
     reply_to_msg_id: reply.reply_to_msg_id,

@@ -351,6 +351,7 @@ async function garantirEstruturaConversas() {
     criado_em TIMESTAMPTZ DEFAULT NOW()
   )`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_tipo TEXT`).catch(() => null);
+  await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS midia_nome TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS msg_id TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_conversa_id INTEGER`).catch(() => null);
   await query(`ALTER TABLE movatak_conversas ADD COLUMN IF NOT EXISTS reply_to_msg_id TEXT`).catch(() => null);

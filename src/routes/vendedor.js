@@ -275,7 +275,7 @@ app.get('/movatak/vendedor/leads/:id/conversas', authVendedor, async (req, res) 
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const r = await query(
       `SELECT * FROM (
-         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
+         SELECT id, direcao, conteudo, midia_url, midia_tipo, midia_nome, msg_id,
                 reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
                 reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
            FROM movatak_conversas WHERE lead_id = $1
@@ -314,9 +314,10 @@ app.post('/movatak/vendedor/leads/:id/mensagem', authVendedor, async (req, res) 
     } else {
       msgId = await zapiEnviar(c.zapi_instance, c.zapi_token, c.zapi_client_token, lead.telefone, conteudo, replyMsgIdZap);
     }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
+    const midiaNome = tipoFinal === 'documento' ? (midia_nome || null) : null;
+    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midia_url || null, tipoFinal, msgId, replyResolvido.info, undefined, midiaNome).catch(() => null);
     await registrarEventoLead(lead.id, lead.cliente_id, 'mensagem_vendedor', 'Mensagem enviada pelo vendedor ' + req.vendedor.nome, { texto: (conteudo || '').slice(0,100), midia: !!midia_url });
-    emitirMensagemLead(lead.cliente_id, lead.id, { id: conversaId, lead_id: lead.id, cliente_id: lead.cliente_id, direcao: 'saida', conteudo: conteudo || '', midia_url: midia_url || null, midia_tipo: tipoFinal, msg_id: msgId, criado_em: new Date().toISOString() });
+    emitirMensagemLead(lead.cliente_id, lead.id, { id: conversaId, lead_id: lead.id, cliente_id: lead.cliente_id, direcao: 'saida', conteudo: conteudo || '', midia_url: midia_url || null, midia_tipo: tipoFinal, midia_nome: midiaNome, msg_id: msgId, criado_em: new Date().toISOString() });
     res.json({ ok: true, conversaId, criado_em: new Date().toISOString() });
   } catch (e) { res.status(500).json({ error: e.response?.data?.message || e.message }); }
 });

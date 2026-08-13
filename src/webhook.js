@@ -522,7 +522,7 @@ async function handleZapi(req, res) {
         }
         const midiaG = extrairMidiaPayloadZapi(body);
         const remetenteG = ehSaidaG ? '' : (body.senderName ? body.senderName + ': ' : '');
-        await registrarConversa(lgId, clienteG.id, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null).catch(() => null);
+        await registrarConversa(lgId, clienteG.id, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null, null, midiaG.nome).catch(() => null);
       } catch (e) {
         console.error('[zapi][grupo] erro:', e.message);
       }
@@ -653,7 +653,7 @@ async function handleZapi(req, res) {
              RETURNING id`,
             [cliente.id, chaveFromMe, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
           );
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web').catch(() => null);
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web', midiaFromMe.nome).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
         return;
@@ -695,7 +695,7 @@ async function handleZapi(req, res) {
         }
         if (!jaRegistrada) {
           const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web').catch(() => null);
+          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web', midiaFromMe.nome).catch(() => null);
           // Mensagem humana (não é comando interno) → o atendente assumiu; limpa o sinal.
           if (!ehComandoInterno) await limparPedidoAtendente(leadFromMe.id);
         } else {
@@ -900,7 +900,7 @@ async function handleZapi(req, res) {
     if (lead && (texto || midiaRecebida.url)) {
       const msgIdEntrada = body.messageId || body.id || null;
       const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info).catch(() => null);
+      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info, null, midiaRecebida.nome).catch(() => null);
     }
 
     // Opt-out do disparo em massa: se o lead responder "sair/parar/cancelar", suprime
@@ -1107,7 +1107,7 @@ async function handleZapi(req, res) {
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
       const msgIdNovoLead = body.messageId || body.id || null;
-      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload).catch(() => null);
+      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload, null, midiaNovoLead.nome).catch(() => null);
       if (anuncio) await aplicarAnuncioNoLead(novoLead.rows[0].id, cliente.id, anuncio);
 
       // Decide se inicia o questionário:
@@ -1155,7 +1155,7 @@ async function handleZapi(req, res) {
       );
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
-      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload).catch(() => null);
+      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload, null, midiaNovoContato.nome).catch(() => null);
       await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
       if (anuncio) await aplicarAnuncioNoLead(novoContato.rows[0].id, cliente.id, anuncio);
       console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
@@ -1352,12 +1352,17 @@ function extrairTextoPayloadZapi(body) {
 }
 
 function extrairMidiaPayloadZapi(body) {
-  if (body.image && (body.image.imageUrl || body.image.url)) return { url: body.image.imageUrl || body.image.url, tipo: 'imagem' };
-  if (body.video && (body.video.videoUrl || body.video.url)) return { url: body.video.videoUrl || body.video.url, tipo: 'video' };
-  if (body.audio && (body.audio.audioUrl || body.audio.url)) return { url: body.audio.audioUrl || body.audio.url, tipo: 'audio' };
-  if (body.document && (body.document.documentUrl || body.document.url)) return { url: body.document.documentUrl || body.document.url, tipo: 'documento' };
+  if (body.image && (body.image.imageUrl || body.image.url)) return { url: body.image.imageUrl || body.image.url, tipo: 'imagem', nome: null };
+  if (body.video && (body.video.videoUrl || body.video.url)) return { url: body.video.videoUrl || body.video.url, tipo: 'video', nome: null };
+  if (body.audio && (body.audio.audioUrl || body.audio.url)) return { url: body.audio.audioUrl || body.audio.url, tipo: 'audio', nome: null };
+  if (body.document && (body.document.documentUrl || body.document.url)) {
+    // Nome/extensão originais do arquivo, exatamente como o cliente enviou no WhatsApp.
+    // (caption NÃO entra aqui: é a legenda da mensagem, vira o texto da bolha.)
+    const nomeDoc = body.document.fileName || body.document.title || null;
+    return { url: body.document.documentUrl || body.document.url, tipo: 'documento', nome: nomeDoc ? String(nomeDoc).slice(0, 300) : null };
+  }
   const fallback = body.fileUrl || body.mediaUrl || null;
-  return fallback ? { url: fallback, tipo: null } : { url: null, tipo: null };
+  return fallback ? { url: fallback, tipo: null, nome: null } : { url: null, tipo: null, nome: null };
 }
 
 // Busca o objeto de anúncio Click-to-WhatsApp no payload. A Z-API o envia como

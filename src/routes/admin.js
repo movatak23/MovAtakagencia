@@ -1271,7 +1271,7 @@ app.get('/movatak/admin/leads/:id/conversas', ...exigeLead, async (req, res) => 
     // e em leads com +500 mensagens as recém-enviadas caíam fora do limite e sumiam da tela.
     const r = await query(
       `SELECT * FROM (
-         SELECT id, direcao, conteudo, midia_url, midia_tipo, msg_id,
+         SELECT id, direcao, conteudo, midia_url, midia_tipo, midia_nome, msg_id,
                 reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
                 reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
            FROM movatak_conversas WHERE lead_id = $1
@@ -1500,9 +1500,10 @@ app.post('/movatak/admin/leads/:id/zapi/send-advanced', ...exigeLead, async (req
     let midiaUrl = null;
     let midiaTipo = null;
 
+    let midiaNome = null;
     if (recurso === 'document') {
       msgId = await zapiEnviarDocumento(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.document || p.url, p.fileName || p.nome, p.caption || '', p.extension || p.ext, replyMsgIdZap);
-      conteudo = p.caption || p.fileName || 'Documento enviado'; midiaUrl = p.document || p.url; midiaTipo = 'documento';
+      conteudo = p.caption || p.fileName || 'Documento enviado'; midiaUrl = p.document || p.url; midiaTipo = 'documento'; midiaNome = p.fileName || p.nome || null;
     } else if (recurso === 'location') {
       msgId = await zapiEnviarLocalizacao(lead.zapi_instance, lead.zapi_token, lead.zapi_client_token, lead.telefone, p.title, p.address, p.latitude, p.longitude, replyMsgIdZap);
       conteudo = `Localização: ${p.title || ''}`.trim(); midiaTipo = 'localizacao';
@@ -1524,7 +1525,7 @@ app.post('/movatak/admin/leads/:id/zapi/send-advanced', ...exigeLead, async (req
       midiaUrl = p.image || p.video || p.gif || p.sticker || null;
       midiaTipo = recurso;
     }
-    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midiaUrl || null, midiaTipo || recurso, msgId, replyResolvido.info).catch(() => null);
+    const conversaId = await registrarConversa(lead.id, lead.cliente_id, 'saida', conteudo || '', midiaUrl || null, midiaTipo || recurso, msgId, replyResolvido.info, undefined, midiaNome).catch(() => null);
     await registrarEventoLead(lead.id, lead.cliente_id, 'whatsapp_recurso_avancado', 'Recurso avançado enviado pelo CRM', { recurso, conversaId });
     res.json({ ok: true, conversaId, messageId: msgId, criado_em: new Date().toISOString() });
   } catch(e) { res.status(500).json({ error: e.response?.data?.message || JSON.stringify(e.response?.data || {}) || e.message }); }
@@ -2979,7 +2980,7 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', ...exigeLead, async (req, r
     } else {
       msgId = await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto, replyMsgIdZap);
     }
-    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info).catch(() => null);
+    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info, undefined, tipoFinal === 'documento' ? (midia_nome || null) : null).catch(() => null);
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     await limparPedidoAtendente(row.id); // atendente respondeu → apaga o chip "pediu atendente"
     // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada

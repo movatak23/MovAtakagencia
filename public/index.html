@@ -935,7 +935,7 @@ async function iniciarAppVendedor() {
                 <div class="painel-composer-cluster">
                   <div class="ccrow">
                     <label title="Anexar arquivo (qualquer tipo, até 20MB)" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-attach"></use></svg>
-                      <input type="file" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                      <input type="file" multiple style="display:none" onchange="[...this.files].forEach(f=>uploadArquivoPainel(f)); this.value='';">
                     </label>
                     <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                       style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-mic"></use></svg></button>
@@ -2772,6 +2772,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
   cancelarRespostaPainel(false);
   const midiaEl = document.getElementById('painel-midia-el');
   const midiaPreview = document.getElementById('painel-midia-preview');
+  window._painelAnexos = []; window._painelAnexosPend = 0;
   if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; }
   if (midiaPreview) midiaPreview.style.display = 'none';
   document.getElementById('painel-historico').innerHTML = '<div class="fu-hint">Carregando...</div>';
@@ -2998,18 +2999,21 @@ async function enviarSequenciaRapida(m, itens, btnEl) {
 }
 
 // ── Anexar arquivo (clique ou arrastar) e gravar áudio no compositor do chat ──
+// Anexos do compositor do painel — suporta MÚLTIPLOS arquivos por envio.
+// Cada item: { url, tipo, nome, ext }. _painelAnexosPend conta uploads em curso.
+window._painelAnexos = window._painelAnexos || [];
+window._painelAnexosPend = window._painelAnexosPend || 0;
+
 async function uploadArquivoPainel(file) {
   if (!file) return;
-  const midiaEl = document.getElementById('painel-midia-el');
-  const preview = document.getElementById('painel-midia-preview');
   // Qualquer extensão: só o tamanho limita (20MB para todos).
   const limiteMb = 20;
   if (file.size > limiteMb * 1024 * 1024) {
-    alert('Arquivo muito grande (máx ' + limiteMb + 'MB).');
+    alert('Arquivo "' + (file.name || 'arquivo') + '" muito grande (máx ' + limiteMb + 'MB).');
     return;
   }
-  if (preview) preview.style.display = '';
-  if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--text2)">Enviando arquivo...</span>';
+  window._painelAnexosPend++;
+  renderAnexosPainel();
   try {
     const dataUrl = await new Promise((res, rej) => {
       const r = new FileReader();
@@ -3018,37 +3022,58 @@ async function uploadArquivoPainel(file) {
       r.readAsDataURL(file);
     });
     const resp = await api('/movatak/admin/upload-imagem', { method: 'POST', body: JSON.stringify({ dataUrl, fileName: file.name || '' }) });
-    renderMidiaAnexadaPainel(resp.url, resp.tipo, resp.fileName || file.name || '', resp.ext || '');
+    window._painelAnexos.push({ url: resp.url, tipo: resp.tipo, nome: resp.fileName || file.name || '', ext: resp.ext || '' });
   } catch (e) {
-    if (midiaEl) midiaEl.innerHTML = '<span style="font-size:12px;color:var(--red)">Erro ao enviar arquivo: ' + e.message + '</span>';
+    alert('Erro ao enviar "' + (file.name || 'arquivo') + '": ' + e.message);
+  } finally {
+    window._painelAnexosPend = Math.max(0, window._painelAnexosPend - 1);
+    renderAnexosPainel();
   }
 }
 
-function renderMidiaAnexadaPainel(url, tipo, fileName, ext) {
+// Desenha a lista de anexos pendentes de envio (chips), cada um removível.
+function renderAnexosPainel() {
   const midiaEl = document.getElementById('painel-midia-el');
   const preview = document.getElementById('painel-midia-preview');
   if (!midiaEl) return;
-  let prevHtml = '';
-  if (tipo === 'video') prevHtml = `<video src="${url}" style="max-width:160px;max-height:90px;border-radius:6px" controls></video>`;
-  else if (tipo === 'audio') prevHtml = `<audio src="${url}" controls style="height:32px"></audio>`;
-  else if (tipo === 'documento') {
-    const nome = (fileName || 'arquivo').replace(/</g, '&lt;');
-    prevHtml = `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--text);max-width:220px"><span>📄</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</span></span>`;
+  const anexos = window._painelAnexos || [];
+  const pend = window._painelAnexosPend || 0;
+  if (!anexos.length && !pend) {
+    midiaEl.innerHTML = '';
+    if (preview) preview.style.display = 'none';
+    return;
   }
-  else prevHtml = `<img src="${url}" style="max-width:160px;max-height:90px;border-radius:6px;object-fit:cover">`;
-  midiaEl.innerHTML = prevHtml + ' <button type="button" onclick="removerMidiaPainel()" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:12px;margin-left:6px;vertical-align:middle">✕ remover</button>';
-  midiaEl.dataset.url = url;
-  midiaEl.dataset.tipo = tipo;
-  midiaEl.dataset.nome = fileName || '';
-  midiaEl.dataset.ext = ext || '';
   if (preview) preview.style.display = '';
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">';
+  anexos.forEach((a, idx) => {
+    let inner;
+    if (a.tipo === 'video') inner = `<video src="${a.url}" style="max-width:120px;max-height:70px;border-radius:6px" controls></video>`;
+    else if (a.tipo === 'audio') inner = `<audio src="${a.url}" controls style="height:30px;max-width:170px"></audio>`;
+    else if (a.tipo === 'documento') {
+      const nome = String(a.nome || 'arquivo').replace(/</g, '&lt;');
+      inner = `<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text);max-width:180px"><span>📄</span><span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nome}</span></span>`;
+    }
+    else inner = `<img src="${a.url}" style="max-width:120px;max-height:70px;border-radius:6px;object-fit:cover">`;
+    html += `<div style="display:inline-flex;align-items:center;gap:4px;background:var(--bg2);border:1px solid var(--border2);border-radius:8px;padding:4px 6px">${inner}<button type="button" onclick="removerAnexoPainel(${idx})" title="Remover" style="background:none;border:none;color:var(--red);cursor:pointer;font-size:13px;padding:0 2px;line-height:1">✕</button></div>`;
+  });
+  if (pend) html += `<span style="font-size:12px;color:var(--text2)">Enviando ${pend} arquivo${pend > 1 ? 's' : ''}...</span>`;
+  html += '</div>';
+  if (anexos.length > 1) html += `<div style="font-size:11px;color:var(--text2);margin-top:4px">${anexos.length} anexos — serão enviados em sequência</div>`;
+  midiaEl.innerHTML = html;
 }
 
+// Remove um anexo específico da fila antes do envio.
+function removerAnexoPainel(idx) {
+  if (!window._painelAnexos) return;
+  window._painelAnexos.splice(idx, 1);
+  renderAnexosPainel();
+}
+
+// Limpa toda a fila de anexos (usado ao abrir lead e depois de enviar).
 function removerMidiaPainel() {
-  const midiaEl = document.getElementById('painel-midia-el');
-  const preview = document.getElementById('painel-midia-preview');
-  if (midiaEl) { midiaEl.innerHTML = ''; midiaEl.dataset.url = ''; midiaEl.dataset.tipo = ''; midiaEl.dataset.nome = ''; midiaEl.dataset.ext = ''; }
-  if (preview) preview.style.display = 'none';
+  window._painelAnexos = [];
+  window._painelAnexosPend = 0;
+  renderAnexosPainel();
 }
 
 function painelArquivoDragOver(ev) {
@@ -3061,8 +3086,8 @@ function painelArquivoDragLeave(ev) {
 function painelArquivoDrop(ev) {
   ev.preventDefault();
   ev.currentTarget.style.borderColor = '';
-  const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
-  if (file) uploadArquivoPainel(file);
+  const files = (ev.dataTransfer && ev.dataTransfer.files) ? [...ev.dataTransfer.files] : [];
+  files.forEach(f => uploadArquivoPainel(f));
 }
 
 // Colar (Ctrl+V) na caixa de mensagem: texto cola normalmente (comportamento nativo).
@@ -3545,46 +3570,58 @@ async function sugerirRespostaIA() {
 
 async function enviarMensagemPainel() {
   const texto = (document.getElementById('painel-msg-texto').value || '').trim();
-  const midiaEl = document.getElementById('painel-midia-el');
-  const midia_url = midiaEl && midiaEl.dataset.url ? midiaEl.dataset.url : null;
-  const midia_tipo = midiaEl && midiaEl.dataset.tipo ? midiaEl.dataset.tipo : null;
-  const midia_nome = midiaEl && midiaEl.dataset.nome ? midiaEl.dataset.nome : null;
-  const midia_ext = midiaEl && midiaEl.dataset.ext ? midiaEl.dataset.ext : null;
+  const anexos = (window._painelAnexos || []).slice();
   const st = document.getElementById('painel-msg-status');
-  if (!texto && !midia_url) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem.'; return; }
+  if (!texto && !anexos.length) { st.style.color = 'var(--red)'; st.textContent = 'Escreva uma mensagem.'; return; }
+  if ((window._painelAnexosPend || 0) > 0) { st.style.color = 'var(--red)'; st.textContent = 'Aguarde o envio dos anexos...'; return; }
   if (!window._painelLeadId) return;
+  const leadIdAtual = window._painelLeadId;
+  const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
   st.style.color = 'var(--text2)'; st.textContent = 'Enviando...';
   try {
-    const replyTo = painelReplyTo ? { ...painelReplyTo } : null;
-    const resp = await api('/movatak/admin/leads/' + window._painelLeadId + '/mensagem-rapida', {
-      method: 'POST', body: JSON.stringify({
-        texto, midia_url, midia_tipo, midia_nome, midia_ext,
-        reply_to_conversa_id: replyTo ? replyTo.id : null,
-        reply_to_msg_id: replyTo ? replyTo.msg_id : null
-      })
-    });
-    // Adiciona a mensagem na tela na hora, com o ID real. Se o socket trouxer a
-    // mesma mensagem depois, adicionarMensagemAoPainel ignora (checa o id).
-    adicionarMensagemAoPainel({
-      id: resp.conversaId || null,
-      direcao: 'saida',
-      conteudo: texto || '',
-      midia_url: midia_url || null,
-      midia_tipo: midia_tipo || null,
-      reply_to_conversa_id: replyTo ? replyTo.id : null,
-      reply_to_msg_id: replyTo ? replyTo.msg_id : null,
-      reply_to_direcao: replyTo ? replyTo.direcao : null,
-      reply_to_conteudo: replyTo ? replyTo.conteudo : null,
-      reply_to_midia_url: replyTo ? replyTo.midia_url : null,
-      reply_to_midia_tipo: replyTo ? replyTo.midia_tipo : null,
-      criado_em: resp.criado_em || new Date().toISOString()
-    });
+    // Cada anexo vira uma mensagem própria (igual ao WhatsApp). O texto vai como
+    // legenda do PRIMEIRO envio; sem anexo, envia só o texto. A resposta (reply)
+    // só se anexa ao primeiro envio.
+    const totalEnvios = anexos.length || 1;
+    for (let i = 0; i < totalEnvios; i++) {
+      const a = anexos[i] || null;
+      const textoDoEnvio = i === 0 ? texto : '';
+      if (totalEnvios > 1) { st.style.color = 'var(--text2)'; st.textContent = `Enviando ${i + 1}/${totalEnvios}...`; }
+      const resp = await api('/movatak/admin/leads/' + leadIdAtual + '/mensagem-rapida', {
+        method: 'POST', body: JSON.stringify({
+          texto: textoDoEnvio,
+          midia_url: a ? a.url : null,
+          midia_tipo: a ? a.tipo : null,
+          midia_nome: a ? a.nome : null,
+          midia_ext: a ? a.ext : null,
+          reply_to_conversa_id: (i === 0 && replyTo) ? replyTo.id : null,
+          reply_to_msg_id: (i === 0 && replyTo) ? replyTo.msg_id : null
+        })
+      });
+      // Adiciona a mensagem na tela na hora, com o ID real. Se o socket trouxer a
+      // mesma mensagem depois, adicionarMensagemAoPainel ignora (checa o id).
+      adicionarMensagemAoPainel({
+        id: resp.conversaId || null,
+        direcao: 'saida',
+        conteudo: textoDoEnvio || '',
+        midia_url: a ? a.url : null,
+        midia_tipo: a ? a.tipo : null,
+        midia_nome: a ? a.nome : null,
+        reply_to_conversa_id: (i === 0 && replyTo) ? replyTo.id : null,
+        reply_to_msg_id: (i === 0 && replyTo) ? replyTo.msg_id : null,
+        reply_to_direcao: (i === 0 && replyTo) ? replyTo.direcao : null,
+        reply_to_conteudo: (i === 0 && replyTo) ? replyTo.conteudo : null,
+        reply_to_midia_url: (i === 0 && replyTo) ? replyTo.midia_url : null,
+        reply_to_midia_tipo: (i === 0 && replyTo) ? replyTo.midia_tipo : null,
+        criado_em: resp.criado_em || new Date().toISOString()
+      });
+    }
     cancelarRespostaPainel(false);
     document.getElementById('painel-msg-texto').value = '';
     removerMidiaPainel();
     st.style.color = 'var(--green)'; st.textContent = '✓ Enviado!';
     // Só atualiza o histórico de eventos/fila — a conversa já está correta na tela.
-    const histData = await api('/movatak/admin/leads/' + window._painelLeadId + '/historico');
+    const histData = await api('/movatak/admin/leads/' + leadIdAtual + '/historico');
     renderHistoricoPainel(histData);
   } catch (e) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
 }
@@ -8235,7 +8272,7 @@ async function iniciarPaginaFunilAtendimento() {
                 <div class="painel-composer-cluster">
                   <div class="ccrow">
                     <label title="Anexar arquivo (qualquer tipo, até 20MB)" style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-attach"></use></svg>
-                      <input type="file" style="display:none" onchange="uploadArquivoPainel(this.files[0]); this.value='';">
+                      <input type="file" multiple style="display:none" onchange="[...this.files].forEach(f=>uploadArquivoPainel(f)); this.value='';">
                     </label>
                     <button type="button" id="btn-gravar-audio" onclick="alternarGravacaoAudio(this)" title="Gravar áudio"
                       style="cursor:pointer;background:transparent;border:1px solid var(--border2);border-radius:8px;padding:7px 10px;font-size:13px;color:var(--text);flex-shrink:0"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-mic"></use></svg></button>
