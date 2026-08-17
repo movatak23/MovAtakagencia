@@ -8804,7 +8804,22 @@ function renderFiltrosInbox() {
   }).join('');
 }
 
-function aplicarFiltroInbox(tipo) {
+async function aplicarFiltroInbox(tipo) {
+  // Sair da aba Trancadas re-trava: ao voltar, pede a senha de novo.
+  if (tipo !== 'trancadas') funilState.trancadasUnlocked = false;
+  // Abrir "Trancadas" com senha definida exige a senha ANTES de revelar qualquer coisa.
+  if (tipo === 'trancadas' && funilState.trancarProtegido && !funilState.trancadasUnlocked) {
+    const senha = prompt('Senha para ver as conversas trancadas:');
+    if (senha == null || senha === '') { renderFiltrosInbox(); return; } // cancelou: não entra
+    try {
+      await api('/movatak/admin/clientes/' + funilState.clienteId + '/verificar-senha-trancar', { method: 'POST', body: JSON.stringify({ senha }) });
+      funilState.trancadasUnlocked = true;
+    } catch (e) {
+      alert('Senha incorreta.');
+      renderFiltrosInbox();
+      return; // senha errada: não entra e não mostra nada
+    }
+  }
   funilState.filtroInbox = tipo;
   renderFiltrosInbox();
   renderInboxFunil();
@@ -8895,6 +8910,11 @@ function renderInboxFunil() {
   atualizarBadgeAba();
   const box = document.getElementById('funil-inbox-lista');
   if (!box) return;
+  // Gate da aba Trancadas: enquanto não destravar com a senha, não mostra nada.
+  if (funilState.filtroInbox === 'trancadas' && funilState.trancarProtegido && !funilState.trancadasUnlocked) {
+    box.innerHTML = '<div class="fu-hint" style="padding:22px;text-align:center;line-height:1.5">🔒 Conversas trancadas protegidas por senha.<br>Clique de novo na aba <b>Trancadas</b> e digite a senha para ver.</div>';
+    return;
+  }
   const lista = leadsFiltradosInbox();
   if (!lista.length) {
     box.innerHTML = '<div class="fu-hint" style="padding:18px;text-align:center">Nenhuma conversa aqui.</div>';

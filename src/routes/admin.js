@@ -864,6 +864,23 @@ app.patch('/movatak/admin/leads/:id/trancar', ...exigeLead, async (req, res) => 
   }
 });
 
+// Verifica a senha de trancamento antes de REVELAR a lista de conversas trancadas.
+// Usado pelo gate da aba "Trancadas" (não mostra nada até a senha certa). Sem senha
+// definida no cliente, libera (protegido:false).
+app.post('/movatak/admin/clientes/:id/verificar-senha-trancar', authMovatakOuApp, async (req, res) => {
+  try {
+    const senha = req.body ? req.body.senha : undefined;
+    const r = await query('SELECT senha_trancar_hash FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const hash = r.rows[0].senha_trancar_hash;
+    if (!hash) return res.json({ ok: true, protegido: false });
+    if (!senha || hashSenha(String(senha)) !== hash) return res.status(403).json({ error: 'Senha incorreta.' });
+    res.json({ ok: true, protegido: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/movatak/admin/clientes/:id/ranking', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
