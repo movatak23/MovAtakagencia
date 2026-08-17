@@ -8800,7 +8800,9 @@ function renderFiltrosInbox() {
   const ativo = funilState.filtroInbox || 'todos';
   wrap.innerHTML = filtrosInboxDefs().map(f => {
     const on = f.id === ativo;
-    return `<button onclick="aplicarFiltroInbox('${f.id}')" class="inbox-filtro-btn${on ? ' active' : ''}">${f.label} <span>${contagemInbox(f.id)}</span></button>`;
+    // A aba "Trancadas" não mostra a contagem (privacidade — não revela quantas há).
+    const cont = f.id === 'trancadas' ? '' : ` <span>${contagemInbox(f.id)}</span>`;
+    return `<button onclick="aplicarFiltroInbox('${f.id}')" class="inbox-filtro-btn${on ? ' active' : ''}">${f.label}${cont}</button>`;
   }).join('');
 }
 
