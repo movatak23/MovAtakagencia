@@ -147,6 +147,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
               COALESCE(l.nao_lida,false) AS nao_lida,
               COALESCE(l.arquivado,false) AS arquivado,
+              COALESCE(l.trancado,false) AS trancado,
               COALESCE(l.pediu_atendente,false) AS pediu_atendente, l.pediu_atendente_em,
               s.nome AS setor_nome, s.cor AS setor_cor,
               l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
@@ -170,7 +171,7 @@ app.get('/movatak/vendedor/funil', authVendedor, async (req, res) => {
       params
     );
 
-    const leadsAtivos = leadsRes.rows.filter(l => !l.arquivado);
+    const leadsAtivos = leadsRes.rows.filter(l => !l.arquivado && !l.trancado);
     for (const lead of leadsAtivos) {
       let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
       if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
@@ -412,6 +413,16 @@ app.patch('/movatak/vendedor/leads/:id/arquivar', authVendedor, async (req, res)
     const arquivado = req.body && typeof req.body.arquivado === 'boolean' ? req.body.arquivado : true;
     await query(`UPDATE movatak_leads SET arquivado=$1, atualizado_em=NOW() WHERE id=$2`, [arquivado, lead.id]);
     res.json({ ok: true, arquivado });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/vendedor/leads/:id/trancar', authVendedor, async (req, res) => {
+  try {
+    const lead = await vendedorPodeLead(req, req.params.id);
+    if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    const trancado = req.body && typeof req.body.trancado === 'boolean' ? req.body.trancado : true;
+    await query(`UPDATE movatak_leads SET trancado=$1 WHERE id=$2`, [trancado, lead.id]);
+    res.json({ ok: true, trancado });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

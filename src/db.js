@@ -243,6 +243,10 @@ async function garantirEstruturaQuestionario() {
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS automacao_pausada BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS nao_lida BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS arquivado BOOLEAN DEFAULT false`).catch(() => null);
+  // "Trancado" = conversa escondida da inbox/kanban pelo próprio CRM (equivalente às
+  // conversas trancadas do WhatsApp, que a Z-API não sinaliza no payload). Só aparece
+  // no filtro "Trancadas". Separado de arquivado (arquivar espelha o WhatsApp).
+  await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS trancado BOOLEAN DEFAULT false`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
   await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_atualizada_em TIMESTAMPTZ`).catch(() => null);
   // Pós-follow-up: ação automática quando a régua de FU termina sem resposta.

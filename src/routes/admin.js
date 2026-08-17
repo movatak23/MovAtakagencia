@@ -830,6 +830,19 @@ app.patch('/movatak/admin/leads/:id/arquivar', ...exigeLead, async (req, res) =>
   }
 });
 
+// Trancar/destrancar conversa: esconde o lead da inbox e do kanban (só visível no
+// filtro "Trancadas"). NÃO mexe no WhatsApp — é uma trava local do CRM. Não altera
+// atualizado_em pra não reordenar a inbox ao destrancar.
+app.patch('/movatak/admin/leads/:id/trancar', ...exigeLead, async (req, res) => {
+  try {
+    const trancado = req.body && typeof req.body.trancado === 'boolean' ? req.body.trancado : true;
+    await query(`UPDATE movatak_leads SET trancado = $1 WHERE id = $2`, [trancado, req.params.id]);
+    res.json({ ok: true, trancado });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/movatak/admin/clientes/:id/ranking', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     const r = await query(
@@ -3281,7 +3294,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
       `SELECT lb.*, ult.conteudo AS ultima_msg, ult.direcao AS ultima_msg_direcao, ult.criado_em AS ultima_msg_em, ult.midia_tipo AS ultima_msg_midia
          FROM (
            SELECT l.id, l.nome, l.telefone, l.etapa, l.funil_coluna_id, l.vendedor_id, l.setor_id,
-                  l.nao_lida, l.arquivado, l.foto_url,
+                  l.nao_lida, l.arquivado, COALESCE(l.trancado,false) AS trancado, l.foto_url,
                   COALESCE(l.pediu_atendente,false) AS pediu_atendente, l.pediu_atendente_em,
                   s.nome AS setor_nome, s.cor AS setor_cor,
                   l.criado_em, l.atualizado_em, l.convertido_em, l.prioridade_dispensada_em,
@@ -3306,8 +3319,8 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
       params
     );
 
-    // Leads ativos (não arquivados) — vão para o kanban central.
-    const leadsAtivos = leads.rows.filter(l => !l.arquivado);
+    // Leads ativos (não arquivados nem trancados) — vão para o kanban central.
+    const leadsAtivos = leads.rows.filter(l => !l.arquivado && !l.trancado);
     for (const lead of leadsAtivos) {
       let coluna = lead.funil_coluna_id ? colById.get(Number(lead.funil_coluna_id)) : null;
       if (!coluna) coluna = colBySlug.get(slugFunilPorEtapa(lead.etapa));
@@ -3344,7 +3357,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
     const contagemSetoresRes = await query(
       `SELECT setor_id, COUNT(*)::int AS cnt, COUNT(*) FILTER (WHERE nao_lida = true)::int AS nao_lidas
          FROM movatak_leads
-        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false
+        WHERE cliente_id=$1 AND COALESCE(arquivado,false)=false AND COALESCE(trancado,false)=false
         GROUP BY setor_id`,
       [clienteId]
     );
