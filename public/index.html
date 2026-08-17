@@ -2874,8 +2874,14 @@ async function trancarLeadInbox(leadId) {
   const lead = (funilState.leads || []).find(l => Number(l.id) === Number(leadId));
   if (!lead) return;
   const novo = !lead.trancado;
+  // Se o cliente definiu senha para trancar conversas, pede antes de aplicar.
+  let senha;
+  if (funilState.trancarProtegido) {
+    senha = prompt((novo ? 'Senha para TRANCAR' : 'Senha para DESTRANCAR') + ' esta conversa:');
+    if (senha == null || senha === '') return; // cancelou
+  }
   try {
-    await api('/movatak/admin/leads/' + leadId + '/trancar', { method: 'PATCH', body: JSON.stringify({ trancado: novo }) });
+    await api('/movatak/admin/leads/' + leadId + '/trancar', { method: 'PATCH', body: JSON.stringify({ trancado: novo, senha }) });
     lead.trancado = novo;
     // Se trancou a conversa que está aberta no painel, fecha o painel (ela sumiu da lista).
     if (novo && window._painelLeadId != null && Number(window._painelLeadId) === Number(leadId)) {
@@ -6273,7 +6279,8 @@ function credSetPermissoes(p = {}) {
 async function abrirCredenciais(clienteId) {
   _credClienteId = clienteId;
   _credDados = null;
-  ['cred-nome','cred-whatsapp','cred-instance','cred-token','cred-client-token','cred-cpl','cred-email','cred-senha'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  ['cred-nome','cred-whatsapp','cred-instance','cred-token','cred-client-token','cred-cpl','cred-email','cred-senha','cred-senha-trancar'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  { const rem = document.getElementById('cred-senha-trancar-remover'); if (rem) rem.checked = false; }
   document.getElementById('cred-nicho').value = '';
   document.getElementById('cred-msg').textContent = '';
   document.getElementById('cred-hint').textContent = 'Carregando...';
@@ -6292,6 +6299,9 @@ async function abrirCredenciais(clienteId) {
     document.getElementById('cred-hint').textContent = c.portal_tem_senha
       ? '✓ Senha já definida. Preencha o campo senha apenas se quiser trocar.'
       : '⚠️ Nenhuma senha definida ainda. Defina uma para o cliente conseguir entrar.';
+    { const th = document.getElementById('cred-trancar-hint'); if (th) th.textContent = c.trancar_tem_senha
+        ? '✓ Senha de trancamento ativa. Preencha só se quiser trocar, ou marque remover.'
+        : 'Nenhuma senha de trancamento — trancar conversas não pede senha.'; }
     // Mostra quando o cliente trocou a senha por último (se trocou).
     const msgEl = document.getElementById('cred-msg');
     if (c.portal_senha_trocada_em) {
@@ -6322,6 +6332,8 @@ async function salvarCredenciais() {
   const nicho    = document.getElementById('cred-nicho').value.trim();
   const email    = document.getElementById('cred-email').value.trim();
   const senha    = document.getElementById('cred-senha').value.trim();
+  const senhaTrancar = document.getElementById('cred-senha-trancar').value.trim();
+  const senhaTrancarRemover = !!(document.getElementById('cred-senha-trancar-remover') || {}).checked;
   const msg = document.getElementById('cred-msg');
   const btn = document.getElementById('btn-cred-save');
   if (!nome || !whatsapp || !instance) { msg.style.color = 'var(--red)'; msg.textContent = 'Nome, WhatsApp e Instance ID são obrigatórios.'; return; }
@@ -6340,10 +6352,14 @@ async function salvarCredenciais() {
     if (token) body.zapi_token = token;
     if (clientTk) body.zapi_client_token = clientTk;
     if (senha) body.portal_senha = senha;
+    if (senhaTrancarRemover) body.senha_trancar_remover = true;
+    else if (senhaTrancar) body.senha_trancar = senhaTrancar;
     await api('/movatak/admin/clientes/' + _credClienteId + '/dados', { method: 'PATCH', body: JSON.stringify(body) });
     msg.style.color = 'var(--green)';
     msg.textContent = '✓ Dados e credenciais salvos.' + (email ? ' Envie email e senha para o cliente.' : '');
     document.getElementById('cred-senha').value = '';
+    document.getElementById('cred-senha-trancar').value = '';
+    { const rem = document.getElementById('cred-senha-trancar-remover'); if (rem) rem.checked = false; }
     document.getElementById('cred-token').value = '';
     document.getElementById('cred-client-token').value = '';
     if (_credDados) { _credDados.nicho = nicho; _credDados.nome = nome; }
@@ -8606,6 +8622,7 @@ async function carregarFunilAtendimento() {
     funilState.totalNaoLidas = data.totalNaoLidas || 0;
     funilState.nicho = data.nicho || '';
     funilState.agendaAtiva = !!data.agenda_ativa;
+    funilState.trancarProtegido = !!data.trancar_protegido;
     renderBarraSetores();
     renderFunilAtendimento();
     renderInboxFunil();
@@ -11161,6 +11178,18 @@ function iniciarPollDisparo(){
       <div class="form-field">
         <label>Senha de acesso</label>
         <input type="text" id="cred-senha" placeholder="Deixe em branco para manter a atual">
+      </div>
+      <div class="form-field full" style="border-top:1px solid var(--border2);padding-top:14px;margin-top:4px">
+        <label>🔒 SENHA PARA TRANCAR CONVERSAS</label>
+        <div class="fu-hint" style="margin-bottom:8px">Quando definida, trancar ou destrancar qualquer conversa na inbox exige esta senha. Deixe sem senha para permitir trancar sem pedir nada.</div>
+      </div>
+      <div class="form-field">
+        <label>Senha de trancamento</label>
+        <input type="text" id="cred-senha-trancar" placeholder="Deixe em branco para manter a atual">
+        <div id="cred-trancar-hint" class="fu-hint" style="margin-top:6px"></div>
+      </div>
+      <div class="form-field" style="display:flex;align-items:flex-end">
+        <label class="perm-item" style="cursor:pointer"><input type="checkbox" id="cred-senha-trancar-remover"> Remover a senha de trancamento</label>
       </div>
     </div>
     <div id="cred-hint" class="fu-hint" style="margin-top:8px"></div>

@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.23.0-conversas-trancadas';
+const MOVATAK_VERSION = 'v2.24.0-senha-trancar';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib

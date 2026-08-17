@@ -34,6 +34,7 @@ async function garantirColunasClientesPortal() {
     ADD COLUMN IF NOT EXISTS portal_email TEXT,
     ADD COLUMN IF NOT EXISTS portal_senha_hash TEXT,
     ADD COLUMN IF NOT EXISTS portal_senha_trocada_em TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS senha_trancar_hash TEXT,
     ADD COLUMN IF NOT EXISTS quest_lembrete_msg TEXT,
     ADD COLUMN IF NOT EXISTS quest_lembrete_minutos INTEGER,
     ADD COLUMN IF NOT EXISTS cobranca_v2 JSONB DEFAULT '{}'::jsonb,

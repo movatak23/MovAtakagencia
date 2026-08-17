@@ -136,7 +136,8 @@ app.get('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req,
               pos_followup_acao, pos_followup_coluna_id,
               prospeccao_modo, prospeccao_zapi_instance,
               prospeccao_msg_abordagem, prospeccao_throttle_seg, prospeccao_teto_dia, prospeccao_coluna_entrada_id,
-              CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha
+              CASE WHEN portal_senha_hash IS NULL OR portal_senha_hash = '' THEN false ELSE true END AS portal_tem_senha,
+              CASE WHEN senha_trancar_hash IS NULL OR senha_trancar_hash = '' THEN false ELSE true END AS trancar_tem_senha
        FROM movatak_clientes WHERE id = $1`,
       [req.params.id]
     );
@@ -177,7 +178,7 @@ app.patch('/movatak/admin/clientes/:id/credenciais-portal', authMovatak, async (
 app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirColunasClientesPortal();
-    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha, pos_followup_acao, pos_followup_coluna_id, prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token } = req.body;
+    let { nome, whatsapp, zapi_instance, zapi_token, zapi_client_token, trigger_msg, teto_cpl, nicho, agenda_ativa, permissoes_portal, acao_arquivar_ao_final, acao_marcar_nao_lido, boas_vindas_lead_msg1, boas_vindas_lead_msg2, boas_vindas_lead_delay, ia_oferta, ia_tom, ia_resumo, portal_email, portal_senha, senha_trancar, senha_trancar_remover, pos_followup_acao, pos_followup_coluna_id, prospeccao_modo, prospeccao_zapi_instance, prospeccao_zapi_token, prospeccao_zapi_client_token } = req.body;
 
     // Modo cliente (portal): NUNCA altera dados sensíveis (WhatsApp, Z-API, CPL,
     // permissões, credenciais do portal). Preserva os valores atuais do banco e
@@ -199,6 +200,9 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
       permissoes_portal = undefined;
       portal_email = undefined;
       portal_senha = undefined;
+      // Senha de trancar conversas é administrativa (só o dono define/remove).
+      senha_trancar = undefined;
+      senha_trancar_remover = undefined;
       // Config de prospeccao (número/instância) é sensível → só admin.
       prospeccao_modo = undefined;
       prospeccao_zapi_instance = undefined;
@@ -229,6 +233,10 @@ app.patch('/movatak/admin/clientes/:id/dados', ...forcaClienteIdNaUrl, async (re
     if (pos_followup_coluna_id !== undefined) { campos.push('pos_followup_coluna_id = $' + idx); valores.push(pos_followup_coluna_id ? parseInt(pos_followup_coluna_id) : null); idx++; }
     if (portal_email !== undefined) { campos.push('portal_email = $' + idx); valores.push(portal_email ? String(portal_email).trim().toLowerCase() : null); idx++; }
     if (portal_senha) { campos.push('portal_senha_hash = $' + idx); valores.push(hashSenha(portal_senha)); idx++; }
+    // Senha para trancar/destrancar conversas: define quando vier preenchida; remove
+    // quando senha_trancar_remover=true. Não mexe se nenhum dos dois vier.
+    if (senha_trancar_remover === true) { campos.push('senha_trancar_hash = $' + idx); valores.push(null); idx++; }
+    else if (senha_trancar) { campos.push('senha_trancar_hash = $' + idx); valores.push(hashSenha(String(senha_trancar))); idx++; }
 
     if (zapi_token && zapi_token.trim()) {
       campos.push('zapi_token = $' + idx);
@@ -836,6 +844,19 @@ app.patch('/movatak/admin/leads/:id/arquivar', ...exigeLead, async (req, res) =>
 app.patch('/movatak/admin/leads/:id/trancar', ...exigeLead, async (req, res) => {
   try {
     const trancado = req.body && typeof req.body.trancado === 'boolean' ? req.body.trancado : true;
+    const senha = req.body ? req.body.senha : undefined;
+    // Se o cliente definiu uma senha para trancar conversas, ela é obrigatória e
+    // validada aqui (server-side). Sem senha definida, o fluxo segue como antes.
+    const cli = await query(
+      `SELECT c.senha_trancar_hash FROM movatak_leads l JOIN movatak_clientes c ON c.id = l.cliente_id WHERE l.id = $1`,
+      [req.params.id]
+    );
+    const hash = cli.rows.length ? cli.rows[0].senha_trancar_hash : null;
+    if (hash) {
+      if (!senha || hashSenha(String(senha)) !== hash) {
+        return res.status(403).json({ error: 'Senha incorreta.', senha_requerida: true });
+      }
+    }
     await query(`UPDATE movatak_leads SET trancado = $1 WHERE id = $2`, [trancado, req.params.id]);
     res.json({ ok: true, trancado });
   } catch (e) {
@@ -3343,7 +3364,9 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
     // Setores do cliente + contagem ao vivo (independente do filtro atual,
     // pra mostrar "Financeiro 5 / Negociação 4" nas abas mesmo trocando de aba).
     const clienteInfoRes = await query(
-      `SELECT nicho, agenda_ativa FROM movatak_clientes WHERE id=$1`,
+      `SELECT nicho, agenda_ativa,
+              CASE WHEN senha_trancar_hash IS NULL OR senha_trancar_hash = '' THEN false ELSE true END AS trancar_protegido
+         FROM movatak_clientes WHERE id=$1`,
       [clienteId]
     ).catch(() => ({ rows: [] }));
     const clienteInfo = clienteInfoRes.rows[0] || {};
@@ -3375,6 +3398,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
       colunas, colunasVendedores,
       setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
       nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
+      trancar_protegido: !!clienteInfo.trancar_protegido,
       leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

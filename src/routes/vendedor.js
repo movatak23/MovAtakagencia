@@ -421,6 +421,15 @@ app.patch('/movatak/vendedor/leads/:id/trancar', authVendedor, async (req, res) 
     const lead = await vendedorPodeLead(req, req.params.id);
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
     const trancado = req.body && typeof req.body.trancado === 'boolean' ? req.body.trancado : true;
+    const senha = req.body ? req.body.senha : undefined;
+    // Mesma senha de trancar do cliente (definida pelo dono nas Credenciais).
+    const cli = await query('SELECT senha_trancar_hash FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
+    const hash = cli.rows.length ? cli.rows[0].senha_trancar_hash : null;
+    if (hash) {
+      if (!senha || hashSenha(String(senha)) !== hash) {
+        return res.status(403).json({ error: 'Senha incorreta.', senha_requerida: true });
+      }
+    }
     await query(`UPDATE movatak_leads SET trancado=$1 WHERE id=$2`, [trancado, lead.id]);
     res.json({ ok: true, trancado });
   } catch (e) { res.status(500).json({ error: e.message }); }
