@@ -77,12 +77,22 @@ async function chamarHaiku(systemPrompt, userPrompt) {
   });
   if (!resp.ok) {
     const t = await resp.text().catch(() => '');
+    // Sem crédito na Anthropic (billing): liga o alerta global para o CRM avisar o gestor.
+    if ((resp.status === 400 || resp.status === 402) && /credit balance is too low|billing|insufficient/i.test(t)) {
+      _iaSemCredito = { desde: _iaSemCredito ? _iaSemCredito.desde : new Date().toISOString() };
+    }
     throw new Error('Erro na IA (' + resp.status + '): ' + t.slice(0, 200));
   }
   const data = await resp.json();
+  if (_iaSemCredito) _iaSemCredito = null; // recuperou: qualquer resposta OK zera o alerta
   const texto = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
   return texto;
 }
+
+// Estado global do crédito da IA (a ANTHROPIC_API_KEY é do servidor inteiro).
+// null = ok; { desde } = a Anthropic recusou por falta de crédito. Zera no 1º sucesso.
+let _iaSemCredito = null;
+function iaSemCredito() { return _iaSemCredito; }
 
 async function gerarRespostaIALead(leadId) {
   await garantirEstruturaConversas();
@@ -403,4 +413,5 @@ module.exports = {
   respostaIAViolaTravas,
   transferirIAParaHumano,
   iaResponderAutomatico,
+  iaSemCredito,
 };

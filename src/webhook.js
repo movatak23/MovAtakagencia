@@ -19,6 +19,21 @@ const { enviarMsgQuestionario, iniciarQuestionario, processarRespostaQuestionari
 const { iaResponderAutomatico, localizarCampanhaPorIA } = require('./ia');
 const { ehGrupoOuCanal, ehLidValor, extrairDigitosTelefone, telefonesEquivalentes, variantesTelefone, registrarErroZapi, enviarAlerta } = require('./util');
 
+// Cache leve (TTL 5 min) p/ aliviar a rajada de mensagens de GRUPO (número costuma
+// estar em grupos muito ativos). instanceId -> clienteId e "clienteId|chaveGrupo" ->
+// leadId. Em regime, cada mensagem de grupo faz só UPDATE + registrar conversa
+// (antes eram ~4 queries: SELECT cliente + SELECT lead + UPDATE/INSERT + conversa).
+const _grpClienteCache = new Map();
+const _grpLeadCache = new Map();
+const _GRP_TTL_MS = 5 * 60 * 1000;
+function _grpCacheGet(map, key) {
+  const v = map.get(key);
+  if (v && v.exp > Date.now()) return v.val;
+  if (v) map.delete(key);
+  return null;
+}
+function _grpCacheSet(map, key, val) { map.set(key, { val, exp: Date.now() + _GRP_TTL_MS }); }
+
 // Chave de identidade do contato para a coluna telefone (que é NOT NULL): usa o
 // número real quando existe; senão o @lid (contatos que o WhatsApp só identifica
 // por LID). Nunca deixa nulo e nunca grava dígitos de LID como se fossem telefone.
@@ -499,30 +514,41 @@ async function handleZapi(req, res) {
     if (body.isGroup || ehGrupoOuCanal(_chaveGrupo)) {
       try {
         if (!instanceId) return;
-        const rcg = await query('SELECT * FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
-        if (!rcg.rows.length) return;
-        const clienteG = rcg.rows[0];
+        // Cliente-por-instância (cacheado): só o id é usado.
+        let clienteGId = _grpCacheGet(_grpClienteCache, instanceId);
+        if (!clienteGId) {
+          const rcg = await query('SELECT id FROM movatak_clientes WHERE zapi_instance = $1 AND ativo = true', [instanceId]);
+          if (!rcg.rows.length) return;
+          clienteGId = rcg.rows[0].id;
+          _grpCacheSet(_grpClienteCache, instanceId, clienteGId);
+        }
         const grupoChave = _chaveGrupo;
         if (!grupoChave) return;
-        const nomeGrupo = body.chatName || body.notifyName || ('Grupo ' + grupoChave.slice(0, 10));
         const ehSaidaG = !!body.fromMe;
-        // Localiza pela "chave" do grupo, guardada no campo telefone do lead.
-        let lg = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [clienteG.id, grupoChave]);
-        let lgId;
-        if (lg.rows.length) {
-          lgId = lg.rows[0].id;
-          await query('UPDATE movatak_leads SET atualizado_em=NOW(), nao_lida=$2 WHERE id=$1', [lgId, ehSaidaG ? false : true]).catch(() => null);
-        } else {
-          const nv = await query(
-            `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
-             VALUES ($1, $2, $3, 'lead', $4, $5, NOW()) RETURNING id`,
-            [clienteG.id, grupoChave, nomeGrupo, chatLid, ehSaidaG ? false : true]
-          );
-          lgId = nv.rows[0].id;
+        // Id do lead-de-grupo (cacheado por "clienteId|chaveGrupo"): evita o SELECT
+        // e o INSERT em toda mensagem. Se o lead for apagado, o cache expira em 5 min
+        // e o UPDATE/registro apenas não pega (os .catch abaixo absorvem).
+        const _grpKey = clienteGId + '|' + grupoChave;
+        let lgId = _grpCacheGet(_grpLeadCache, _grpKey);
+        if (!lgId) {
+          const lg = await query('SELECT id FROM movatak_leads WHERE cliente_id=$1 AND telefone=$2 LIMIT 1', [clienteGId, grupoChave]);
+          if (lg.rows.length) {
+            lgId = lg.rows[0].id;
+          } else {
+            const nomeGrupo = body.chatName || body.notifyName || ('Grupo ' + grupoChave.slice(0, 10));
+            const nv = await query(
+              `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
+               VALUES ($1, $2, $3, 'lead', $4, $5, NOW()) RETURNING id`,
+              [clienteGId, grupoChave, nomeGrupo, chatLid, ehSaidaG ? false : true]
+            );
+            lgId = nv.rows[0].id;
+          }
+          _grpCacheSet(_grpLeadCache, _grpKey, lgId);
         }
+        await query('UPDATE movatak_leads SET atualizado_em=NOW(), nao_lida=$2 WHERE id=$1', [lgId, ehSaidaG ? false : true]).catch(() => null);
         const midiaG = extrairMidiaPayloadZapi(body);
         const remetenteG = ehSaidaG ? '' : (body.senderName ? body.senderName + ': ' : '');
-        await registrarConversa(lgId, clienteG.id, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null, null, midiaG.nome).catch(() => null);
+        await registrarConversa(lgId, clienteGId, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null, null, midiaG.nome).catch(() => null);
       } catch (e) {
         console.error('[zapi][grupo] erro:', e.message);
       }

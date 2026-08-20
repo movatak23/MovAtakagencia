@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { agendarCobranca, lerConfigCobranca } = require('../cobranca');
 const { criarDisparo, controlarDisparo, listarDisparos, enviarTesteDisparo } = require('../disparo');
 const { garantirEstruturaDisparos } = require('../db');
+const { iaSemCredito } = require('../ia');
 
 // ============================================================
 // src/routes/admin.js — Fase 5a da refatoracao.
@@ -3417,6 +3418,7 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
       setores, setorAtivo: setorFiltro, totalGeral, totalNaoLidas,
       nicho: clienteInfo.nicho || null, agenda_ativa: !!clienteInfo.agenda_ativa,
       trancar_protegido: !!clienteInfo.trancar_protegido,
+      ia_sem_credito: iaSemCredito() ? true : false, // alerta global p/ recarregar créditos da IA
       leads: leads.rows // lista completa (inclui arquivados) — usada pela caixa de entrada (coluna esquerda)
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

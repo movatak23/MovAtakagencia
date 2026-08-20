@@ -8609,6 +8609,24 @@ function skeletonInboxHTML() {
   return row.repeat(7);
 }
 
+// Banner de alerta quando a IA fica sem créditos na Anthropic (ANTHROPIC_API_KEY do
+// servidor). Mostra link direto pro billing. Some sozinho quando a IA volta a responder
+// (o backend zera o flag no 1º sucesso). O "×" dispensa só nesta sessão do navegador.
+function renderAlertaIA(semCredito) {
+  let el = document.getElementById('alerta-ia-credito');
+  if (!semCredito) { if (el) el.remove(); return; }
+  if (window._alertaIADispensado) return;
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'alerta-ia-credito';
+  el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#b91c1c;color:#fff;padding:10px 16px;display:flex;gap:12px;align-items:center;justify-content:center;flex-wrap:wrap;font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.3)';
+  el.innerHTML =
+    '<span>⚠️ <b>IA sem créditos</b> — os leads não estão recebendo resposta automática.</span>' +
+    '<a href="https://console.anthropic.com/settings/billing" target="_blank" rel="noopener noreferrer" style="background:#fff;color:#b91c1c;font-weight:700;padding:5px 12px;border-radius:6px;text-decoration:none;white-space:nowrap">Recarregar créditos ↗</a>' +
+    '<button title="Dispensar até recarregar a página" onclick="window._alertaIADispensado=true;var a=document.getElementById(\'alerta-ia-credito\');if(a)a.remove();" style="background:transparent;border:0;color:#fff;font-size:20px;cursor:pointer;line-height:1;padding:0 4px">×</button>';
+  document.body.appendChild(el);
+}
+
 async function carregarFunilAtendimento() {
   const board = document.getElementById('funil-board');
   const status = document.getElementById('funil-status');
@@ -8634,6 +8652,7 @@ async function carregarFunilAtendimento() {
     funilState.nicho = data.nicho || '';
     funilState.agendaAtiva = !!data.agenda_ativa;
     funilState.trancarProtegido = !!data.trancar_protegido;
+    renderAlertaIA(!!data.ia_sem_credito);
     renderBarraSetores();
     renderFunilAtendimento();
     renderInboxFunil();
