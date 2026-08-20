@@ -398,6 +398,20 @@ async function iaResponderAutomatico(cliente, lead, textoLead) {
     return true;
   } catch (e) {
     console.error(`[ia-auto] erro no lead ${lead && lead.id}:`, e.message);
+    // Degradação graciosa: se a falha foi FALTA DE CRÉDITO na IA, não deixa o lead
+    // no vácuo — manda um aviso neutro e transfere p/ humano. O transferir marca
+    // não-lido + pediu_atendente e PAUSA a automação, então não repete a cada
+    // mensagem que o lead mandar (o guard de lead pausado no webhook barra).
+    if (lead && iaSemCredito()) {
+      try {
+        await transferirIAParaHumano(cliente, lead, 'ia_sem_credito',
+          'Recebi sua mensagem! 🙌 Só um instante que já te respondo por aqui.');
+        console.warn(`[ia-auto] lead ${lead.id}: IA sem crédito — aviso neutro enviado + transferido p/ humano`);
+        return true;
+      } catch (e2) {
+        console.error(`[ia-auto] falha no fallback sem-crédito lead ${lead.id}:`, e2.message);
+      }
+    }
     return false;
   }
 }
