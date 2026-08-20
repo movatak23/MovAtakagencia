@@ -3300,8 +3300,9 @@ app.get('/movatak/admin/clientes/:id/funil', authMovatakOuApp, async (req, res) 
     const clienteId = req.ehCliente ? req.clienteId : parseInt(req.params.id, 10);
     const setorFiltro = req.query.setor ? parseInt(req.query.setor, 10) : null;
     await garantirFunilPadraoCliente(clienteId);
-    // Garante a coluna do avatar antes da query referenciá-la (no-op se já existe).
-    await query(`ALTER TABLE movatak_leads ADD COLUMN IF NOT EXISTS foto_url TEXT`).catch(() => null);
+    // (A coluna foto_url é criada uma vez no startup — ver db.js. NÃO rodar ALTER TABLE
+    //  por request: pega lock exclusivo em movatak_leads e colide com os inserts dos
+    //  webhooks, causando blips de "Failed to fetch" no funil sob rajada.)
 
     // "Todos" mostra todas as colunas. Um setor específico mostra só as colunas
     // atribuídas a ele (configurado pelo seletor de setor no cabeçalho da coluna).

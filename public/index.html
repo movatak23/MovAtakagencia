@@ -1504,29 +1504,40 @@ async function api(path, opts = {}, raw = false) {
         ? { 'x-vendedor-token': _vendedorToken }
         : { 'x-movatak-secret': secret });
   const pathFinal = adaptarPathVendedor(path);
-  const controller = new AbortController();
   const metodo = String((opts && opts.method) || 'GET').toUpperCase();
   const timeoutMs = Number(opts.timeoutMs || (metodo === 'GET' ? 20000 : 60000));
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res;
-  try {
-    res = await fetch(API_BASE + pathFinal, {
-      ...opts,
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...authHeaders,
-        ...(opts.headers || {})
+  // GET é idempotente: em falha de REDE ("Failed to fetch") tenta 1 vez mais antes
+  // de propagar o erro. Isso absorve blips do servidor sob rajada de webhooks e evita
+  // o "Erro ao atualizar funil: Failed to fetch" piscando na tela. Mutações (POST/PATCH/
+  // DELETE) NUNCA são reenviadas, para não duplicar ação.
+  const maxTentativas = metodo === 'GET' ? 2 : 1;
+  let res, erroRede;
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      res = await fetch(API_BASE + pathFinal, {
+        ...opts,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders,
+          ...(opts.headers || {})
+        }
+      });
+      erroRede = null;
+      break;
+    } catch (e) {
+      if (e && e.name === 'AbortError') {
+        throw new Error('Tempo esgotado ao carregar dados. Verifique se o backend recebeu o index.js atualizado e tente novamente.');
       }
-    });
-  } catch (e) {
-    if (e && e.name === 'AbortError') {
-      throw new Error('Tempo esgotado ao carregar dados. Verifique se o backend recebeu o index.js atualizado e tente novamente.');
+      erroRede = e;
+    } finally {
+      clearTimeout(timer);
     }
-    throw e;
-  } finally {
-    clearTimeout(timer);
+    if (tentativa < maxTentativas) await new Promise(r => setTimeout(r, 700));
   }
+  if (erroRede) throw erroRede;
   if (res.status === 401 && !raw) {
     if (ehPaginaFunilAtendimento && ehPaginaFunilAtendimento()) {
       const st = document.getElementById('funil-status');
