@@ -3077,9 +3077,9 @@ app.post('/movatak/admin/leads/:id/reativar-followup', ...exigeLead, async (req,
     const lead = rl.rows[0];
     await query(`UPDATE movatak_leads SET etapa='followup', atualizado_em=NOW() WHERE id=$1`, [lead.id]);
     await agendarFollowupV2(lead.id, lead.cliente_id, seq, true);
-    await enviarFollowupsPendentesDoLead(lead.id, seq);
-    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up ' + seq + ' disparado manualmente', { sequencia: seq });
-    res.json({ ok: true, sequencia: seq });
+    const envio = (await enviarFollowupsPendentesDoLead(lead.id, seq)) || {};
+    await registrarEventoLead(lead.id, lead.cliente_id, 'followup_reativado', 'Follow-up ' + seq + ' disparado manualmente', { sequencia: seq, envio });
+    res.json({ ok: true, sequencia: seq, envio });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

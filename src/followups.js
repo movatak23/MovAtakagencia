@@ -101,9 +101,12 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
     params
   );
 
+  // Resumo do disparo, para o painel avisar o que REALMENTE aconteceu (o botão FU
+  // manual reporta isto em vez de fingir sucesso quando não há nada a enviar).
+  const res = { enviados: 0, candidatos: r.rows.length, semConfig: 0, ausencia: 0, antiSpam: 0, grupo: 0, foraEtapa: 0, erros: 0 };
   if (!r.rows.length) {
     console.log(`[followup][imediato] nenhuma mensagem pendente para lead ${leadId}`);
-    return;
+    return res;
   }
 
   for (const row of r.rows) {
@@ -111,10 +114,12 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       // Trava de segurança: nunca envia follow-up para grupos ou canais.
       if (ehGrupoOuCanal(row.telefone)) {
         await query(`UPDATE movatak_followup SET status='cancelado' WHERE id=$1`, [row.id]).catch(() => null);
+        res.grupo++;
         continue;
       }
       if (row.etapa !== 'followup') {
         console.log(`[followup][imediato] lead ${leadId} ignorado porque etapa=${row.etapa}`);
+        res.foraEtapa++;
         continue;
       }
 
@@ -128,6 +133,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       if (!msgText || !String(msgText).trim()) {
         await query(`UPDATE movatak_followup SET status = 'enviado', enviado_em = NOW() WHERE id = $1`, [row.id]);
         console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} vazia; marcada como enviada -> lead ${leadId}`);
+        res.semConfig++;
         continue;
       }
 
@@ -138,6 +144,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       // assim o FU só sai quando o expediente volta (humano qualifica o lead antes).
       if (clienteRowEmAusencia(row)) {
         console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} adiado: cliente em ausência -> lead ${leadId}`);
+        res.ausencia++;
         continue;
       }
 
@@ -145,6 +152,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
         await query(`UPDATE movatak_followup SET status = 'pausado', erro_envio = 'limite anti-spam diario atingido' WHERE id = $1`, [row.id]);
         await registrarEventoLead(leadId, row.cliente_id, 'anti_spam', 'Mensagem automática pausada por limite diário', { followup_id: row.id });
         console.log(`[anti-spam] limite diario atingido -> lead ${leadId}`);
+        res.antiSpam++;
         continue;
       }
 
@@ -171,6 +179,7 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
         { followup_id: row.id, sequencia_fu: row.sequencia_fu || 1, etapa_seq: row.etapa_seq }
       );
       console.log(`[followup][imediato] FU${row.sequencia_fu || 1} msg${row.etapa_seq} enviada -> lead ${leadId}`);
+      res.enviados++;
     } catch (e) {
       await query(
         `UPDATE movatak_followup
@@ -181,9 +190,11 @@ async function enviarFollowupsPendentesDoLead(leadId, apenasSequenciaFu = null) 
       await registrarErroZapi(row.cliente_id, e.message, { lead_id: leadId, followup_id: row.id });
       await registrarEventoLead(leadId, row.cliente_id, 'erro_envio', 'Erro ao enviar mensagem de follow-up', { erro: e.message, followup_id: row.id });
       console.error(`[followup][imediato] erro ao enviar lead ${leadId} fila ${row.id}:`, e.message);
+      res.erros++;
       // Não marca como enviado. O cron tentará reenviar depois.
     }
   }
+  return res;
 }
 
 async function migrarFU1ParaFU2() {

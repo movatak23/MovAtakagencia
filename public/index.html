@@ -4060,13 +4060,26 @@ async function enviarMensagemRapidaLead() {
 
 async function reativarFollowupManual(leadId, sequencia) {
   const seq = Number(sequencia) === 2 ? 2 : 1;
+  if (!leadId) { mostrarToast('Abra a conversa do lead antes de disparar o follow-up.', 'erro'); return; }
   const st = document.getElementById('funil-status');
   if (st) { st.style.color = 'var(--text2)'; st.textContent = 'Disparando Follow-up ' + seq + '...'; }
   try {
-    await api('/movatak/admin/leads/' + leadId + '/reativar-followup', { method: 'POST', body: JSON.stringify({ sequencia: seq }) });
-    if (st) { st.style.color = 'var(--green)'; st.textContent = '✓ Follow-up ' + seq + ' disparado.'; }
+    const r = await api('/movatak/admin/leads/' + leadId + '/reativar-followup', { method: 'POST', body: JSON.stringify({ sequencia: seq }) });
+    // Mostra o que REALMENTE aconteceu (antes fingia "✓ disparado" mesmo sem enviar nada).
+    const e = (r && r.envio) || {};
+    let msg, tipo;
+    if (e.enviados > 0) { msg = '✓ Follow-up ' + seq + ' enviado (' + e.enviados + ' msg).'; tipo = 'ok'; }
+    else if (e.semConfig > 0) { msg = '⚠️ FU' + seq + ' sem mensagem configurada para este cliente. Configure em Follow-up.'; tipo = 'erro'; }
+    else if (e.ausencia > 0) { msg = '⏰ Fora do horário (ausência) — o FU' + seq + ' sai quando o expediente voltar.'; tipo = 'erro'; }
+    else if (e.antiSpam > 0) { msg = '⚠️ Limite anti-spam diário atingido — FU' + seq + ' não saiu agora.'; tipo = 'erro'; }
+    else if (e.grupo > 0) { msg = '⚠️ Contato de grupo/canal não recebe follow-up.'; tipo = 'erro'; }
+    else if (e.erros > 0) { msg = '⚠️ Falha ao enviar o FU' + seq + ' — veja o histórico do lead.'; tipo = 'erro'; }
+    else { msg = 'Nada a enviar no FU' + seq + ' (sem mensagem pendente).'; tipo = 'erro'; }
+    mostrarToast(msg, tipo);
+    if (st) { st.style.color = tipo === 'ok' ? 'var(--green)' : 'var(--red)'; st.textContent = msg; }
     await carregarFunilAtendimento();
   } catch (e) {
+    mostrarToast('Erro ao disparar FU' + seq + ': ' + e.message, 'erro');
     if (st) { st.style.color = 'var(--red)'; st.textContent = 'Erro: ' + e.message; }
   }
 }
