@@ -2109,4 +2109,7 @@ httpServer.listen(PORT, () => {
   garantirEstruturaFunil().catch(e => console.error('[funil] schema:', e.message));
   garantirEstruturaCaptacao().catch(e => console.error('[captacao] schema:', e.message));
   garantirEstruturaCanais().catch(e => console.error('[canais] schema:', e.message));
+  // Mensagens rápidas também no boot: a coluna `categoria` (v2.27.0) só nascia na
+  // primeira chamada da rota, então até alguém abrir o funil o campo não existia.
+  garantirEstruturaMensagensRapidas().catch(e => console.error('[msgs-rapidas] schema:', e.message));
 });
