@@ -9536,7 +9536,7 @@ function toggleFunilView() {
 }
 
 // ===== Coluna de Mensagens Rápidas (menu "Visual:") =====
-// Fica à ESQUERDA de tudo (Rápidas | Inbox | Kanban | Chat) e é ligada/desligada
+// Fica à DIREITA de tudo (Inbox | Kanban | Chat | Rápidas) e é ligada/desligada
 // pelo botão "⚡ Rápidas" da barra Visual. Clicar numa mensagem ENVIA na hora para o
 // lead aberto — mesmo comportamento do menu rápido do compositor (reusa
 // usarMsgRapidaPainel, então texto, sequência e autoatendimento funcionam igual).
@@ -9568,8 +9568,8 @@ function montarColunaRapidas() {
       '</div>' +
       '<div class="funil-rapidas-lista"></div>' +
       '<button type="button" class="funil-rapidas-gerenciar" onclick="abrirGerenciarMsgsRapidas()">📝 Gerenciar</button>';
-    wrap.appendChild(col);
     wrap.appendChild(grid);
+    wrap.appendChild(col);
   });
   aplicarVisibilidadeColunaRapidas();
   montarBotaoColunaRapidas();
