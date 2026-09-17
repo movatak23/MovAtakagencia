@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.29.1-fix-saudacao-virando-comando';
+const MOVATAK_VERSION = 'v2.29.2-teste-regressao-comandos';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib
