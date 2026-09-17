@@ -4189,6 +4189,16 @@ function resumoMsgRapidaGerenciar(m, limite = 170) {
   return String(txt).length > limite ? String(txt).slice(0, limite) + '...' : String(txt);
 }
 
+// Categorias que já existem, pra sugerir no campo (evita "Pagamento" e "pagamento").
+function categoriasRapidasExistentes() {
+  const set = new Set();
+  (msgsRapidasCache || []).forEach(m => {
+    const c = (m.categoria && String(m.categoria).trim()) ? String(m.categoria).trim() : '';
+    if (c) set.add(c);
+  });
+  return [...set].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+}
+
 function renderEditorMsgRapidaAdmin(m) {
   const id = Number(m.id);
   const ehAuto = !!m.template_id;
@@ -4220,6 +4230,10 @@ function renderEditorMsgRapidaAdmin(m) {
       </div>
     </div>
     <input id="msg-edit-titulo-${id}" class="fu-textarea msg-admin-title-input" value="${escapeHtml(m.titulo || '')}" placeholder="Título/atalho">
+    <label class="msg-admin-field-label">Categoria (opcional)</label>
+    <input id="msg-edit-categoria-${id}" class="fu-textarea msg-admin-title-input" list="datalist-cats-rapidas"
+           value="${escapeHtml(m.categoria || '')}" placeholder="Ex.: Automotivo, Pagamento, Provedor...">
+    <datalist id="datalist-cats-rapidas">${categoriasRapidasExistentes().map(c => `<option value="${escapeHtml(c)}">`).join('')}</datalist>
     ${conteudoEditor}
     <div class="msg-admin-edit-actions">
       <button class="btn-cancel" type="button" onclick="cancelarEdicaoMsgRapidaAdmin()">Cancelar</button>
@@ -4286,7 +4300,9 @@ async function salvarEdicaoMsgRapidaAdmin(id) {
   const titulo = (tituloEl ? tituloEl.value : '').trim();
   if (!titulo) { if (st) { st.style.color = 'var(--red)'; st.textContent = 'Preencha o título/atalho.'; } return; }
 
-  const body = { titulo };
+  const catEl = document.getElementById('msg-edit-categoria-' + id);
+  // Mandado SEMPRE (inclusive ''): o backend trata '' como limpar a categoria.
+  const body = { titulo, categoria: catEl ? catEl.value.trim() : '' };
   if (!m.template_id) {
     if (Array.isArray(m.itens) && m.itens.length) {
       body.itens = m.itens.map((it, i) => {
@@ -9623,11 +9639,58 @@ function filtrarColunaRapidas(termo) {
 
 // Desenha a lista. Sem lead aberto os botões ficam desabilitados: enviar exige
 // window._painelLeadId (é o mesmo guard de enviarSequenciaRapida).
+const RAPIDAS_CAT_FECHADAS_KEY = 'movatak-rapidas-cats-fechadas';
+
+function catsFechadas() {
+  try { return new Set(JSON.parse(localStorage.getItem(RAPIDAS_CAT_FECHADAS_KEY) || '[]')); }
+  catch (e) { return new Set(); }
+}
+
+// Abre/fecha uma seção. O estado é por navegador e sobrevive ao recarregar.
+function toggleCategoriaRapidas(cat) {
+  const set = catsFechadas();
+  if (set.has(cat)) set.delete(cat); else set.add(cat);
+  try { localStorage.setItem(RAPIDAS_CAT_FECHADAS_KEY, JSON.stringify([...set])); } catch (e) {}
+  renderColunaRapidas();
+}
+
+// Agrupa por categoria preservando a ordem que o backend mandou (mais usadas primeiro).
+// "Sem categoria" sempre por último — é onde caem todas as mensagens antigas.
+function agruparRapidasPorCategoria(itens) {
+  const SEM = 'Sem categoria';
+  const mapa = new Map();
+  itens.forEach(m => {
+    const cat = (m.categoria && String(m.categoria).trim()) ? String(m.categoria).trim() : SEM;
+    if (!mapa.has(cat)) mapa.set(cat, []);
+    mapa.get(cat).push(m);
+  });
+  const cats = [...mapa.keys()].filter(c => c !== SEM).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (mapa.has(SEM)) cats.push(SEM);
+  return cats.map(c => ({ cat: c, itens: mapa.get(c) }));
+}
+
+function botaoRapidaItem(m, temLead) {
+  const ehAuto = !!m.template_id;
+  const ehSeq = Array.isArray(m.itens) && m.itens.length > 0;
+  const icone = ehAuto ? '🔄 ' : (ehSeq ? '🔁 ' : '');
+  const tip = ehAuto ? 'Inicia o autoatendimento completo'
+            : (ehSeq ? 'Envia ' + m.itens.length + ' mensagens em sequência' : (m.texto || ''));
+  const previa = String(m.texto || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+  return '<button type="button" class="funil-rapida-item" ' + (temLead ? '' : 'disabled ') +
+         'onclick="usarMsgRapidaPainel(' + Number(m.id) + ', this)" title="' + escapeHtml(tip) + '">' +
+           '<span class="funil-rapida-titulo">' + icone + escapeHtml(m.titulo || '(sem título)') + '</span>' +
+           (previa ? '<span class="funil-rapida-previa">' + escapeHtml(previa) + '</span>' : '') +
+         '</button>';
+}
+
+// Desenha a lista agrupada. Sem lead aberto os botões ficam desabilitados: enviar exige
+// window._painelLeadId (é o mesmo guard de enviarSequenciaRapida).
 function renderColunaRapidas() {
   const filtro = window._rapidasColFiltro || '';
   const temLead = !!window._painelLeadId;
   const itens = (msgsRapidasCache || []).filter(m =>
     !filtro || String(m.titulo || '').toLowerCase().includes(filtro) || String(m.texto || '').toLowerCase().includes(filtro));
+  const fechadas = catsFechadas();
   document.querySelectorAll('.funil-rapidas-lista').forEach(lista => {
     if (!(msgsRapidasCache || []).length) {
       lista.innerHTML = '<div class="funil-rapidas-vazio">Nenhuma mensagem rápida cadastrada.</div>';
@@ -9637,20 +9700,26 @@ function renderColunaRapidas() {
       lista.innerHTML = '<div class="funil-rapidas-vazio">Nada encontrado para essa busca.</div>';
       return;
     }
-    lista.innerHTML = (!temLead ? '<div class="funil-rapidas-aviso">Abra uma conversa para enviar.</div>' : '')
-      + itens.map(m => {
-        const ehAuto = !!m.template_id;
-        const ehSeq = Array.isArray(m.itens) && m.itens.length > 0;
-        const icone = ehAuto ? '🔄 ' : (ehSeq ? '🔁 ' : '');
-        const tip = ehAuto ? 'Inicia o autoatendimento completo'
-                  : (ehSeq ? 'Envia ' + m.itens.length + ' mensagens em sequência' : (m.texto || ''));
-        const previa = String(m.texto || '').replace(/\s+/g, ' ').trim().slice(0, 70);
-        return '<button type="button" class="funil-rapida-item" ' + (temLead ? '' : 'disabled ') +
-               'onclick="usarMsgRapidaPainel(' + Number(m.id) + ', this)" title="' + escapeHtml(tip) + '">' +
-                 '<span class="funil-rapida-titulo">' + icone + escapeHtml(m.titulo || '(sem título)') + '</span>' +
-                 (previa ? '<span class="funil-rapida-previa">' + escapeHtml(previa) + '</span>' : '') +
-               '</button>';
-      }).join('');
+    const grupos = agruparRapidasPorCategoria(itens);
+    const aviso = !temLead ? '<div class="funil-rapidas-aviso">Abra uma conversa para enviar.</div>' : '';
+    // Categoria única (tudo sem categoria, p.ex.) não vira seção: seria um cabeçalho
+    // inútil ocupando a coluna inteira.
+    if (grupos.length <= 1) {
+      lista.innerHTML = aviso + grupos[0].itens.map(m => botaoRapidaItem(m, temLead)).join('');
+      return;
+    }
+    lista.innerHTML = aviso + grupos.map(g => {
+      // Durante uma busca as seções ficam todas abertas: o resultado tem que aparecer.
+      const fechada = !filtro && fechadas.has(g.cat);
+      return '<div class="funil-rapidas-grupo">' +
+        '<button type="button" class="funil-rapidas-cat" onclick="toggleCategoriaRapidas(' + JSON.stringify(g.cat).replace(/"/g, '&quot;') + ')">' +
+          '<span class="funil-rapidas-cat-seta">' + (fechada ? '▸' : '▾') + '</span>' +
+          '<span class="funil-rapidas-cat-nome">' + escapeHtml(g.cat) + '</span>' +
+          '<span class="funil-rapidas-cat-qtd">' + g.itens.length + '</span>' +
+        '</button>' +
+        (fechada ? '' : '<div class="funil-rapidas-grupo-itens">' + g.itens.map(m => botaoRapidaItem(m, temLead)).join('') + '</div>') +
+      '</div>';
+    }).join('');
   });
 }
 
@@ -10615,6 +10684,15 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-rapida-item:disabled{opacity:.5;cursor:not-allowed}
 .funil-rapida-titulo{font-size:11px;font-weight:700;overflow-wrap:anywhere}
 .funil-rapida-previa{font-size:10px;color:var(--text2);overflow-wrap:anywhere;line-height:1.3}
+.funil-rapidas-grupo{display:flex;flex-direction:column;gap:5px}
+.funil-rapidas-cat{display:flex;align-items:center;gap:6px;width:100%;box-sizing:border-box;cursor:pointer;
+  padding:5px 6px;border-radius:7px;background:none;border:none;color:var(--text2);font-size:10px;
+  font-weight:700;text-transform:uppercase;letter-spacing:.3px;text-align:left}
+.funil-rapidas-cat:hover{background:var(--bg3);color:var(--text)}
+.funil-rapidas-cat-seta{flex:none;font-size:9px}
+.funil-rapidas-cat-nome{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.funil-rapidas-cat-qtd{flex:none;background:var(--bg3);border-radius:999px;padding:1px 6px;font-size:9px}
+.funil-rapidas-grupo-itens{display:flex;flex-direction:column;gap:6px;padding-left:2px}
 .funil-rapidas-vazio,.funil-rapidas-aviso{font-size:10px;color:var(--text2);padding:4px 2px;line-height:1.35}
 .funil-rapidas-aviso{color:var(--amber)}
 .funil-rapidas-gerenciar{flex:none;font-size:11px;padding:6px;border-radius:8px;cursor:pointer;

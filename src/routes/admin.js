@@ -2921,7 +2921,7 @@ app.delete('/movatak/admin/questionario-templates/:tid', ...exigeQuestTemplate, 
 app.get('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens, template_id FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
+    const r = await query('SELECT id, titulo, texto, midia_url, vezes_usado, ordem, itens, template_id, categoria FROM movatak_mensagens_rapidas WHERE cliente_id=$1 ORDER BY vezes_usado DESC, ordem ASC, id ASC', [req.params.id]);
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2929,7 +2929,7 @@ app.get('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl,
 app.post('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl, async (req, res) => {
   try {
     await garantirEstruturaMensagensRapidas();
-    const { titulo, texto, midia_url, itens, template_id } = req.body || {};
+    const { titulo, texto, midia_url, itens, template_id, categoria } = req.body || {};
     const sequencia = Array.isArray(itens) ? itens.filter(it => it && (it.texto || it.midia_url)) : [];
     if (!titulo) return res.status(400).json({ error: 'Título obrigatório.' });
     if (!sequencia.length && !texto) return res.status(400).json({ error: 'Texto obrigatório.' });
@@ -2939,8 +2939,8 @@ app.post('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl
       ? (texto || sequencia.map(it => it.texto || '').filter(Boolean).join(' ')).trim().slice(0, 500) || titulo.trim()
       : texto.trim();
     const r = await query(
-      'INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens, template_id) VALUES ($1,$2,$3,$4,$5::jsonb,$6) RETURNING id, titulo, texto, midia_url, ordem, itens, template_id',
-      [req.params.id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia), template_id ? parseInt(template_id, 10) : null]
+      'INSERT INTO movatak_mensagens_rapidas (cliente_id, titulo, texto, midia_url, itens, template_id, categoria) VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7) RETURNING id, titulo, texto, midia_url, ordem, itens, template_id, categoria',
+      [req.params.id, titulo.trim(), textoFinal, sequencia.length ? null : (midia_url || null), JSON.stringify(sequencia), template_id ? parseInt(template_id, 10) : null, (categoria && String(categoria).trim()) ? String(categoria).trim().slice(0, 60) : null]
     );
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -2948,7 +2948,7 @@ app.post('/movatak/admin/clientes/:id/mensagens-rapidas', ...forcaClienteIdNaUrl
 
 app.patch('/movatak/admin/mensagens-rapidas/:id', ...exigeMsgRapida, async (req, res) => {
   try {
-    const { titulo, texto, midia_url, itens } = req.body || {};
+    const { titulo, texto, midia_url, itens, categoria } = req.body || {};
     await query(
       `UPDATE movatak_mensagens_rapidas SET
          titulo = COALESCE($1, titulo),
@@ -2963,6 +2963,13 @@ app.patch('/movatak/admin/mensagens-rapidas/:id', ...exigeMsgRapida, async (req,
         req.params.id
       ]
     );
+    // Categoria vai em UPDATE à parte, fora do COALESCE: assim mandar "" LIMPA a
+    // categoria (COALESCE não deixaria voltar pra NULL). Mesmo padrão do
+    // questionario_coluna_destino_id.
+    if (Object.prototype.hasOwnProperty.call(req.body || {}, 'categoria')) {
+      const cat = (categoria && String(categoria).trim()) ? String(categoria).trim().slice(0, 60) : null;
+      await query('UPDATE movatak_mensagens_rapidas SET categoria=$1 WHERE id=$2', [cat, req.params.id]);
+    }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

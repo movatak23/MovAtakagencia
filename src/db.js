@@ -390,6 +390,9 @@ async function garantirEstruturaMensagensRapidas() {
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS vezes_usado INTEGER DEFAULT 0`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS itens JSONB DEFAULT '[]'::jsonb`).catch(() => null);
   await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS template_id INTEGER`).catch(() => null);
+  // Categoria livre (o atendente digita; a tela sugere as já usadas). NULL/'' = "Sem
+  // categoria", que é como toda mensagem existente fica — nada muda até categorizarem.
+  await query(`ALTER TABLE movatak_mensagens_rapidas ADD COLUMN IF NOT EXISTS categoria TEXT`).catch(() => null);
 }
 
 async function garantirEstruturaFunil() {
