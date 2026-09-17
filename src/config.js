@@ -5,7 +5,7 @@ const crypto = require('crypto');
 // ============================================================
 // VERSÃO — incrementar a cada atualização
 // ============================================================
-const MOVATAK_VERSION = 'v2.25.1-bolha-sem-scroll-horizontal';
+const MOVATAK_VERSION = 'v2.26.0-coluna-mensagens-rapidas';
 
 // ============================================================
 // Cloudflare R2 (armazenamento de anexos). Carregado de forma segura: se a lib

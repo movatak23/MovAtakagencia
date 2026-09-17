@@ -2932,6 +2932,8 @@ async function marcarLeadComoLido(leadId) {
 }
 
 function fecharPainelLead() {
+  // Sem lead aberto a coluna de rápidas desabilita os botões (enviar exige lead).
+  setTimeout(() => { try { renderColunaRapidas(); } catch (e) {} }, 0);
   const vazio = document.getElementById('funil-chat-vazio');
   const conteudo = document.getElementById('funil-chat-conteudo');
   if (vazio) vazio.style.display = '';
@@ -4085,6 +4087,9 @@ async function carregarMsgsRapidas() {
   try {
     msgsRapidasCache = await api('/movatak/admin/clientes/' + funilState.clienteId + '/mensagens-rapidas');
   } catch (e) { msgsRapidasCache = []; }
+  // Mantem a coluna "⚡ Rápidas" em dia: este é o único ponto que recarrega o cache
+  // (abrir lead, gerenciar, salvar), então basta redesenhar aqui.
+  try { renderColunaRapidas(); } catch (e) {}
 }
 
 function usarMsgRapida(id) {
@@ -9529,6 +9534,132 @@ function toggleFunilView() {
   localStorage.setItem('movatak_funil_view', clean ? 'completo' : 'clean');
   aplicarFunilView();
 }
+
+// ===== Coluna de Mensagens Rápidas (menu "Visual:") =====
+// Fica à ESQUERDA de tudo (Rápidas | Inbox | Kanban | Chat) e é ligada/desligada
+// pelo botão "⚡ Rápidas" da barra Visual. Clicar numa mensagem ENVIA na hora para o
+// lead aberto — mesmo comportamento do menu rápido do compositor (reusa
+// usarMsgRapidaPainel, então texto, sequência e autoatendimento funcionam igual).
+//
+// POR QUE FORA DO GRID: o .funil-3col-grid tem grid-template-columns definido para
+// cada combinação de hide-inbox/hide-kanban/hide-chat. Uma 4ª coluna dentro dele
+// obrigaria a reescrever todas essas combinações. Então a coluna entra num wrapper
+// flex QUE ENVOLVE o grid — o CSS existente continua valendo sem um único ajuste.
+// A montagem é em JS (e não no HTML) porque o painel e o modal de atendimento são
+// dois blocos duplicados; assim os dois ganham a coluna sem markup repetido.
+const RAPIDAS_COL_KEY = 'movatak-funil-rapidas-visivel';
+
+function rapidasColVisivel() {
+  try { return localStorage.getItem(RAPIDAS_COL_KEY) === '1'; } catch (e) { return false; }
+}
+
+function montarColunaRapidas() {
+  document.querySelectorAll('.funil-3col-grid').forEach(grid => {
+    if (grid.parentElement && grid.parentElement.classList.contains('funil-rapidas-wrap')) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'funil-rapidas-wrap';
+    grid.parentNode.insertBefore(wrap, grid);
+    const col = document.createElement('aside');
+    col.className = 'funil-rapidas-col';
+    col.innerHTML =
+      '<div class="funil-rapidas-head">' +
+        '<span class="funil-rapidas-titulo">⚡ Mensagens rápidas</span>' +
+        '<input type="text" class="funil-rapidas-busca" placeholder="🔍 Buscar..." oninput="filtrarColunaRapidas(this.value)">' +
+      '</div>' +
+      '<div class="funil-rapidas-lista"></div>' +
+      '<button type="button" class="funil-rapidas-gerenciar" onclick="abrirGerenciarMsgsRapidas()">📝 Gerenciar</button>';
+    wrap.appendChild(col);
+    wrap.appendChild(grid);
+  });
+  aplicarVisibilidadeColunaRapidas();
+  montarBotaoColunaRapidas();
+}
+
+// Botão na barra "Visual:", antes do botão de visão completa (que é appendChild).
+function montarBotaoColunaRapidas() {
+  document.querySelectorAll('.funil-layout-controls').forEach(tb => {
+    if (tb.querySelector('.btn-col-rapidas')) return;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'funil-layout-btn btn-col-rapidas';
+    b.textContent = '⚡ Rápidas';
+    b.addEventListener('click', toggleColunaRapidas);
+    const completo = tb.querySelector('.btn-funil-view');
+    if (completo) tb.insertBefore(b, completo); else tb.appendChild(b);
+  });
+  atualizarBotaoColunaRapidas();
+}
+
+function atualizarBotaoColunaRapidas() {
+  const vis = rapidasColVisivel();
+  document.querySelectorAll('.btn-col-rapidas').forEach(b => {
+    b.classList.toggle('is-active', vis);
+    b.classList.toggle('is-hidden', !vis);
+    b.title = vis ? 'Ocultar mensagens rápidas' : 'Mostrar mensagens rápidas';
+  });
+}
+
+function aplicarVisibilidadeColunaRapidas() {
+  const vis = rapidasColVisivel();
+  document.querySelectorAll('.funil-rapidas-wrap').forEach(w => w.classList.toggle('rapidas-on', vis));
+  if (vis) renderColunaRapidas();
+}
+
+function toggleColunaRapidas() {
+  const novo = !rapidasColVisivel();
+  try { localStorage.setItem(RAPIDAS_COL_KEY, novo ? '1' : '0'); } catch (e) {}
+  aplicarVisibilidadeColunaRapidas();
+  atualizarBotaoColunaRapidas();
+  // Primeira abertura numa sessão em que o painel ainda não carregou o cache.
+  if (novo && !(msgsRapidasCache || []).length) {
+    carregarMsgsRapidas().then(renderColunaRapidas).catch(() => {});
+  }
+}
+
+function filtrarColunaRapidas(termo) {
+  window._rapidasColFiltro = String(termo || '').toLowerCase();
+  renderColunaRapidas();
+}
+
+// Desenha a lista. Sem lead aberto os botões ficam desabilitados: enviar exige
+// window._painelLeadId (é o mesmo guard de enviarSequenciaRapida).
+function renderColunaRapidas() {
+  const filtro = window._rapidasColFiltro || '';
+  const temLead = !!window._painelLeadId;
+  const itens = (msgsRapidasCache || []).filter(m =>
+    !filtro || String(m.titulo || '').toLowerCase().includes(filtro) || String(m.texto || '').toLowerCase().includes(filtro));
+  document.querySelectorAll('.funil-rapidas-lista').forEach(lista => {
+    if (!(msgsRapidasCache || []).length) {
+      lista.innerHTML = '<div class="funil-rapidas-vazio">Nenhuma mensagem rápida cadastrada.</div>';
+      return;
+    }
+    if (!itens.length) {
+      lista.innerHTML = '<div class="funil-rapidas-vazio">Nada encontrado para essa busca.</div>';
+      return;
+    }
+    lista.innerHTML = (!temLead ? '<div class="funil-rapidas-aviso">Abra uma conversa para enviar.</div>' : '')
+      + itens.map(m => {
+        const ehAuto = !!m.template_id;
+        const ehSeq = Array.isArray(m.itens) && m.itens.length > 0;
+        const icone = ehAuto ? '🔄 ' : (ehSeq ? '🔁 ' : '');
+        const tip = ehAuto ? 'Inicia o autoatendimento completo'
+                  : (ehSeq ? 'Envia ' + m.itens.length + ' mensagens em sequência' : (m.texto || ''));
+        const previa = String(m.texto || '').replace(/\s+/g, ' ').trim().slice(0, 70);
+        return '<button type="button" class="funil-rapida-item" ' + (temLead ? '' : 'disabled ') +
+               'onclick="usarMsgRapidaPainel(' + Number(m.id) + ', this)" title="' + escapeHtml(tip) + '">' +
+                 '<span class="funil-rapida-titulo">' + icone + escapeHtml(m.titulo || '(sem título)') + '</span>' +
+                 (previa ? '<span class="funil-rapida-previa">' + escapeHtml(previa) + '</span>' : '') +
+               '</button>';
+      }).join('');
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', montarColunaRapidas);
+} else {
+  montarColunaRapidas();
+}
+
 // Injeta o botao em toda toolbar do funil (cobre painel e modal sem depender do
 // HTML duplicado). Idempotente: nao duplica se ja existe.
 function montarBotaoFunilView() {
@@ -10464,6 +10595,32 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-page .funil-toolbar.aberta, #modal-funil-atendimento .funil-toolbar.aberta{display:flex}
 
 /* Grid de 3 colunas: inbox | kanban | chat — tudo travado à altura visível */
+/* ===== Coluna de Mensagens Rapidas (barra "Visual:") =====
+   O wrapper envolve o .funil-3col-grid; a coluna e irma do grid, nunca filha —
+   assim nenhum grid-template-columns das combinacoes hide-* precisa mudar. */
+.funil-rapidas-wrap{display:flex;gap:16px;flex:1;min-height:0;min-width:0}
+.funil-rapidas-wrap > .funil-3col-grid{flex:1;min-width:0}
+.funil-rapidas-col{display:none;flex:0 0 220px;min-width:0;flex-direction:column;gap:8px;
+  background:var(--bg2);border:1px solid var(--border2);border-radius:10px;padding:10px;overflow:hidden}
+.funil-rapidas-wrap.rapidas-on > .funil-rapidas-col{display:flex}
+.funil-rapidas-head{display:flex;flex-direction:column;gap:6px;flex:none}
+.funil-rapidas-titulo{font-size:12px;font-weight:700;color:var(--text)}
+.funil-rapidas-busca{width:100%;box-sizing:border-box;font-size:11px;padding:5px 8px;border-radius:7px;
+  background:var(--bg3);border:1px solid var(--border2);color:var(--text)}
+.funil-rapidas-lista{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;gap:6px}
+.funil-rapida-item{display:flex;flex-direction:column;align-items:flex-start;gap:2px;width:100%;
+  box-sizing:border-box;text-align:left;cursor:pointer;padding:7px 9px;border-radius:8px;
+  background:var(--bg3);border:1px solid var(--border2);color:var(--text)}
+.funil-rapida-item:hover:not(:disabled){border-color:var(--accent)}
+.funil-rapida-item:disabled{opacity:.5;cursor:not-allowed}
+.funil-rapida-titulo{font-size:11px;font-weight:700;overflow-wrap:anywhere}
+.funil-rapida-previa{font-size:10px;color:var(--text2);overflow-wrap:anywhere;line-height:1.3}
+.funil-rapidas-vazio,.funil-rapidas-aviso{font-size:10px;color:var(--text2);padding:4px 2px;line-height:1.35}
+.funil-rapidas-aviso{color:var(--amber)}
+.funil-rapidas-gerenciar{flex:none;font-size:11px;padding:6px;border-radius:8px;cursor:pointer;
+  background:none;border:1px dashed var(--border2);color:var(--text2)}
+.funil-rapidas-gerenciar:hover{border-color:var(--accent);color:var(--text)}
+@media (max-width:1200px){.funil-rapidas-wrap.rapidas-on > .funil-rapidas-col{flex:0 0 180px}}
 .funil-3col-grid{display:grid;grid-template-columns:280px 1fr 380px;gap:16px;flex:1;min-height:0;overflow:hidden}
 /* Modo reordenável: vira flex; cada painel tem largura própria e posição via order,
    então a largura acompanha o painel, não a coluna fixa. */
