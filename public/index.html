@@ -6834,6 +6834,13 @@ function toggleColunaFunil(coluna) {
   }
   grid.classList.toggle(cls);
   salvarLayoutFunil();
+  // Regra dos 3 painéis: ligar um quarto derruba o mais antigo (ver aplicarLimitePaineis).
+  if (!vaiOcultar) {
+    registrarAtivacaoPainel(coluna);
+    avisarPaineisQueSairam(aplicarLimitePaineis(coluna));
+  } else {
+    esquecerAtivacaoPainel(coluna);
+  }
 }
 
 function mostrarTodasColunasFunil() {
@@ -9589,6 +9596,9 @@ function montarColunaRapidas() {
   });
   aplicarVisibilidadeColunaRapidas();
   montarBotaoColunaRapidas();
+  // Layout salvo antes desta regra pode ter os 4 ligados: corta pro limite ao abrir.
+  aplicarLimitePaineis(null);
+  atualizarBotaoColunaRapidas();
 }
 
 // Botão na barra "Visual:", antes do botão de visão completa (que é appendChild).
@@ -9621,11 +9631,21 @@ function aplicarVisibilidadeColunaRapidas() {
   if (vis) renderColunaRapidas();
 }
 
-function toggleColunaRapidas() {
-  const novo = !rapidasColVisivel();
-  try { localStorage.setItem(RAPIDAS_COL_KEY, novo ? '1' : '0'); } catch (e) {}
+function definirColunaRapidasVisivel(visivel) {
+  try { localStorage.setItem(RAPIDAS_COL_KEY, visivel ? '1' : '0'); } catch (e) {}
   aplicarVisibilidadeColunaRapidas();
   atualizarBotaoColunaRapidas();
+}
+
+function toggleColunaRapidas() {
+  const novo = !rapidasColVisivel();
+  definirColunaRapidasVisivel(novo);
+  if (novo) {
+    registrarAtivacaoPainel('rapidas');
+    avisarPaineisQueSairam(aplicarLimitePaineis('rapidas'));
+  } else {
+    esquecerAtivacaoPainel('rapidas');
+  }
   // Primeira abertura numa sessão em que o painel ainda não carregou o cache.
   if (novo && !(msgsRapidasCache || []).length) {
     carregarMsgsRapidas().then(renderColunaRapidas).catch(() => {});
@@ -9639,6 +9659,78 @@ function filtrarColunaRapidas(termo) {
 
 // Desenha a lista. Sem lead aberto os botões ficam desabilitados: enviar exige
 // window._painelLeadId (é o mesmo guard de enviarSequenciaRapida).
+// ===== Regra do menu "Visual:" — no máximo 3 painéis ligados ao mesmo tempo =====
+// São 4 candidatos (Inbox, Kanban, Chat, Rápidas) e a tela não comporta os 4 sem
+// espremer todo mundo. Ao ligar o quarto, sai o que está ligado há MAIS TEMPO, então
+// o clique do usuário sempre funciona (não bloqueia). O botão "Completo" não entra
+// na conta: ele muda a densidade dos cards, não é painel.
+const PAINEIS_VISUAL = ['inbox', 'kanban', 'chat', 'rapidas'];
+const PAINEIS_LIMITE = 3;
+const PAINEIS_ATIVACAO_KEY = 'movatak-funil-ordem-ativacao';
+const PAINEL_ROTULO = { inbox: '☰ Inbox', kanban: '▦ Kanban', chat: '💬 Chat', rapidas: '⚡ Rápidas' };
+
+function painelVisualAtivo(nome) {
+  return nome === 'rapidas' ? rapidasColVisivel() : !colunaFunilEstaOculta(nome);
+}
+function paineisVisualAtivos() { return PAINEIS_VISUAL.filter(painelVisualAtivo); }
+
+function ordemAtivacaoPaineis() {
+  try {
+    const l = JSON.parse(localStorage.getItem(PAINEIS_ATIVACAO_KEY) || '[]');
+    return Array.isArray(l) ? l.filter(n => PAINEIS_VISUAL.includes(n)) : [];
+  } catch (e) { return []; }
+}
+function salvarOrdemAtivacaoPaineis(l) {
+  try { localStorage.setItem(PAINEIS_ATIVACAO_KEY, JSON.stringify(l)); } catch (e) {}
+}
+function registrarAtivacaoPainel(nome) {
+  const l = ordemAtivacaoPaineis().filter(n => n !== nome);
+  l.push(nome);
+  salvarOrdemAtivacaoPaineis(l);
+}
+function esquecerAtivacaoPainel(nome) {
+  salvarOrdemAtivacaoPaineis(ordemAtivacaoPaineis().filter(n => n !== nome));
+}
+
+function desligarPainelVisual(nome) {
+  if (nome === 'rapidas') {
+    definirColunaRapidasVisivel(false);
+  } else {
+    const grid = getFunilLayoutGrid();
+    if (grid) { grid.classList.add('hide-' + nome); salvarLayoutFunil(); }
+  }
+  esquecerAtivacaoPainel(nome);
+}
+
+// Corta até sobrarem PAINEIS_LIMITE, sempre pelo mais antigo. `entrando` é o painel
+// que o usuário acabou de ligar — esse nunca é escolhido pra sair. Devolve os que
+// saíram (pra avisar na tela).
+function aplicarLimitePaineis(entrando) {
+  const saiu = [];
+  let ativos = paineisVisualAtivos();
+  let voltas = 0;
+  while (ativos.length > PAINEIS_LIMITE && voltas++ < PAINEIS_VISUAL.length) {
+    const candidatos = ativos.filter(n => n !== entrando);
+    const ordem = ordemAtivacaoPaineis();
+    // Quem nunca passou pela fila (layout salvo antes desta regra) conta como o mais
+    // antigo de todos — é o caso de quem já estava com os 4 ligados.
+    const semRegistro = candidatos.filter(n => !ordem.includes(n));
+    const alvo = semRegistro.length ? semRegistro[0] : ordem.find(n => candidatos.includes(n));
+    if (!alvo) break;
+    desligarPainelVisual(alvo);
+    saiu.push(alvo);
+    ativos = paineisVisualAtivos();
+  }
+  if (saiu.length) atualizarBotoesLayoutFunil();
+  return saiu;
+}
+
+function avisarPaineisQueSairam(saiu) {
+  if (!saiu || !saiu.length) return;
+  const nomes = saiu.map(n => PAINEL_ROTULO[n] || n).join(', ');
+  try { mostrarToast('Máximo de 3 painéis — ' + nomes + (saiu.length > 1 ? ' saíram' : ' saiu')); } catch (e) {}
+}
+
 // ===== Arrastar mensagem rápida de uma categoria para outra =====
 // O MESMO botão envia no clique, então a trava abaixo existe pra que soltar um
 // arrasto não vire envio acidental ao lead. O HTML5 normalmente não dispara click
