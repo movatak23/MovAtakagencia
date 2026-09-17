@@ -478,6 +478,9 @@ async function handleZapi(req, res) {
     // e body.caption). Antes ficava só em body.text, então mídia com legenda perdia o
     // texto — só o anexo era gravado.
     const texto      = extrairTextoPayloadZapi(body);
+    // Descrição de mensagem especial (contato/localização/enquete/resposta de botão).
+    // Só serve pro que é GRAVADO na conversa; nenhuma automação enxerga isso.
+    const textoEspecial = texto ? null : descreverMensagemEspecial(body);
     const replyPayload = extrairReplyPayloadZapi(body);
     // Anúncio Click-to-WhatsApp: se a mensagem veio de um anúncio Meta, a Z-API
     // envia o objeto externalAdReply (título/frase, imagem, id do anúncio, ctwaClid).
@@ -548,7 +551,7 @@ async function handleZapi(req, res) {
         await query('UPDATE movatak_leads SET atualizado_em=NOW(), nao_lida=$2 WHERE id=$1', [lgId, ehSaidaG ? false : true]).catch(() => null);
         const midiaG = extrairMidiaPayloadZapi(body);
         const remetenteG = ehSaidaG ? '' : (body.senderName ? body.senderName + ': ' : '');
-        await registrarConversa(lgId, clienteGId, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null, null, midiaG.nome).catch(() => null);
+        await registrarConversa(lgId, clienteGId, ehSaidaG ? 'saida' : 'entrada', remetenteG + (texto || textoEspecial || ''), midiaG.url, midiaG.tipo, body.messageId || body.id || null, null, null, midiaG.nome).catch(() => null);
       } catch (e) {
         console.error('[zapi][grupo] erro:', e.message);
       }
@@ -672,14 +675,14 @@ async function handleZapi(req, res) {
         // existe no CRM. Antes era ignorada; agora cria um contato simples, sem acionar
         // automação nem marcar como não lido.
         const chaveFromMe = chaveContato(telefone, chatLid);
-        if (!ehComandoInterno && chaveFromMe && ((texto && String(texto).trim()) || midiaFromMe.url)) {
+        if (!ehComandoInterno && chaveFromMe && ((texto && String(texto).trim()) || textoEspecial || midiaFromMe.url)) {
           const novoLeadFromMe = await query(
             `INSERT INTO movatak_leads (cliente_id, telefone, nome, etapa, chat_lid, nao_lida, atualizado_em)
              VALUES ($1, $2, $3, 'lead', $4, false, NOW())
              RETURNING id`,
             [cliente.id, chaveFromMe, extrairNomeContatoPayloadZapi(body, cliente, telefone), chatLid]
           );
-          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web', midiaFromMe.nome).catch(() => null);
+          await registrarConversa(novoLeadFromMe.rows[0].id, cliente.id, 'saida', texto || textoEspecial || '', midiaFromMe.url, midiaFromMe.tipo, body.messageId || body.id || null, replyPayload, 'whatsapp_web', midiaFromMe.nome).catch(() => null);
           await registrarEventoLead(novoLeadFromMe.rows[0].id, cliente.id, 'contato_criado_whatsapp_web', 'Contato criado a partir de mensagem enviada no WhatsApp Web', { telefone, chatLid }).catch(() => null);
         }
         return;
@@ -689,7 +692,7 @@ async function handleZapi(req, res) {
       // uma mensagem que o PRÓPRIO CRM enviou não deve ser interpretado como comando.
       let jaRegistrada = false;
       let origemJaReg = null; // origem da conversa já gravada (pra distinguir eco AUTOMÁTICO de comando HUMANO do painel)
-      if ((texto && String(texto).trim()) || midiaFromMe.url) {
+      if ((texto && String(texto).trim()) || textoEspecial || midiaFromMe.url) {
         // Evita duplicar: se a mensagem foi enviada pelo PRÓPRIO painel, ela já foi
         // gravada no banco (com o mesmo messageId do Z-API) no momento do envio. O
         // webhook fromMe chega logo depois confirmando o mesmo envio — se já existe
@@ -721,7 +724,7 @@ async function handleZapi(req, res) {
         }
         if (!jaRegistrada) {
           const replyFromMe = await resolverReplyInfoLead(leadFromMe.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web', midiaFromMe.nome).catch(() => null);
+          await registrarConversa(leadFromMe.id, cliente.id, 'saida', texto || textoEspecial || '', midiaFromMe.url, midiaFromMe.tipo, msgIdFromMe, replyFromMe.info, 'whatsapp_web', midiaFromMe.nome).catch(() => null);
           // Mensagem humana (não é comando interno) → o atendente assumiu; limpa o sinal.
           if (!ehComandoInterno) await limparPedidoAtendente(leadFromMe.id);
         } else {
@@ -923,10 +926,10 @@ async function handleZapi(req, res) {
 
     // Gravar mensagem recebida na conversa (agora que o lead está disponível) —
     // cobre texto puro, mídia pura (ex: áudio sem legenda) e mídia com legenda.
-    if (lead && (texto || midiaRecebida.url)) {
+    if (lead && (texto || textoEspecial || midiaRecebida.url)) {
       const msgIdEntrada = body.messageId || body.id || null;
       const replyEntrada = await resolverReplyInfoLead(lead.id, null, replyPayload ? replyPayload.reply_to_msg_id : null, replyPayload);
-      registrarConversa(lead.id, cliente.id, 'entrada', texto || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info, null, midiaRecebida.nome).catch(() => null);
+      registrarConversa(lead.id, cliente.id, 'entrada', texto || textoEspecial || '', midiaRecebida.url, midiaRecebida.tipo, msgIdEntrada, replyEntrada.info, null, midiaRecebida.nome).catch(() => null);
     }
 
     // Opt-out do disparo em massa: se o lead responder "sair/parar/cancelar", suprime
@@ -1133,7 +1136,7 @@ async function handleZapi(req, res) {
       // Antes ela ficava fora do histórico porque o lead ainda não existia no momento inicial da busca.
       const midiaNovoLead = extrairMidiaPayloadZapi(body);
       const msgIdNovoLead = body.messageId || body.id || null;
-      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload, null, midiaNovoLead.nome).catch(() => null);
+      await registrarConversa(novoLead.rows[0].id, cliente.id, 'entrada', texto || textoEspecial || '', midiaNovoLead.url, midiaNovoLead.tipo, msgIdNovoLead, replyPayload, null, midiaNovoLead.nome).catch(() => null);
       if (anuncio) await aplicarAnuncioNoLead(novoLead.rows[0].id, cliente.id, anuncio);
 
       // Decide se inicia o questionário:
@@ -1181,7 +1184,7 @@ async function handleZapi(req, res) {
       );
       const midiaNovoContato = extrairMidiaPayloadZapi(body);
       const msgIdNovoContato = body.messageId || body.id || null;
-      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload, null, midiaNovoContato.nome).catch(() => null);
+      await registrarConversa(novoContato.rows[0].id, cliente.id, 'entrada', texto || textoEspecial || '', midiaNovoContato.url, midiaNovoContato.tipo, msgIdNovoContato, replyPayload, null, midiaNovoContato.nome).catch(() => null);
       await registrarEventoLead(novoContato.rows[0].id, cliente.id, 'contato_criado_whatsapp', 'Contato comum criado a partir de mensagem recebida no WhatsApp', { telefone, chatLid }).catch(() => null);
       if (anuncio) await aplicarAnuncioNoLead(novoContato.rows[0].id, cliente.id, anuncio);
       console.log(`[zapi] Novo contato WhatsApp criado sem automação -> ${telefone} (${cliente.nome})`);
@@ -1387,8 +1390,50 @@ function extrairMidiaPayloadZapi(body) {
     const nomeDoc = body.document.fileName || body.document.title || null;
     return { url: body.document.documentUrl || body.document.url, tipo: 'documento', nome: nomeDoc ? String(nomeDoc).slice(0, 300) : null };
   }
+  // Figurinha: a Z-API manda `sticker.stickerUrl` (image/webp). Tratada como IMAGEM
+  // pra aparecer desenhada na conversa — antes a mensagem inteira sumia do histórico,
+  // porque sem url de mídia e sem texto a gravação nem acontecia.
+  if (body.sticker && (body.sticker.stickerUrl || body.sticker.url)) {
+    return { url: body.sticker.stickerUrl || body.sticker.url, tipo: 'imagem', nome: null };
+  }
   const fallback = body.fileUrl || body.mediaUrl || null;
   return fallback ? { url: fallback, tipo: null, nome: null } : { url: null, tipo: null, nome: null };
+}
+
+// Mensagens que não são texto nem mídia baixável (contato, localização, enquete,
+// resposta de botão/lista). Antes sumiam do histórico sem deixar rastro, abrindo
+// buracos na conversa. Aqui viram uma descrição curta que é GRAVADA na bolha.
+// ⚠️ De propósito NÃO alimenta a variável `texto` do handler: gatilhos, questionário,
+// IA e comandos continuam vendo exatamente o que viam antes (nada muda de automação).
+function descreverMensagemEspecial(body) {
+  if (!body || typeof body !== 'object') return null;
+  const corta = (v, n) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const c = body.contact || (Array.isArray(body.contacts) ? body.contacts[0] : null);
+  if (c && (c.displayName || c.vCard)) {
+    const fone = Array.isArray(c.phones) && c.phones.length ? ' (' + corta(c.phones[0], 20) + ')' : '';
+    return '👤 Contato: ' + (corta(c.displayName, 60) || 'sem nome') + fone;
+  }
+  if (body.location && (body.location.latitude != null || body.location.name)) {
+    const onde = corta(body.location.name || body.location.address, 80);
+    const coord = (body.location.latitude != null && body.location.longitude != null)
+      ? ' (' + Number(body.location.latitude).toFixed(5) + ', ' + Number(body.location.longitude).toFixed(5) + ')'
+      : '';
+    return '📍 Localização' + (onde ? ': ' + onde : '') + coord;
+  }
+  const poll = body.poll || body.pollCreation;
+  if (poll && (poll.question || Array.isArray(poll.options))) {
+    const opts = Array.isArray(poll.options) ? poll.options.map(o => corta(o && o.name, 40)).filter(Boolean) : [];
+    return '📊 Enquete: ' + corta(poll.question, 120) + (opts.length ? ' — ' + opts.join(' / ') : '');
+  }
+  if (body.buttonsResponseMessage && body.buttonsResponseMessage.message) {
+    return corta(body.buttonsResponseMessage.message, 200);
+  }
+  if (body.listResponseMessage && (body.listResponseMessage.title || body.listResponseMessage.message)) {
+    const t = corta(body.listResponseMessage.title, 80);
+    const m = corta(body.listResponseMessage.message, 160);
+    return t && m ? t + ' — ' + m : (t || m);
+  }
+  return null;
 }
 
 // Busca o objeto de anúncio Click-to-WhatsApp no payload. A Z-API o envia como

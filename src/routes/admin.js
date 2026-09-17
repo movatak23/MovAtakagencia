@@ -1321,15 +1321,25 @@ app.get('/movatak/admin/leads/:id/conversas', ...exigeLead, async (req, res) => 
     // (ORDER BY ... DESC) e depois reordenamos em ordem cronológica para exibir.
     // ⚠️ Antes era ORDER BY criado_em ASC LIMIT 500 — isso pegava as 500 mais ANTIGAS,
     // e em leads com +500 mensagens as recém-enviadas caíam fora do limite e sumiam da tela.
+    //
+    // PAGINAÇÃO (?antes_de=<id da mensagem mais antiga já na tela>): devolve o lote
+    // ANTERIOR a essa mensagem, pro painel conseguir subir no histórico ("carregar
+    // anteriores"). Sem o parâmetro o comportamento é idêntico ao de antes. O corte usa
+    // a tupla (criado_em, id) pra não repetir nem pular mensagem com o mesmo timestamp.
+    const limite = Math.min(Math.max(parseInt(req.query.limite, 10) || 500, 1), 1000);
+    const antesDe = /^\d+$/.test(String(req.query.antes_de || '')) ? String(req.query.antes_de) : null;
     const r = await query(
       `SELECT * FROM (
          SELECT id, direcao, conteudo, midia_url, midia_tipo, midia_nome, msg_id,
                 reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
                 reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
-           FROM movatak_conversas WHERE lead_id = $1
-           ORDER BY criado_em DESC LIMIT 500
-       ) sub ORDER BY criado_em ASC`,
-      [req.params.id]
+           FROM movatak_conversas
+          WHERE lead_id = $1
+            AND ($2::bigint IS NULL OR (criado_em, id) <
+                 (SELECT c2.criado_em, c2.id FROM movatak_conversas c2 WHERE c2.id = $2::bigint))
+          ORDER BY criado_em DESC, id DESC LIMIT $3
+       ) sub ORDER BY criado_em ASC, id ASC`,
+      [req.params.id, antesDe, limite]
     );
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }

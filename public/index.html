@@ -1466,7 +1466,9 @@ function adaptarPathVendedor(path) {
   p = p.replace(/^\/movatak\/admin\/questionario-templates\/([^/]+)$/, '/movatak/vendedor/questionario-templates/$1');
   p = p.replace(/^\/movatak\/admin\/clientes\/[^/]+\/agendamentos(\?.*)?$/, '/movatak/vendedor/agendamentos$1');
   p = p.replace(/^\/movatak\/admin\/agendamentos\/([^/]+)(\/status)?$/, '/movatak/vendedor/agendamentos/$1$2');
-  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/conversas$/, '/movatak/vendedor/leads/$1/conversas');
+  // (\?.*)? porque a conversa agora pode vir paginada (?antes_de=...): sem isso o
+  // rewrite p/ vendedor não casava e a paginação caía na rota de admin (403).
+  p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/conversas(\?.*)?$/, '/movatak/vendedor/leads/$1/conversas$2');
   p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/historico$/, '/movatak/vendedor/leads/$1/historico');
   p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/marcar-lida$/, '/movatak/vendedor/leads/$1/marcar-lida');
   p = p.replace(/^\/movatak\/admin\/leads\/([^/]+)\/arquivar$/, '/movatak/vendedor/leads/$1/arquivar');
@@ -2393,21 +2395,44 @@ function painelTab(tab) {
 
 // Detecta o tipo de mídia de uma mensagem (usa midia_tipo vindo do banco quando
 // existir; senão tenta pela extensão — cobre mensagens antigas sem o campo).
+// Descobre o tipo real da mídia olhando a extensão do NOME do arquivo e da URL.
+// Existe porque muita foto/vídeo chega do WhatsApp marcada como "documento" (quem
+// envia escolhe "documento" em vez de "galeria") e antes virava um chip de download:
+// pra ver a imagem era preciso baixar. Com isto ela é desenhada na conversa.
+function tipoRealMidia(m) {
+  const alvo = String(m.midia_nome || '') + ' ' + String(m.midia_url || '');
+  if (/\.(png|jpe?g|webp|gif|bmp|heic|heif)(\?|$|\s)/i.test(alvo)) return 'imagem';
+  if (/\.(mp4|mov|m4v|3gp|webm)(\?|$|\s)/i.test(alvo)) return 'video';
+  if (/\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$|\s)/i.test(alvo)) return 'audio';
+  return null;
+}
+
 function renderMidiaMensagem(m) {
   if (!m.midia_url) return '';
-  const tipo = m.midia_tipo || (
+  let tipo = m.midia_tipo || (
     /\.(mp4|mov|m4v|3gp)(\?|$)/i.test(m.midia_url) ? 'video' :
     /\.(ogg|oga|opus|mp3|m4a|wav|weba|aac)(\?|$)/i.test(m.midia_url) ? 'audio' :
     /\.(png|jpe?g|webp|gif|bmp|svg)(\?|$)/i.test(m.midia_url) ? 'imagem' :
     /\.webm(\?|$)/i.test(m.midia_url) ? 'video' : 'documento'
   );
+  // Foto/vídeo que veio rotulado como documento: mostra inline em vez do chip.
+  // O nome original continua aparecendo embaixo, e o Baixar segue disponível.
+  let nomeInline = '';
+  if (tipo === 'documento') {
+    const real = tipoRealMidia(m);
+    if (real === 'imagem' || real === 'video') {
+      tipo = real;
+      if (m.midia_nome) nomeInline = `<div style="font-size:11px;color:var(--text2);margin-bottom:4px;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${String(m.midia_nome).replace(/"/g, '&quot;').replace(/</g, '&lt;')}">${String(m.midia_nome).replace(/</g, '&lt;')}</div>`;
+    }
+  }
   const btnBaixar = `<button onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px">⬇ Baixar</button>`;
   if (tipo === 'documento') {
     const nomeDoc = (m.midia_nome || (String(m.midia_url).split('/').pop() || 'arquivo').split('?')[0] || 'arquivo').replace(/</g, '&lt;');
     return `<div onclick="baixarMidia('${m.midia_url}', event)" title="Baixar" style="display:inline-flex;align-items:center;gap:8px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.18);border-radius:8px;padding:8px 12px;margin-bottom:4px;cursor:pointer;max-width:230px"><span style="font-size:20px">📄</span><span style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${nomeDoc}</span><span style="font-size:14px">⬇</span></div>`;
   }
   let player;
-  if (tipo === 'video') player = `<video src="${m.midia_url}" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px" controls></video>`;
+  // preload=metadata: o vídeo já mostra o 1º quadro e a duração sem baixar tudo.
+  if (tipo === 'video') player = nomeInline + `<video src="${m.midia_url}" preload="metadata" playsinline style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;background:#000" controls></video>`;
   else if (tipo === 'audio') {
     const btnTranscrever = m.id
       ? `<button onclick="transcreverAudio(event, ${Number(m.id)}, '${encodeURIComponent(m.midia_url)}')" title="Transcrever áudio para texto" style="background:rgba(0,0,0,.45);border:none;border-radius:6px;color:#fff;font-size:11px;padding:3px 8px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:4px;margin-left:6px">📝 Transcrever</button>`
@@ -2417,7 +2442,7 @@ function renderMidiaMensagem(m) {
       + `<div id="transcricao-${m.id || 'x'}" style="display:none;font-size:12px;color:var(--text);background:rgba(255,255,255,.06);border-radius:8px;padding:8px 10px;margin-top:4px;line-height:1.4;white-space:pre-wrap"></div>`;
     return player;
   }
-  else player = `<img src="${m.midia_url}" onclick="abrirLightbox('${m.midia_url}')" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover;cursor:zoom-in">`;
+  else player = nomeInline + `<img src="${m.midia_url}" loading="lazy" onclick="abrirLightbox('${m.midia_url}')" style="max-width:200px;border-radius:8px;display:block;margin-bottom:4px;object-fit:cover;cursor:zoom-in">`;
   return player + btnBaixar;
 }
 
@@ -2683,6 +2708,10 @@ function cancelarRespostaPainel(focar = true) {
   }
 }
 
+// Quantas mensagens o backend devolve por lote. Se vier um lote CHEIO, é sinal de que
+// existe conversa mais antiga no banco — aí aparece o botão de carregar anteriores.
+const PAINEL_LOTE_CONVERSA = 500;
+
 function renderConversaPainel(msgs) {
   const box = document.getElementById('painel-conversa');
   painelConversasCache = Array.isArray(msgs) ? msgs : [];
@@ -2690,9 +2719,56 @@ function renderConversaPainel(msgs) {
     if (box) box.innerHTML = '<div style="font-size:12px;color:var(--text2);text-align:center;margin-top:20px">Nenhuma mensagem registrada ainda.<br>As próximas mensagens enviadas e recebidas aparecerão aqui.</div>';
     return;
   }
-  if (box) box.innerHTML = painelConversasCache.map(renderBolhaMensagemPainel).join('');
+  // Lote cheio = provavelmente há mais histórico antes deste ponto.
+  window._painelPodeCarregarAntes = painelConversasCache.length >= PAINEL_LOTE_CONVERSA;
+  if (box) box.innerHTML = barraCarregarAnteriores() + painelConversasCache.map(renderBolhaMensagemPainel).join('');
   // Scroll robusto até a última mensagem (espera mídia carregar).
   rolarConversaParaFim();
+}
+
+// Faixa no topo da thread. Só aparece quando ainda pode haver mensagem mais antiga.
+function barraCarregarAnteriores() {
+  if (!window._painelPodeCarregarAntes) return '';
+  // ⚠️ NAO usar text-align:center aqui: adicionarMensagemAoPainel() detecta o
+  // placeholder de "nenhuma mensagem" por div[style*="text-align:center"] e limparia a
+  // conversa inteira ao chegar mensagem nova. Centralizamos com flex.
+  return `<div id="painel-carregar-antes" style="display:flex;justify-content:center;margin:4px 0 10px">
+    <button onclick="carregarConversasAnteriores()" style="background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.18);border-radius:999px;color:var(--text);font-size:12px;padding:6px 14px;cursor:pointer">⬆ Carregar mensagens anteriores</button>
+  </div>`;
+}
+
+// Busca o lote ANTERIOR à mensagem mais antiga que já está na tela e o coloca em cima,
+// preservando a posição de leitura (senão a tela "pula" ao inserir conteúdo acima).
+async function carregarConversasAnteriores() {
+  const leadId = window._painelLeadId;
+  const box = document.getElementById('painel-conversa');
+  const wrap = document.getElementById('painel-body-conversa');
+  if (!leadId || !box || !painelConversasCache.length) return;
+  const maisAntiga = painelConversasCache[0];
+  if (!maisAntiga || !maisAntiga.id) return;
+
+  const btn = document.querySelector('#painel-carregar-antes button');
+  if (btn) { btn.disabled = true; btn.textContent = 'Carregando...'; }
+  const alturaAntes = wrap ? wrap.scrollHeight : 0;
+  const topoAntes = wrap ? wrap.scrollTop : 0;
+  try {
+    const antigas = await api('/movatak/admin/leads/' + leadId + '/conversas?antes_de=' + encodeURIComponent(maisAntiga.id));
+    const lote = Array.isArray(antigas) ? antigas : [];
+    if (!lote.length) {
+      window._painelPodeCarregarAntes = false;
+      const faixa = document.getElementById('painel-carregar-antes');
+      if (faixa) faixa.innerHTML = '<span style="font-size:11px;color:var(--text2)">Início da conversa</span>';
+      return;
+    }
+    painelConversasCache = lote.concat(painelConversasCache);
+    window._painelPodeCarregarAntes = lote.length >= PAINEL_LOTE_CONVERSA;
+    box.innerHTML = barraCarregarAnteriores() + painelConversasCache.map(renderBolhaMensagemPainel).join('');
+    // Mantém o olho na mesma mensagem: desloca o scroll pelo tanto que cresceu acima.
+    if (wrap) wrap.scrollTop = topoAntes + (wrap.scrollHeight - alturaAntes);
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '⬆ Carregar mensagens anteriores'; }
+    mostrarToast('Erro ao carregar histórico: ' + e.message, 'erro');
+  }
 }
 
 // Mostra, de forma discreta, em qual setor/etapa do kanban o lead está —

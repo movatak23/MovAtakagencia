@@ -274,15 +274,22 @@ app.get('/movatak/vendedor/leads/:id/conversas', authVendedor, async (req, res) 
   try {
     const lead = await vendedorPodeLead(req, req.params.id);
     if (!lead) return res.status(403).json({ error: 'Sem acesso a este lead.' });
+    // Paginação idêntica à rota admin (?antes_de=<id>): sem o parâmetro, comportamento
+    // igual ao de antes (as 500 mais recentes).
+    const limite = Math.min(Math.max(parseInt(req.query.limite, 10) || 500, 1), 1000);
+    const antesDe = /^\d+$/.test(String(req.query.antes_de || '')) ? String(req.query.antes_de) : null;
     const r = await query(
       `SELECT * FROM (
          SELECT id, direcao, conteudo, midia_url, midia_tipo, midia_nome, msg_id,
                 reply_to_conversa_id, reply_to_msg_id, reply_to_direcao, reply_to_conteudo,
                 reply_to_midia_url, reply_to_midia_tipo, msg_status, msg_status_em, criado_em, 'banco' AS fonte
-           FROM movatak_conversas WHERE lead_id = $1
-           ORDER BY criado_em DESC LIMIT 500
-       ) sub ORDER BY criado_em ASC`,
-      [req.params.id]
+           FROM movatak_conversas
+          WHERE lead_id = $1
+            AND ($2::bigint IS NULL OR (criado_em, id) <
+                 (SELECT c2.criado_em, c2.id FROM movatak_conversas c2 WHERE c2.id = $2::bigint))
+          ORDER BY criado_em DESC, id DESC LIMIT $3
+       ) sub ORDER BY criado_em ASC, id ASC`,
+      [req.params.id, antesDe, limite]
     );
     res.json(r.rows);
   } catch (e) { res.status(500).json({ error: e.message }); }
