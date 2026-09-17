@@ -9639,6 +9639,75 @@ function filtrarColunaRapidas(termo) {
 
 // Desenha a lista. Sem lead aberto os botões ficam desabilitados: enviar exige
 // window._painelLeadId (é o mesmo guard de enviarSequenciaRapida).
+// ===== Arrastar mensagem rápida de uma categoria para outra =====
+// O MESMO botão envia no clique, então a trava abaixo existe pra que soltar um
+// arrasto não vire envio acidental ao lead. O HTML5 normalmente não dispara click
+// depois de um drag, mas um arrasto curtinho pode escapar — daí a janela de 400ms.
+const SEM_CATEGORIA_RAPIDAS = 'Sem categoria';
+
+function inicioArrastoRapida(ev, id) {
+  window._rapidaArrastandoId = Number(id);
+  window._rapidaArrastouEm = 0;
+  try {
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', String(id)); // Firefox exige algum dado
+  } catch (e) {}
+  if (ev.currentTarget && ev.currentTarget.classList) ev.currentTarget.classList.add('arrastando');
+}
+
+function fimArrastoRapida(ev) {
+  window._rapidaArrastandoId = null;
+  window._rapidaArrastouEm = Date.now();
+  if (ev.currentTarget && ev.currentTarget.classList) ev.currentTarget.classList.remove('arrastando');
+  document.querySelectorAll('.funil-rapidas-cat.alvo').forEach(e => e.classList.remove('alvo'));
+}
+
+// Envia, a não ser que o clique seja o rabicho de um arrasto que acabou agora.
+function cliqueRapidaItem(ev, id, el) {
+  if (window._rapidaArrastandoId) return;
+  if (window._rapidaArrastouEm && Date.now() - window._rapidaArrastouEm < 400) return;
+  usarMsgRapidaPainel(id, el);
+}
+
+function arrastoSobreCategoria(ev, el) {
+  if (!window._rapidaArrastandoId) return;
+  ev.preventDefault();               // sem isto o navegador recusa a soltura
+  try { ev.dataTransfer.dropEffect = 'move'; } catch (e) {}
+  el.classList.add('alvo');
+}
+
+function saiuDaCategoria(ev, el) { el.classList.remove('alvo'); }
+
+function soltarNaCategoria(ev, el, cat) {
+  ev.preventDefault();
+  el.classList.remove('alvo');
+  const id = window._rapidaArrastandoId || Number(ev.dataTransfer && ev.dataTransfer.getData('text/plain'));
+  window._rapidaArrastandoId = null;
+  if (!id) return;
+  moverRapidaParaCategoria(id, cat === SEM_CATEGORIA_RAPIDAS ? '' : cat);
+}
+
+// Grava no banco e atualiza a tela na hora (otimista); se o PATCH falhar, volta atrás.
+async function moverRapidaParaCategoria(id, categoria) {
+  const m = (msgsRapidasCache || []).find(x => Number(x.id) === Number(id));
+  if (!m) return;
+  const anterior = m.categoria || null;
+  const nova = categoria ? String(categoria) : null;
+  if ((anterior || '') === (nova || '')) return;
+  m.categoria = nova;
+  renderColunaRapidas();
+  try {
+    await api('/movatak/admin/mensagens-rapidas/' + Number(id), {
+      method: 'PATCH', body: JSON.stringify({ categoria: categoria || '' })
+    });
+    mostrarToast('"' + (m.titulo || 'Mensagem') + '" → ' + (nova || SEM_CATEGORIA_RAPIDAS));
+  } catch (e) {
+    m.categoria = anterior;
+    renderColunaRapidas();
+    mostrarToast('Não consegui mover: ' + e.message, 'erro');
+  }
+}
+
 const RAPIDAS_CAT_FECHADAS_KEY = 'movatak-rapidas-cats-fechadas';
 
 function catsFechadas() {
@@ -9657,7 +9726,7 @@ function toggleCategoriaRapidas(cat) {
 // Agrupa por categoria preservando a ordem que o backend mandou (mais usadas primeiro).
 // "Sem categoria" sempre por último — é onde caem todas as mensagens antigas.
 function agruparRapidasPorCategoria(itens) {
-  const SEM = 'Sem categoria';
+  const SEM = SEM_CATEGORIA_RAPIDAS;
   const mapa = new Map();
   itens.forEach(m => {
     const cat = (m.categoria && String(m.categoria).trim()) ? String(m.categoria).trim() : SEM;
@@ -9676,8 +9745,10 @@ function botaoRapidaItem(m, temLead) {
   const tip = ehAuto ? 'Inicia o autoatendimento completo'
             : (ehSeq ? 'Envia ' + m.itens.length + ' mensagens em sequência' : (m.texto || ''));
   const previa = String(m.texto || '').replace(/\s+/g, ' ').trim().slice(0, 70);
-  return '<button type="button" class="funil-rapida-item" ' + (temLead ? '' : 'disabled ') +
-         'onclick="usarMsgRapidaPainel(' + Number(m.id) + ', this)" title="' + escapeHtml(tip) + '">' +
+  return '<button type="button" class="funil-rapida-item" draggable="true" ' + (temLead ? '' : 'disabled ') +
+         'data-rapida-id="' + Number(m.id) + '" ' +
+         'ondragstart="inicioArrastoRapida(event,' + Number(m.id) + ')" ondragend="fimArrastoRapida(event)" ' +
+         'onclick="cliqueRapidaItem(event,' + Number(m.id) + ', this)" title="' + escapeHtml(tip) + '">' +
            '<span class="funil-rapida-titulo">' + icone + escapeHtml(m.titulo || '(sem título)') + '</span>' +
            (previa ? '<span class="funil-rapida-previa">' + escapeHtml(previa) + '</span>' : '') +
          '</button>';
@@ -9711,8 +9782,11 @@ function renderColunaRapidas() {
     lista.innerHTML = aviso + grupos.map(g => {
       // Durante uma busca as seções ficam todas abertas: o resultado tem que aparecer.
       const fechada = !filtro && fechadas.has(g.cat);
+      const catArg = JSON.stringify(g.cat).replace(/"/g, '&quot;');
       return '<div class="funil-rapidas-grupo">' +
-        '<button type="button" class="funil-rapidas-cat" onclick="toggleCategoriaRapidas(' + JSON.stringify(g.cat).replace(/"/g, '&quot;') + ')">' +
+        '<button type="button" class="funil-rapidas-cat" onclick="toggleCategoriaRapidas(' + catArg + ')"' +
+          ' ondragover="arrastoSobreCategoria(event,this)" ondragleave="saiuDaCategoria(event,this)"' +
+          ' ondrop="soltarNaCategoria(event,this,' + catArg + ')">' +
           '<span class="funil-rapidas-cat-seta">' + (fechada ? '▸' : '▾') + '</span>' +
           '<span class="funil-rapidas-cat-nome">' + escapeHtml(g.cat) + '</span>' +
           '<span class="funil-rapidas-cat-qtd">' + g.itens.length + '</span>' +
@@ -10692,6 +10766,10 @@ main.funil-main-3col{height:calc(100vh - 40px);overflow:hidden}
 .funil-rapidas-cat-seta{flex:none;font-size:9px}
 .funil-rapidas-cat-nome{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .funil-rapidas-cat-qtd{flex:none;background:var(--bg3);border-radius:999px;padding:1px 6px;font-size:9px}
+.funil-rapida-item[draggable="true"]{cursor:grab}
+.funil-rapida-item.arrastando{opacity:.45;cursor:grabbing}
+.funil-rapidas-cat.alvo{background:var(--accent);color:#04231c}
+.funil-rapidas-cat.alvo .funil-rapidas-cat-qtd{background:rgba(0,0,0,.25);color:inherit}
 .funil-rapidas-grupo-itens{display:flex;flex-direction:column;gap:6px;padding-left:2px}
 .funil-rapidas-vazio,.funil-rapidas-aviso{font-size:10px;color:var(--text2);padding:4px 2px;line-height:1.35}
 .funil-rapidas-aviso{color:var(--amber)}
