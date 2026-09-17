@@ -1030,11 +1030,15 @@ function comandosDoVendedor(vendedor) {
 
   // Fallback automático pelo nome do vendedor.
   // Ex.: Rebeka => #rebeka | Ronaldo Valério => #ronaldovalerio
+  //
+  // ⚠️ SÓ a versão COM #. A versão sem # ('rebeka') casava como palavra isolada em
+  // qualquer posição do texto (contemComando), então QUALQUER mensagem que citasse o
+  // nome da vendedora virava "comando de conversão": a mensagem rápida "Olá, sou a
+  // #atendente Rebeka..." marcou 12 leads como cliente em 17/09/2026. Tirar o slug sem
+  // # não remove nenhum comando que funcionasse sozinho, porque textoPareceComandoInterno
+  // já exige um # na mensagem para sequer avaliar comandos.
   const slug = slugComando(vendedor.nome || '');
-  if (slug) {
-    lista.push('#' + slug);
-    lista.push(slug);
-  }
+  if (slug) lista.push('#' + slug);
 
   return [...new Set(
     lista

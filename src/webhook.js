@@ -745,6 +745,25 @@ async function handleZapi(req, res) {
         return;
       }
 
+      // O texto é uma MENSAGEM RÁPIDA cadastrada? Então é conteúdo, não comando.
+      // As mensagens de atendimento citam tokens de propósito — "digite #atendente",
+      // o nome da atendente no corpo — e isso fazia o CRM converter/pausar o lead
+      // sozinho a cada envio. Só entra aqui quando algo já pareceu comando, então
+      // custa uma query em caso raro.
+      const ehTextoCadastrado = await query(
+        `SELECT 1 FROM movatak_mensagens_rapidas mr
+          WHERE mr.cliente_id = $1
+            AND (btrim(coalesce(mr.texto,'')) = btrim($2)
+                 OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(mr.itens,'[]'::jsonb)) it
+                             WHERE btrim(coalesce(it->>'texto','')) = btrim($2)))
+          LIMIT 1`,
+        [cliente.id, texto || '']
+      ).catch(() => ({ rows: [] }));
+      if (ehTextoCadastrado.rows.length) {
+        console.log('[zapi][fromMe] texto é mensagem rápida cadastrada — NÃO trata como comando (lead ' + leadFromMe.id + ')');
+        return;
+      }
+
       // Eco fromMe de um envio AUTOMÁTICO do PRÓPRIO CRM (questionário, IA, follow-up,
       // ausência, cobrança): mesmo que o texto contenha um token de comando — ex.: a
       // intro do questionário que instrui o lead a digitar #ATENDENTE —, NÃO é um comando

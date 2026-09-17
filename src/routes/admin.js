@@ -3049,7 +3049,12 @@ app.post('/movatak/admin/leads/:id/mensagem-rapida', ...exigeLead, async (req, r
     } else {
       msgId = await zapiEnviar(row.zapi_instance, row.zapi_token, row.zapi_client_token, row.telefone, texto, replyMsgIdZap);
     }
-    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info, undefined, tipoFinal === 'documento' ? (midia_nome || null) : null).catch(() => null);
+    // O catch era silencioso: quando a gravação falhava, a mensagem ia pro cliente e
+    // sumia do histórico sem deixar pista nenhuma (aconteceu 2x em 17/09/2026 e não deu
+    // pra descobrir a causa depois). Agora o erro aparece no log com lead e msg_id.
+    const conversaId = await registrarConversa(row.id, row.cliente_id, 'saida', texto || '', midia_url || null, tipoFinal, msgId, replyResolvido.info, undefined, tipoFinal === 'documento' ? (midia_nome || null) : null)
+      .catch(e => { console.error('[msg-rapida] FALHA ao gravar conversa | lead=' + row.id + ' msg_id=' + msgId + ' | ' + e.message); return null; });
+    if (!conversaId) console.warn('[msg-rapida] conversa NAO gravada (sem erro) | lead=' + row.id + ' msg_id=' + msgId + ' — enviada ao cliente mas fora do histórico');
     await registrarEventoLead(row.id, row.cliente_id, 'mensagem_manual', 'Mensagem rápida enviada pelo kanban', { texto: (texto||'').slice(0, 100), midia: !!midia_url });
     await limparPedidoAtendente(row.id); // atendente respondeu → apaga o chip "pediu atendente"
     // Incrementa contador de uso se o texto bate com uma mensagem rápida cadastrada
