@@ -908,7 +908,7 @@ async function iniciarAppVendedor() {
                 <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
               </div>
               <div style="flex:1;display:flex;flex-direction:column;min-height:0">
-                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
+                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;overflow-x:hidden;min-height:0">
                   <div id="painel-conversa"><div style="font-size:12px;color:var(--text2)">Carregando conversa...</div></div>
                 </div>
                 <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
@@ -2642,7 +2642,7 @@ function renderBolhaMensagemPainel(m) {
     <div style="max-width:85%;background:${saida ? 'var(--msg-out)' : 'var(--msg-in)'};border-radius:${saida ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};padding:8px 12px;min-width:120px">
       ${renderPreviewRespostaMensagem(m)}
       ${midiaHtml}
-      ${texto ? `<div style="font-size:13px;line-height:1.4;color:${saida ? 'var(--msg-text-out)' : 'var(--msg-text-in)'};white-space:pre-wrap">${texto}</div>` : ''}
+      ${texto ? `<div style="font-size:13px;line-height:1.4;color:${saida ? 'var(--msg-text-out)' : 'var(--msg-text-in)'};white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word">${texto}</div>` : ''}
       <div style="display:flex;align-items:center;justify-content:flex-end;margin-top:3px">
         <span style="font-size:10px;color:${saida ? 'var(--msg-time-out)' : 'var(--msg-time-in)'}">${hora}</span>
         ${statusTxt}${btnResponder}${btnReagir}${btnEncaminhar}${btnSalvarHist}${btnEditar}${btnLidaZap}${btnApagar}
@@ -8383,7 +8383,7 @@ async function iniciarPaginaFunilAtendimento() {
                 <button id="painel-tab-historico" onclick="painelTab('historico')" style="flex:1;padding:10px;background:var(--bg2);border:none;color:var(--text2);font-size:12px;cursor:pointer;border-bottom:2px solid transparent">📋 Histórico</button>
               </div>
               <div style="flex:1;display:flex;flex-direction:column;min-height:0">
-                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;min-height:0">
+                <div id="painel-body-conversa" style="flex:1;padding:12px 16px;overflow-y:auto;overflow-x:hidden;min-height:0">
                   <div id="painel-conversa"><div style="font-size:12px;color:var(--text2)">Carregando conversa...</div></div>
                 </div>
                 <div id="painel-body-historico" style="flex:1;padding:12px 16px;display:none;overflow-y:auto;min-height:0">
