@@ -17,7 +17,8 @@
 //        só guarda/mostra a etapa. Arquivado = pedido entregue. Não move o kanban e não
 //        manda mensagem ao cliente — decisão do dono.
 //
-// ⚠️ NINGUÉM IMPORTA ESTE MÓDULO AINDA. A Fase 2 liga a rota do webhook e o botão.
+// Quem usa: index.js (POST /movatak/webhook/trello) e routes/admin.js (listas, criar
+// cartão, etapa do lead). Tudo condicionado a movatak_clientes.trello_ativo.
 // ============================================================
 
 const crypto = require('crypto');

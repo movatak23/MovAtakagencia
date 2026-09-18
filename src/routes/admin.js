@@ -28,6 +28,7 @@ function register(app, deps) {
     exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
     exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
     EVENTOS_META, testarConexaoMeta, garantirEstruturaMetaCapi,
+    garantirEstruturaTrello, trelloConfigurado, listarListasTrello, criarCartaoProducao, etapasProducaoPorLead,
     followups, forcaClienteIdNaUrl, garantirColunasClientesPortal, garantirColunasVendedoresPortal, garantirEstruturaAgenda,
     garantirEstruturaCampanhasTemplates, garantirEstruturaCaptacao, garantirEstruturaConversas, garantirEstruturaFunil, garantirEstruturaMensagensRapidas,
     garantirEstruturaPlanos, garantirEstruturaQuestionario, garantirFunilPadraoCliente, gerarRespostaIALead, gerarToken,
@@ -3813,6 +3814,65 @@ app.patch('/movatak/admin/funil/colunas/:id/meta-evento', ...exigeColuna, async 
       [evento, valor, req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ===== Trello (produção): listas, criar cartão e etapa atual =====
+app.get('/movatak/admin/clientes/:id/trello/listas', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaTrello();
+    const r = await query('SELECT * FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    const cliente = r.rows[0];
+    if (!cliente) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    if (!trelloConfigurado(cliente)) return res.status(400).json({ error: 'Integração com o Trello desligada para este cliente.' });
+    res.json({ listas: await listarListasTrello(cliente) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/movatak/admin/leads/:id/trello/cartao', ...exigeLead, async (req, res) => {
+  try {
+    await garantirEstruturaTrello();
+    const rl = await query('SELECT id, cliente_id, nome, telefone FROM movatak_leads WHERE id=$1', [req.params.id]);
+    const lead = rl.rows[0];
+    if (!lead) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const rc = await query('SELECT * FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
+    const cliente = rc.rows[0];
+    const b = req.body || {};
+    // Só URLs de mídia que já estão na conversa desse lead: não deixa anexar link arbitrário.
+    const pedidas = Array.isArray(b.anexos) ? b.anexos.filter(u => typeof u === 'string').slice(0, 10) : [];
+    let anexos = [];
+    if (pedidas.length) {
+      const ok = await query(
+        `SELECT DISTINCT midia_url FROM movatak_conversas WHERE lead_id=$1 AND midia_url = ANY($2::text[])`,
+        [lead.id, pedidas]);
+      anexos = ok.rows.map(x => x.midia_url);
+    }
+    const base = process.env.APP_PUBLIC_URL || 'https://app.movatak.com.br';
+    const resultado = await criarCartaoProducao(cliente, lead, {
+      listaId: b.lista_id, listaNome: b.lista_nome, pedido: b.pedido, quantidade: b.quantidade,
+      nome: b.nome, observacao: b.observacao, anexos,
+      linkCrm: base + '/?funil=1&clienteId=' + lead.cliente_id + '&leadId=' + lead.id,
+      criadoPor: req.ehCliente ? 'portal' : 'admin',
+    });
+    if (resultado.cartao) {
+      emitirLeadFlags(lead.cliente_id, lead.id, {
+        producao_etapa: resultado.cartao.lista_nome, producao_url: resultado.cartao.card_url,
+        producao_atualizado_em: resultado.cartao.atualizado_em,
+      });
+    }
+    res.json({ ok: true, cartao: resultado.cartao, anexos_com_falha: resultado.anexosComFalha });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/movatak/admin/leads/:id/trello', ...exigeLead, async (req, res) => {
+  try {
+    await garantirEstruturaTrello();
+    const rl = await query('SELECT id, cliente_id FROM movatak_leads WHERE id=$1', [req.params.id]);
+    if (!rl.rows.length) return res.status(404).json({ error: 'Lead não encontrado.' });
+    const lead = rl.rows[0];
+    const rc = await query('SELECT trello_ativo, trello_board_id FROM movatak_clientes WHERE id=$1', [lead.cliente_id]);
+    const etapas = await etapasProducaoPorLead(lead.cliente_id, [lead.id]);
+    res.json({ ativo: !!(rc.rows[0] && rc.rows[0].trello_ativo), atual: etapas[lead.id] || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

@@ -82,6 +82,7 @@ const { enviarBoasVindasLead, enviarMenuAtendimento, processarRespostaMenu } = m
 
 const funil = require('./src/funil');
 const metaCapi = require('./src/meta_capi');
+const trello = require('./src/trello');
 const { moverLeadParaFunilSlug, moverLeadParaColunaFunil, atribuirVendedorBalanceado } = funil;
 
 const antispam = require('./src/antispam');
@@ -108,7 +109,13 @@ const http = require('http');
 const path = require('path');
 
 const app = express();
-app.use(express.json({ limit: '30mb' }));
+// O webhook do Trello assina os BYTES recebidos (corpo cru + URL). O express.json
+// descarta esses bytes ao converter, então guardamos uma cópia — só nessa rota, pra não
+// dobrar memória nos uploads de 30mb das outras.
+app.use(express.json({
+  limit: '30mb',
+  verify: (req, res, buf) => { if (req.originalUrl && req.originalUrl.startsWith('/movatak/webhook/trello')) req.rawBody = buf; },
+}));
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Headers', 'Content-Type, x-movatak-secret, x-app-token, x-vendedor-token');
@@ -1388,6 +1395,38 @@ async function obterMensagemComZapi(conversaId) {
 // Configure no painel Z-API apontando para /movatak/webhook/zapi-status.
 app.post('/movatak/webhook/zapi-status', handleZapiStatus);
 
+// ===== Webhook do Trello: etapa de produção do pedido =====
+// A URL tem que ser IDÊNTICA à cadastrada no Trello — ela entra na conta da assinatura.
+const TRELLO_CALLBACK_URL = process.env.TRELLO_CALLBACK_URL || 'https://app.movatak.com.br/movatak/webhook/trello';
+// O Trello faz um HEAD na URL ao cadastrar o webhook e só aceita se vier 200.
+app.head('/movatak/webhook/trello', (req, res) => res.sendStatus(200));
+app.post('/movatak/webhook/trello', async (req, res) => {
+  const secret = trello.credenciaisTrello(null).secret;
+  const assinatura = req.get('x-trello-webhook');
+  if (!trello.verificarAssinaturaTrello(req.rawBody, TRELLO_CALLBACK_URL, assinatura, secret)) {
+    // Sem assinatura válida qualquer um poderia marcar pedido como "Concluído".
+    console.warn('[trello] webhook com assinatura inválida — ignorado');
+    return res.sendStatus(401);
+  }
+  // Responde já: o Trello desiste depois de alguns segundos e tenta de novo, duplicando.
+  res.sendStatus(200);
+  try {
+    const evento = trello.interpretarEventoTrello(req.body);
+    if (!evento) return;
+    const cartao = await trello.aplicarEventoTrello(evento);
+    if (!cartao) return; // cartão feito à mão no Trello, não é do CRM
+    const etapas = await trello.etapasProducaoPorLead(cartao.cliente_id, [cartao.lead_id]);
+    const atual = etapas[cartao.lead_id] || {};
+    emitirLeadFlags(cartao.cliente_id, cartao.lead_id, {
+      producao_etapa: atual.etapa || null, producao_url: atual.card_url || null,
+      producao_atualizado_em: atual.atualizado_em || null,
+    });
+    console.log('[trello] lead ' + cartao.lead_id + ' -> ' + (atual.etapa || '?'));
+  } catch (e) {
+    console.error('[trello] falha ao aplicar evento:', e.message);
+  }
+});
+
 
 // Rota de teste do R2 (temporária). Faz upload de um texto, baixa de volta e
 // confirma que a integração funciona ponta a ponta. Remover após validar.
@@ -2066,6 +2105,8 @@ rotasAdmin.register(app, {
   exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
   exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
   EVENTOS_META: metaCapi.EVENTOS_META, testarConexaoMeta: metaCapi.testarConexaoMeta, garantirEstruturaMetaCapi,
+  garantirEstruturaTrello, trelloConfigurado: trello.trelloConfigurado, listarListasTrello: trello.listarListasTrello,
+  criarCartaoProducao: trello.criarCartaoProducao, etapasProducaoPorLead: trello.etapasProducaoPorLead,
   followups, forcaClienteIdNaUrl, garantirColunasClientesPortal, garantirColunasVendedoresPortal, garantirEstruturaAgenda,
   garantirEstruturaCampanhasTemplates, garantirEstruturaCaptacao, garantirEstruturaConversas, garantirEstruturaFunil, garantirEstruturaMensagensRapidas,
   garantirEstruturaPlanos, garantirEstruturaQuestionario, garantirFunilPadraoCliente, gerarRespostaIALead, gerarToken,

@@ -896,7 +896,7 @@ async function iniciarAppVendedor() {
                 </div>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
                   
-                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button><button onclick="marcarLeadAtualComoPago()" class="btn-marcar-pago-topo" title="Marcar como pago (fecha a venda e avisa a Meta)" style="background:none;border:1px solid var(--green, #22c55e);border-radius:8px;color:var(--green, #22c55e);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-money"></use></svg></button>
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button><button onclick="marcarLeadAtualComoPago()" class="btn-marcar-pago-topo" title="Marcar como pago (fecha a venda e avisa a Meta)" style="background:none;border:1px solid var(--green, #22c55e);border-radius:8px;color:var(--green, #22c55e);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-money"></use></svg></button><button onclick="abrirEnvioProducao()" class="btn-producao-topo" title="Enviar para produção (cria o cartão no Trello)" style="display:none;background:none;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:14px;width:30px;height:30px;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1">🏭</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-transfer"></use></svg></button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-trash"></use></svg></button>
                   <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="height:30px;display:inline-flex;align-items:center;padding:0 9px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:11px;line-height:1;font-weight:700">FU1</button>
@@ -2927,6 +2927,7 @@ async function abrirPainelLead(leadId, nomeAbrev) {
     document.getElementById('painel-lead-fone').textContent = lead.telefone || '';
     mostrarSetorLeadPainel(lead);
     mostrarAnuncioLeadPainel(lead);
+    carregarProducaoLeadPainel(leadId);
     renderConversaPainel(convData);
     renderHistoricoPainel(histData);
   } catch (e) {
@@ -6770,6 +6771,10 @@ function iniciarSocketFunil(clienteId) {
       if (window._painelLeadId && String(leadId) === String(window._painelLeadId)) {
         atualizarBadgePediuAtendente(lead || flags);
       }
+      // Etapa de produção mudou no Trello: atualiza o selo se esse lead está aberto.
+      if ('producao_etapa' in flags && window._painelLeadId && String(leadId) === String(window._painelLeadId)) {
+        mostrarProducaoLeadPainel({ etapa: flags.producao_etapa, card_url: flags.producao_url, atualizado_em: flags.producao_atualizado_em });
+      }
     });
   } catch (e) {
     // Falha de socket nunca pode derrubar a tela; o polling continua valendo.
@@ -8443,7 +8448,7 @@ async function iniciarPaginaFunilAtendimento() {
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button><button onclick="marcarLeadAtualComoPago()" class="btn-marcar-pago-topo" title="Marcar como pago (fecha a venda e avisa a Meta)" style="background:none;border:1px solid var(--green, #22c55e);border-radius:8px;color:var(--green, #22c55e);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-money"></use></svg></button>
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button><button onclick="marcarLeadAtualComoPago()" class="btn-marcar-pago-topo" title="Marcar como pago (fecha a venda e avisa a Meta)" style="background:none;border:1px solid var(--green, #22c55e);border-radius:8px;color:var(--green, #22c55e);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-money"></use></svg></button><button onclick="abrirEnvioProducao()" class="btn-producao-topo" title="Enviar para produção (cria o cartão no Trello)" style="display:none;background:none;border:1px solid var(--accent);border-radius:8px;color:var(--accent);font-size:14px;width:30px;height:30px;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1">🏭</button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-transfer"></use></svg></button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-trash"></use></svg></button>
                   <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="height:30px;display:inline-flex;align-items:center;padding:0 9px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:11px;line-height:1;font-weight:700">FU1</button>
@@ -9979,6 +9984,166 @@ async function marcarLeadAtualComoPago() {
   const atualizado = (funilState.leads || []).find(l => String(l.id) === String(leadId));
   if (atualizado) { try { mostrarSetorLeadPainel(atualizado); } catch (e) {} }
   mostrarToast('💰 ' + nome + ' marcado como pago.');
+}
+
+// ===== Produção no Trello: selo no cabeçalho + formulário "Enviar para produção" =====
+// O CRM cria o cartão no quadro de produção no mesmo padrão que a equipe usa à mão
+// ("#2974 - 8168 - GREEN SOLARI - 6 METROS") e depois só MOSTRA a etapa em que ele
+// está — quem manda na produção é o Trello. Arquivado lá = "Concluído" aqui.
+window._producaoAtiva = false;
+let _trelloListasCache = null;
+
+function tempoRelativoCurto(iso) {
+  if (!iso) return '';
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return 'agora';
+  if (min < 60) return 'há ' + min + ' min';
+  const h = Math.round(min / 60);
+  if (h < 24) return 'há ' + h + 'h';
+  return 'há ' + Math.round(h / 24) + 'd';
+}
+
+function mostrarProducaoLeadPainel(atual) {
+  const linha = linhaBadgesHeaderPainel();
+  if (!linha) return;
+  let el = linha.querySelector('.painel-producao-badge-hdr');
+  if (!atual || !atual.etapa) { if (el) el.remove(); return; }
+  if (!el) {
+    el = document.createElement('a');
+    el.className = 'painel-producao-badge-hdr';
+    el.target = '_blank'; el.rel = 'noopener';
+    el.style.cssText = 'font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis;text-decoration:none;display:inline-block;color:var(--accent);border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 15%, transparent)';
+    linha.appendChild(el);
+  }
+  const concluido = atual.etapa === 'Concluído';
+  el.textContent = (concluido ? '✅ ' : '🏭 ') + atual.etapa + (atual.atualizado_em ? ' · ' + tempoRelativoCurto(atual.atualizado_em) : '');
+  el.title = 'Etapa do pedido no Trello — clique para abrir o cartão';
+  if (atual.card_url) el.href = atual.card_url; else el.removeAttribute('href');
+}
+
+async function carregarProducaoLeadPainel(leadId) {
+  mostrarProducaoLeadPainel(null);
+  document.querySelectorAll('.btn-producao-topo').forEach(b => { b.style.display = 'none'; });
+  try {
+    const r = await api('/movatak/admin/leads/' + leadId + '/trello');
+    if (String(window._painelLeadId) !== String(leadId)) return; // trocou de lead no meio
+    window._producaoAtiva = !!(r && r.ativo);
+    document.querySelectorAll('.btn-producao-topo').forEach(b => { b.style.display = window._producaoAtiva ? 'inline-flex' : 'none'; });
+    mostrarProducaoLeadPainel(r && r.atual);
+  } catch (e) { /* sem Trello configurado: fica sem botão e sem selo */ }
+}
+
+// Mesmo formato do backend (src/trello.js montarTituloCartao), só para a prévia.
+function tituloProducaoPrevia(d) {
+  const pedido = String(d.pedido || '').replace(/[^\dA-Za-z-]/g, '');
+  const fone = String(d.telefone || '').replace(/\D/g, '');
+  const nome = String(d.nome || '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').replace(/\s+/g, ' ').trim().toUpperCase();
+  const partes = [pedido ? '#' + pedido : null, fone.length >= 4 ? fone.slice(-4) : null, nome || null,
+                  d.quantidade ? String(d.quantidade).trim().toUpperCase() : null].filter(Boolean);
+  let t = partes.join(' - ');
+  if (String(d.obs || '').trim()) t += ' (' + String(d.obs).trim().toUpperCase() + ')';
+  return t;
+}
+
+async function abrirEnvioProducao() {
+  const leadId = window._painelLeadId;
+  if (!leadId) { mostrarToast('Abra uma conversa primeiro.', 'erro'); return; }
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId)) || {};
+  if (!_trelloListasCache) {
+    try { _trelloListasCache = (await api('/movatak/admin/clientes/' + funilState.clienteId + '/trello/listas')).listas || []; }
+    catch (e) { mostrarToast('Não consegui ler as listas do Trello: ' + e.message, 'erro'); return; }
+  }
+  // Imagens da conversa, mais recentes primeiro — candidatas a arte do pedido.
+  const imagens = (painelConversasCache || [])
+    .filter(m => m.midia_url && (m.midia_tipo === 'imagem' || tipoRealMidia(m) === 'imagem'))
+    .slice(-8).reverse();
+
+  let modal = document.getElementById('modal-producao-trello');
+  if (modal) modal.remove();
+  modal = document.createElement('div');
+  modal.id = 'modal-producao-trello';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px';
+  const nomeInicial = String(lead.nome || '').replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').trim();
+  modal.innerHTML = `
+    <div style="background:var(--bg2);border:1px solid var(--border2);border-radius:12px;padding:18px;width:100%;max-width:540px;max-height:90vh;overflow:auto;color:var(--text)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <strong style="font-size:15px">🏭 Enviar para produção</strong>
+        <button onclick="fecharEnvioProducao()" style="background:none;border:none;color:var(--text2);font-size:18px;cursor:pointer">✕</button>
+      </div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Lista no Trello</div>
+      <div id="prod-listas" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+        ${_trelloListasCache.map(l => `<button type="button" class="prod-lista" data-id="${escapeHtml(l.id)}" data-nome="${escapeHtml(l.nome)}" onclick="escolherListaProducao(this)" style="font-size:11px;padding:6px 10px;border-radius:8px;border:1px solid var(--border2);background:none;color:var(--text2);cursor:pointer">${escapeHtml(l.nome)}</button>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+        <label style="font-size:11px;color:var(--text2)">Pedido Nuvemshop<input id="prod-pedido" class="fu-textarea" style="min-height:0;height:34px;margin-top:4px" placeholder="2974" oninput="atualizarPreviaProducao()"></label>
+        <label style="font-size:11px;color:var(--text2)">Quantidade<input id="prod-qtd" class="fu-textarea" style="min-height:0;height:34px;margin-top:4px" placeholder="6 metros" oninput="atualizarPreviaProducao()"></label>
+      </div>
+      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:10px">Nome no cartão<input id="prod-nome" class="fu-textarea" style="min-height:0;height:34px;margin-top:4px" value="${escapeHtml(nomeInicial)}" oninput="atualizarPreviaProducao()"></label>
+      <label style="font-size:11px;color:var(--text2);display:block;margin-bottom:12px">Observação (opcional)<input id="prod-obs" class="fu-textarea" style="min-height:0;height:34px;margin-top:4px" placeholder="Aguardando cliente enviar arte" oninput="atualizarPreviaProducao()"></label>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:6px">Anexar imagens da conversa ${imagens.length ? '' : '<span style="opacity:.7">(nenhuma imagem nesta conversa)</span>'}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+        ${imagens.map(m => `<label style="position:relative;cursor:pointer"><img src="${escapeHtml(m.midia_url)}" loading="lazy" style="width:64px;height:64px;object-fit:cover;border-radius:8px;border:2px solid var(--border2)"><input type="checkbox" class="prod-anexo" value="${escapeHtml(m.midia_url)}" style="position:absolute;top:4px;right:4px"></label>`).join('')}
+      </div>
+      <div style="background:var(--bg3);border-radius:8px;padding:10px 12px;margin-bottom:6px">
+        <div style="font-size:11px;color:var(--text2);margin-bottom:2px">Título que vai para o Trello</div>
+        <div id="prod-previa" style="font-family:monospace;font-size:13px;overflow-wrap:anywhere"></div>
+      </div>
+      <div id="prod-erro" style="font-size:12px;color:var(--red);min-height:16px;margin-bottom:6px"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px">
+        <button onclick="fecharEnvioProducao()" class="btn-cancel" type="button">Cancelar</button>
+        <button id="prod-criar" onclick="confirmarEnvioProducao()" class="btn-save" type="button">Criar cartão</button>
+      </div>
+    </div>`;
+  modal.addEventListener('click', ev => { if (ev.target === modal) fecharEnvioProducao(); });
+  document.body.appendChild(modal);
+  modal._telefone = lead.telefone || '';
+  atualizarPreviaProducao();
+}
+
+function fecharEnvioProducao() { const m = document.getElementById('modal-producao-trello'); if (m) m.remove(); }
+
+function escolherListaProducao(btn) {
+  document.querySelectorAll('#prod-listas .prod-lista').forEach(b => {
+    const on = b === btn;
+    b.dataset.sel = on ? '1' : '';
+    b.style.borderColor = on ? 'var(--accent)' : 'var(--border2)';
+    b.style.color = on ? 'var(--accent)' : 'var(--text2)';
+    b.style.background = on ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'none';
+  });
+  const e = document.getElementById('prod-erro'); if (e) e.textContent = '';
+}
+
+function atualizarPreviaProducao() {
+  const m = document.getElementById('modal-producao-trello'); if (!m) return;
+  const v = id => (document.getElementById(id) || {}).value || '';
+  document.getElementById('prod-previa').textContent = tituloProducaoPrevia({
+    pedido: v('prod-pedido'), telefone: m._telefone, nome: v('prod-nome'), quantidade: v('prod-qtd'), obs: v('prod-obs') }) || '—';
+}
+
+async function confirmarEnvioProducao() {
+  const leadId = window._painelLeadId;
+  const erro = document.getElementById('prod-erro');
+  const lista = document.querySelector('#prod-listas .prod-lista[data-sel="1"]');
+  if (!lista) { erro.textContent = 'Escolha a lista de destino.'; return; }
+  const v = id => (document.getElementById(id) || {}).value.trim();
+  if (!v('prod-nome')) { erro.textContent = 'Preencha o nome que vai no cartão.'; return; }
+  const btn = document.getElementById('prod-criar');
+  btn.disabled = true; btn.textContent = 'Criando...';
+  try {
+    const r = await api('/movatak/admin/leads/' + leadId + '/trello/cartao', {
+      method: 'POST', body: JSON.stringify({
+        lista_id: lista.dataset.id, lista_nome: lista.dataset.nome,
+        pedido: v('prod-pedido'), quantidade: v('prod-qtd'), nome: v('prod-nome'), observacao: v('prod-obs'),
+        anexos: [...document.querySelectorAll('.prod-anexo:checked')].map(c => c.value),
+      }) });
+    fecharEnvioProducao();
+    if (r && r.cartao) mostrarProducaoLeadPainel({ etapa: r.cartao.lista_nome, card_url: r.cartao.card_url, atualizado_em: r.cartao.atualizado_em });
+    const falhas = (r && r.anexos_com_falha || []).length;
+    mostrarToast('🏭 Cartão criado em "' + lista.dataset.nome + '"' + (falhas ? ' (' + falhas + ' anexo(s) não foram)' : ''));
+  } catch (e) {
+    btn.disabled = false; btn.textContent = 'Criar cartão';
+    erro.textContent = 'Não consegui criar o cartão: ' + e.message;
+  }
 }
 
 // Acha a etapa que representa "cliente/fechado" (etapa_sistema='cliente').
