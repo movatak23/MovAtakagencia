@@ -2385,7 +2385,7 @@ function painelTab(tab) {
     conv.style.display = ''; hist.style.display = 'none';
     tConv.style.borderBottomColor = 'var(--accent)'; tConv.style.color = 'var(--text)';
     tHist.style.borderBottomColor = 'transparent'; tHist.style.color = 'var(--text2)';
-    rolarConversaParaFim();
+    rolarConversaParaFim(true);
   } else {
     conv.style.display = 'none'; hist.style.display = '';
     tHist.style.borderBottomColor = 'var(--accent)'; tHist.style.color = 'var(--text)';
@@ -2539,15 +2539,52 @@ async function transcreverAudio(ev, msgId, urlEnc) {
 }
 
 
-function rolarConversaParaFim() {
+// Rolagem "grudada no fim", como no WhatsApp: a conversa só acompanha as mensagens
+// novas se a pessoa JÁ estiver lá embaixo. Se ela subiu para ler, fica quieta.
+//
+// Por que existe: antes, toda imagem/vídeo que terminava de carregar e toda mensagem
+// nova puxavam a conversa para o fim, sem perguntar onde a pessoa estava. Com o
+// loading="lazy" das imagens (v2.25.0), a foto só carrega quando a pessoa rola até
+// ela — então subir fazia a foto carregar e a tela voltar lá pra baixo, num
+// sobe-e-desce intermitente. Num grupo movimentado, cada mensagem recebida fazia o
+// mesmo.
+const CONVERSA_LIMIAR_FIM_PX = 60;
+window._conversaGrudadaNoFim = true;
+
+function instalarObservadorRolagemConversa(wrap) {
+  if (!wrap || wrap._mvObservadorRolagem) return;
+  wrap._mvObservadorRolagem = true;
+  // Onde a pessoa está: perto do fim = grudada; acima disso = lendo o histórico.
+  wrap.addEventListener('scroll', () => {
+    window._conversaGrudadaNoFim =
+      (wrap.scrollHeight - wrap.scrollTop - wrap.clientHeight) < CONVERSA_LIMIAR_FIM_PX;
+  }, { passive: true });
+  // A roda do mouse para cima é intenção explícita de sair do fim: solta na hora, sem
+  // esperar o evento de scroll (que pode chegar depois de uma mídia puxar para baixo).
+  wrap.addEventListener('wheel', (e) => {
+    if (e.deltaY < 0) window._conversaGrudadaNoFim = false;
+  }, { passive: true });
+}
+
+// forcar=true: abrir a conversa ou mandar mensagem — aí sempre vai para o fim.
+// Sem forcar: só desce se a pessoa já estava no fim (mensagem recebida, mídia carregando).
+function rolarConversaParaFim(forcar) {
   const wrap = document.getElementById('painel-body-conversa');
   if (!wrap) return;
-  const irParaFim = () => { wrap.scrollTop = wrap.scrollHeight; };
+  instalarObservadorRolagemConversa(wrap);
+  if (forcar) window._conversaGrudadaNoFim = true;
+  if (!window._conversaGrudadaNoFim) return;
+  // A checagem mora DENTRO de irParaFim: os disparos atrasados (rAF, 60ms, 250ms e as
+  // mídias carregando) respeitam a pessoa que começou a rolar depois do clique.
+  const irParaFim = () => { if (window._conversaGrudadaNoFim) wrap.scrollTop = wrap.scrollHeight; };
   irParaFim();
   requestAnimationFrame(irParaFim);
   setTimeout(irParaFim, 60);
   setTimeout(irParaFim, 250);
   wrap.querySelectorAll('img, video, audio').forEach(el => {
+    // Um ouvinte por mídia: antes cada mensagem nova empilhava mais um em todas.
+    if (el._mvOuvinteFim) return;
+    el._mvOuvinteFim = true;
     el.addEventListener('load', irParaFim, { once: true });
     el.addEventListener('loadedmetadata', irParaFim, { once: true });
   });
@@ -2712,7 +2749,10 @@ function cancelarRespostaPainel(focar = true) {
 // existe conversa mais antiga no banco — aí aparece o botão de carregar anteriores.
 const PAINEL_LOTE_CONVERSA = 500;
 
-function renderConversaPainel(msgs) {
+function renderConversaPainel(msgs, opts) {
+  const manterPosicao = !!(opts && opts.manterPosicao);
+  const wrapAntes = document.getElementById('painel-body-conversa');
+  const topoAntes = wrapAntes ? wrapAntes.scrollTop : 0;
   const box = document.getElementById('painel-conversa');
   painelConversasCache = Array.isArray(msgs) ? msgs : [];
   if (!painelConversasCache.length) {
@@ -2722,8 +2762,10 @@ function renderConversaPainel(msgs) {
   // Lote cheio = provavelmente há mais histórico antes deste ponto.
   window._painelPodeCarregarAntes = painelConversasCache.length >= PAINEL_LOTE_CONVERSA;
   if (box) box.innerHTML = barraCarregarAnteriores() + painelConversasCache.map(renderBolhaMensagemPainel).join('');
-  // Scroll robusto até a última mensagem (espera mídia carregar).
-  rolarConversaParaFim();
+  // Editar uma mensagem no meio da conversa redesenha tudo: fica onde estava.
+  if (manterPosicao && wrapAntes) { wrapAntes.scrollTop = topoAntes; return; }
+  // Abrir a conversa: vai para a última mensagem.
+  rolarConversaParaFim(true);
 }
 
 // Faixa no topo da thread. Só aparece quando ainda pode haver mensagem mais antiga.
@@ -3561,7 +3603,7 @@ async function editarMensagemPainel(conversaId) {
   try {
     await api('/movatak/admin/conversas/' + conversaId + '/editar', { method:'POST', body: JSON.stringify({ texto: novo.trim() }) });
     if (msg) msg.conteudo = novo.trim();
-    renderConversaPainel(painelConversasCache);
+    renderConversaPainel(painelConversasCache, { manterPosicao: true });
     setStatusPainel('✓ Mensagem editada.', 'var(--green)');
   } catch(e) { setStatusPainel('Erro ao editar: ' + e.message, 'var(--red)'); }
 }
@@ -3641,7 +3683,7 @@ async function enviarRecursoWhatsappPainel(recurso, payload) {
       reply_to_midia_url: replyTo ? replyTo.midia_url : null,
       reply_to_midia_tipo: replyTo ? replyTo.midia_tipo : null,
       criado_em: resp.criado_em || new Date().toISOString()
-    });
+    }, true);
     cancelarRespostaPainel(false);
     setStatusPainel('✓ Recurso enviado.', 'var(--green)');
   } catch(e) { setStatusPainel('Erro no recurso: ' + e.message, 'var(--red)'); }
@@ -3731,7 +3773,7 @@ async function enviarMensagemPainel() {
         reply_to_midia_url: (i === 0 && replyTo) ? replyTo.midia_url : null,
         reply_to_midia_tipo: (i === 0 && replyTo) ? replyTo.midia_tipo : null,
         criado_em: resp.criado_em || new Date().toISOString()
-      });
+      }, true);
     }
     cancelarRespostaPainel(false);
     document.getElementById('painel-msg-texto').value = '';
@@ -6736,7 +6778,7 @@ function iniciarSocketFunil(clienteId) {
 }
 
 // Acrescenta uma única mensagem ao final da conversa aberta, sem refazer tudo.
-function adicionarMensagemAoPainel(m) {
+function adicionarMensagemAoPainel(m, forcarFim) {
   if (!m) return;
   const box = document.getElementById('painel-conversa');
   if (!box) return;
@@ -6752,7 +6794,9 @@ function adicionarMensagemAoPainel(m) {
   tmp.innerHTML = renderBolhaMensagemPainel(m);
   const el = tmp.firstElementChild;
   if (el) box.appendChild(el);
-  rolarConversaParaFim();
+  // Quem acabou de ENVIAR quer ver a própria mensagem; mensagem recebida (socket) só
+  // desce a tela se a pessoa já estava no fim.
+  rolarConversaParaFim(!!forcarFim);
 }
 
 
