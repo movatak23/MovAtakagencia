@@ -896,7 +896,7 @@ async function iniciarAppVendedor() {
                 </div>
                 <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
                   
-                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button>
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button><button onclick="marcarLeadAtualComoPago()" class="btn-marcar-pago-topo" title="Marcar como pago (fecha a venda e avisa a Meta)" style="background:none;border:1px solid var(--green, #22c55e);border-radius:8px;color:var(--green, #22c55e);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-money"></use></svg></button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-transfer"></use></svg></button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-trash"></use></svg></button>
                   <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="height:30px;display:inline-flex;align-items:center;padding:0 9px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:11px;line-height:1;font-weight:700">FU1</button>
@@ -8399,7 +8399,7 @@ async function iniciarPaginaFunilAtendimento() {
                   <div id="painel-lead-fone" style="font-size:12px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button>
+                  <button onclick="marcarLeadAtualComoNaoLida()" id="btn-marcar-nao-lida" title="Marcar como não lida" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-check"></use></svg></button><button onclick="marcarLeadAtualComoPago()" class="btn-marcar-pago-topo" title="Marcar como pago (fecha a venda e avisa a Meta)" style="background:none;border:1px solid var(--green, #22c55e);border-radius:8px;color:var(--green, #22c55e);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-money"></use></svg></button>
                   <button onclick="abrirTransferirSetor()" id="btn-transferir-setor" title="Transferir atendimento para outro setor" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--text2);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-transfer"></use></svg></button>
                   <button onclick="excluirLeadAtual()" id="btn-excluir-lead" title="Excluir lead definitivamente" style="background:none;border:1px solid var(--border2);border-radius:8px;color:var(--red);font-size:14px;width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;padding:0;cursor:pointer;line-height:1"><svg class="mvic" viewBox="0 0 24 24" aria-hidden="true"><use href="#mv-trash"></use></svg></button>
                   <button onclick="reativarFollowupManual(window._painelLeadId, 1)" class="btn-top-fu" title="Disparar Follow-up 1 (boas-vindas) manualmente" style="height:30px;display:inline-flex;align-items:center;padding:0 9px;border:1px solid var(--amber);color:var(--amber);background:none;border-radius:8px;cursor:pointer;font-size:11px;line-height:1;font-weight:700">FU1</button>
@@ -9914,6 +9914,27 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', montarBotaoFunilView);
 } else {
   montarBotaoFunilView();
+}
+
+// ===== Atalho "Marcar como pago" no cabeçalho do lead aberto =====
+// Mesmo efeito do botão "Marcar pago" do card do funil: move o lead para a coluna de
+// cliente/fechado, o que fecha a venda, encerra a régua de cobrança, pausa o follow-up
+// e — como essa coluna tem meta_evento = Purchase — manda a VENDA para a Meta. Tudo
+// isso acontece no backend (moverLeadParaColunaFunil); aqui é só o atalho.
+async function marcarLeadAtualComoPago() {
+  const leadId = window._painelLeadId;
+  if (!leadId) { mostrarToast('Abra uma conversa primeiro.', 'erro'); return; }
+  const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId)) || {};
+  if (lead.etapa === 'cliente') { mostrarToast('Este lead já está marcado como pago.'); return; }
+  const col = acharColunaClienteFunil();
+  if (!col) { mostrarToast('Nenhuma etapa de cliente/fechado no funil.', 'erro'); return; }
+  const nome = lead.nome || 'este lead';
+  if (!confirm('Marcar ' + nome + ' como PAGO?\n\nIsso move para "' + col.nome + '", fecha a venda, encerra a cobrança e avisa a Meta da venda.')) return;
+  await moverLeadFunil(leadId, col.id);
+  // Atualiza o selo de etapa no cabeçalho com o estado novo do funil.
+  const atualizado = (funilState.leads || []).find(l => String(l.id) === String(leadId));
+  if (atualizado) { try { mostrarSetorLeadPainel(atualizado); } catch (e) {} }
+  mostrarToast('💰 ' + nome + ' marcado como pago.');
 }
 
 // Acha a etapa que representa "cliente/fechado" (etapa_sistema='cliente').
