@@ -9974,12 +9974,17 @@ async function marcarLeadAtualComoPago() {
   const leadId = window._painelLeadId;
   if (!leadId) { mostrarToast('Abra uma conversa primeiro.', 'erro'); return; }
   const lead = (funilState.leads || []).find(l => String(l.id) === String(leadId)) || {};
-  if (lead.etapa === 'cliente') { mostrarToast('Este lead já está marcado como pago.'); return; }
   const col = acharColunaClienteFunil();
   if (!col) { mostrarToast('Nenhuma etapa de cliente/fechado no funil.', 'erro'); return; }
+  // Vale a COLUNA onde o lead está, não o campo `etapa`: quem já comprou uma vez fica
+  // com etapa 'cliente' para sempre, mesmo voltando pra "Com Link de Pagamento" numa
+  // recompra — e o botão recusava marcar essa nova venda.
+  const colAtual = (funilState.colunas || []).find(c => Number(c.id) === Number(lead.funil_coluna_id));
+  if (colAtual && (colAtual.etapa_sistema || '') === 'cliente') { mostrarToast('Este lead já está em "' + colAtual.nome + '".'); return; }
   const nome = lead.nome || 'este lead';
   if (!confirm('Marcar ' + nome + ' como PAGO?\n\nIsso move para "' + col.nome + '", fecha a venda, encerra a cobrança e avisa a Meta da venda.')) return;
-  await moverLeadFunil(leadId, col.id);
+  const moveu = await moverLeadFunil(leadId, col.id);
+  if (!moveu) { mostrarToast('Não consegui mover o lead: ' + (moverLeadFunil.ultimoErro || 'erro desconhecido'), 'erro'); return; }
   // Atualiza o selo de etapa no cabeçalho com o estado novo do funil.
   const atualizado = (funilState.leads || []).find(l => String(l.id) === String(leadId));
   if (atualizado) { try { mostrarSetorLeadPainel(atualizado); } catch (e) {} }
@@ -10468,9 +10473,14 @@ async function moverLeadFunil(leadId, colunaId) {
     if (status) { status.style.color = 'var(--green)'; status.textContent = 'Lead movido e lista do WhatsApp sincronizada, quando disponível.'; }
     await carregarFunilAtendimento();
     if (secret) carregarTudo();
+    return true;
   } catch (e) {
+    // O status só aparece na tela do kanban; quem chama de outro lugar (botão 💰 da
+    // conversa) usa o retorno e o ultimoErro para avisar.
+    moverLeadFunil.ultimoErro = e.message;
     if (status) { status.style.color = 'var(--red)'; status.textContent = 'Erro ao mover: ' + e.message; }
     await carregarFunilAtendimento();
+    return false;
   }
 }
 
