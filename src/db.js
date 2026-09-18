@@ -427,6 +427,51 @@ async function garantirEstruturaMetaCapi() {
     ON movatak_meta_eventos (event_id) WHERE event_id IS NOT NULL`).catch(() => null);
 }
 
+// ============================================================
+// Integração Trello (produção) — FASE 0: só schema.
+//
+// O CRM cria o cartão de produção no Trello e a equipe trabalha lá (listas: Pauta UV,
+// Pauta Têxtil, Automotivo, Artes para produzir, Na máquina). Quando o cartão anda, o
+// Trello avisa e o CRM só MOSTRA a etapa no lead — não move o kanban nem avisa cliente.
+//
+// Uma linha POR PEDIDO (não um campo no lead): cliente que compra de novo ganha cartão
+// novo sem apagar o histórico do anterior. Cartão arquivado = pedido entregue.
+//
+// Credenciais: por cliente no banco, com fallback nas envs TRELLO_API_KEY /
+// TRELLO_TOKEN / TRELLO_API_SECRET do Railway. Tudo começa DESLIGADO.
+// ============================================================
+async function garantirEstruturaTrello() {
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS trello_ativo BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS trello_board_id TEXT,
+    ADD COLUMN IF NOT EXISTS trello_webhook_id TEXT,
+    ADD COLUMN IF NOT EXISTS trello_api_key TEXT,
+    ADD COLUMN IF NOT EXISTS trello_token TEXT,
+    ADD COLUMN IF NOT EXISTS trello_api_secret TEXT`).catch(() => null);
+
+  await query(`CREATE TABLE IF NOT EXISTS movatak_trello_cartoes (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    lead_id INTEGER NOT NULL,
+    card_id TEXT NOT NULL,
+    card_url TEXT,
+    titulo TEXT,
+    pedido_numero TEXT,
+    quantidade TEXT,
+    lista_id TEXT,
+    lista_nome TEXT,
+    arquivado BOOLEAN DEFAULT false,
+    criado_por TEXT,
+    criado_em TIMESTAMPTZ DEFAULT NOW(),
+    atualizado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  // O webhook do Trello chega pelo id do cartão: precisa ser único e rápido de achar.
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_trello_cartoes_card
+    ON movatak_trello_cartoes (card_id)`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_trello_cartoes_lead
+    ON movatak_trello_cartoes (lead_id, criado_em DESC)`).catch(() => null);
+}
+
 async function garantirEstruturaMensagensRapidas() {
   await query(`CREATE TABLE IF NOT EXISTS movatak_mensagens_rapidas (
     id SERIAL PRIMARY KEY,
@@ -754,6 +799,7 @@ module.exports = {
   garantirEstruturaQuestionario: umaVez(garantirEstruturaQuestionario),
   garantirEstruturaPlanos: umaVez(garantirEstruturaPlanos),
   garantirEstruturaMetaCapi: umaVez(garantirEstruturaMetaCapi),
+  garantirEstruturaTrello: umaVez(garantirEstruturaTrello),
   garantirEstruturaConversas: umaVez(garantirEstruturaConversas),
   garantirEstruturaMensagensRapidas: umaVez(garantirEstruturaMensagensRapidas),
   garantirEstruturaFunil: umaVez(garantirEstruturaFunil),

@@ -17,7 +17,7 @@ const {
   garantirEstruturaCampanhasTemplates, garantirEstruturaQuestionario, garantirEstruturaPlanos,
   garantirEstruturaConversas, garantirEstruturaMensagensRapidas, garantirEstruturaFunil,
   garantirEstruturaAgenda, garantirEstruturaCaptacao, garantirEstruturaAssinaturas,
-  garantirEstruturaCanais, garantirEstruturaDisparos, garantirEstruturaMetaCapi
+  garantirEstruturaCanais, garantirEstruturaDisparos, garantirEstruturaMetaCapi, garantirEstruturaTrello
 } = db;
 
 const {
@@ -2119,4 +2119,5 @@ httpServer.listen(PORT, () => {
   // primeira chamada da rota, então até alguém abrir o funil o campo não existia.
   garantirEstruturaMensagensRapidas().catch(e => console.error('[msgs-rapidas] schema:', e.message));
   garantirEstruturaMetaCapi().catch(e => console.error('[meta-capi] schema:', e.message));
+  garantirEstruturaTrello().catch(e => console.error('[trello] schema:', e.message));
 });
