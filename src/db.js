@@ -376,6 +376,57 @@ async function garantirEstruturaConversas() {
   await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_conversas_lead_msgid ON movatak_conversas(lead_id, msg_id) WHERE msg_id IS NOT NULL`).catch(() => null);
 }
 
+// ============================================================
+// Meta Conversions API (conversões offline) — FASE 0: só schema.
+//
+// Manda pra Meta o evento de conversão do lead (virou cliente, fechou pedido) pra
+// que ela saiba quais anúncios geram venda de verdade, não só conversa iniciada.
+//
+// Por que por TELEFONE e não por ctwa_clid: o casamento exato clique→venda exige o
+// whatsapp_business_account_id, que só existe em número na API oficial (Cloud API).
+// Aqui tudo roda na Z-API, então o match é pelo telefone criptografado (SHA-256), que
+// é o método que a própria Meta recomenda pra dado de CRM.
+//
+// Tudo começa DESLIGADO (meta_capi_ativo = false) e sem token: nada sai daqui até
+// alguém configurar e ligar.
+// ============================================================
+async function garantirEstruturaMetaCapi() {
+  await query(`ALTER TABLE movatak_clientes
+    ADD COLUMN IF NOT EXISTS meta_capi_ativo BOOLEAN DEFAULT false,
+    ADD COLUMN IF NOT EXISTS meta_dataset_id TEXT,
+    ADD COLUMN IF NOT EXISTS meta_access_token TEXT,
+    ADD COLUMN IF NOT EXISTS meta_test_event_code TEXT`).catch(() => null);
+
+  // Por coluna do kanban: qual evento mandar ao entrar nela (NULL = não manda nada)
+  // e o valor opcional da conversão.
+  await query(`ALTER TABLE movatak_funil_colunas
+    ADD COLUMN IF NOT EXISTS meta_evento TEXT,
+    ADD COLUMN IF NOT EXISTS meta_valor NUMERIC`).catch(() => null);
+
+  // Auditoria: toda tentativa de envio fica registrada, com a resposta da Meta.
+  // Sem isso não há como saber se a otimização está recebendo os eventos.
+  await query(`CREATE TABLE IF NOT EXISTS movatak_meta_eventos (
+    id SERIAL PRIMARY KEY,
+    cliente_id INTEGER NOT NULL,
+    lead_id INTEGER,
+    coluna_id INTEGER,
+    event_name TEXT NOT NULL,
+    event_id TEXT,
+    valor NUMERIC,
+    moeda TEXT,
+    status TEXT NOT NULL,
+    http_status INTEGER,
+    resposta TEXT,
+    erro TEXT,
+    criado_em TIMESTAMPTZ DEFAULT NOW()
+  )`).catch(() => null);
+  await query(`CREATE INDEX IF NOT EXISTS idx_meta_eventos_cliente
+    ON movatak_meta_eventos (cliente_id, criado_em DESC)`).catch(() => null);
+  // Trava de duplicata: o mesmo evento, do mesmo lead, no mesmo minuto, não repete.
+  await query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_meta_eventos_event_id
+    ON movatak_meta_eventos (event_id) WHERE event_id IS NOT NULL`).catch(() => null);
+}
+
 async function garantirEstruturaMensagensRapidas() {
   await query(`CREATE TABLE IF NOT EXISTS movatak_mensagens_rapidas (
     id SERIAL PRIMARY KEY,
@@ -702,6 +753,7 @@ module.exports = {
   garantirEstruturaCampanhasTemplates: umaVez(garantirEstruturaCampanhasTemplates),
   garantirEstruturaQuestionario: umaVez(garantirEstruturaQuestionario),
   garantirEstruturaPlanos: umaVez(garantirEstruturaPlanos),
+  garantirEstruturaMetaCapi: umaVez(garantirEstruturaMetaCapi),
   garantirEstruturaConversas: umaVez(garantirEstruturaConversas),
   garantirEstruturaMensagensRapidas: umaVez(garantirEstruturaMensagensRapidas),
   garantirEstruturaFunil: umaVez(garantirEstruturaFunil),

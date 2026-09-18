@@ -17,7 +17,7 @@ const {
   garantirEstruturaCampanhasTemplates, garantirEstruturaQuestionario, garantirEstruturaPlanos,
   garantirEstruturaConversas, garantirEstruturaMensagensRapidas, garantirEstruturaFunil,
   garantirEstruturaAgenda, garantirEstruturaCaptacao, garantirEstruturaAssinaturas,
-  garantirEstruturaCanais, garantirEstruturaDisparos
+  garantirEstruturaCanais, garantirEstruturaDisparos, garantirEstruturaMetaCapi
 } = db;
 
 const {
@@ -2116,4 +2116,5 @@ httpServer.listen(PORT, () => {
   // Mensagens rápidas também no boot: a coluna `categoria` (v2.27.0) só nascia na
   // primeira chamada da rota, então até alguém abrir o funil o campo não existia.
   garantirEstruturaMensagensRapidas().catch(e => console.error('[msgs-rapidas] schema:', e.message));
+  garantirEstruturaMetaCapi().catch(e => console.error('[meta-capi] schema:', e.message));
 });
