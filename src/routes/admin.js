@@ -27,6 +27,7 @@ function register(app, deps) {
     enviarFollowupsPendentesDoLead, erroEstruturaBanco, etapaSistemaPorSlug, exigeAgendamento, exigeCampanha,
     exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
     exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
+    EVENTOS_META, testarConexaoMeta, garantirEstruturaMetaCapi,
     followups, forcaClienteIdNaUrl, garantirColunasClientesPortal, garantirColunasVendedoresPortal, garantirEstruturaAgenda,
     garantirEstruturaCampanhasTemplates, garantirEstruturaCaptacao, garantirEstruturaConversas, garantirEstruturaFunil, garantirEstruturaMensagensRapidas,
     garantirEstruturaPlanos, garantirEstruturaQuestionario, garantirFunilPadraoCliente, gerarRespostaIALead, gerarToken,
@@ -3716,6 +3717,100 @@ app.patch('/movatak/admin/funil/colunas/:id/transferir', ...exigeColuna, async (
       `UPDATE movatak_funil_colunas SET transfere_para_cliente_id = $1, atualizado_em = NOW() WHERE id = $2 RETURNING *`,
       [destino, req.params.id]
     );
+    if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
+    res.json({ ok: true, coluna: r.rows[0] });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ===== Meta Conversions API: configuração, teste e conferência =====
+// O token NUNCA volta pro navegador: o GET devolve só se existe e os 4 últimos
+// caracteres, pra pessoa reconhecer qual token está lá sem poder copiá-lo daqui.
+app.get('/movatak/admin/clientes/:id/meta-capi', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaMetaCapi();
+    const r = await query(
+      `SELECT meta_capi_ativo, meta_dataset_id, meta_test_event_code,
+              (meta_access_token IS NOT NULL AND meta_access_token <> '') AS tem_token,
+              right(coalesce(meta_access_token,''), 4) AS token_final
+         FROM movatak_clientes WHERE id = $1`, [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const cols = await query(
+      `SELECT id, nome, meta_evento, meta_valor FROM movatak_funil_colunas
+        WHERE cliente_id = $1 AND ativo = true ORDER BY ordem NULLS LAST, id`, [req.params.id]);
+    res.json({ ...r.rows[0], eventos_disponiveis: EVENTOS_META, colunas: cols.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.patch('/movatak/admin/clientes/:id/meta-capi', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaMetaCapi();
+    if (req.ehCliente) return res.status(403).json({ error: 'Só o admin configura isto.' });
+    const { ativo, dataset_id, access_token, test_event_code } = req.body || {};
+    // Token em branco = não mexe (o front não recebe o valor atual, então mandar vazio
+    // não pode apagar o que está lá). Pra limpar, manda a string "REMOVER".
+    if (access_token === 'REMOVER') {
+      await query('UPDATE movatak_clientes SET meta_access_token = NULL WHERE id=$1', [req.params.id]);
+    } else if (access_token) {
+      await query('UPDATE movatak_clientes SET meta_access_token = $1 WHERE id=$2', [String(access_token).trim(), req.params.id]);
+    }
+    await query(
+      `UPDATE movatak_clientes
+          SET meta_capi_ativo = COALESCE($1, meta_capi_ativo),
+              meta_dataset_id = CASE WHEN $2::text IS NULL THEN meta_dataset_id ELSE NULLIF(btrim($2),'') END,
+              meta_test_event_code = CASE WHEN $3::text IS NULL THEN meta_test_event_code ELSE NULLIF(btrim($3),'') END
+        WHERE id = $4`,
+      [typeof ativo === 'boolean' ? ativo : null,
+       dataset_id === undefined ? null : String(dataset_id || ''),
+       test_event_code === undefined ? null : String(test_event_code || ''),
+       req.params.id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Manda um evento de TESTE (aparece em "Eventos de teste" no Gerenciador e não entra
+// na otimização). É como validar dataset/token sem sujar os dados.
+app.post('/movatak/admin/clientes/:id/meta-capi/testar', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaMetaCapi();
+    const r = await query('SELECT * FROM movatak_clientes WHERE id=$1', [req.params.id]);
+    if (!r.rows.length) return res.status(404).json({ error: 'Cliente não encontrado.' });
+    const resultado = await testarConexaoMeta(r.rows[0], (req.body && req.body.telefone) || null);
+    res.json(resultado);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Conferência: sem isto não há como saber se a Meta está recebendo os eventos.
+app.get('/movatak/admin/clientes/:id/meta-eventos', ...forcaClienteIdNaUrl, async (req, res) => {
+  try {
+    await garantirEstruturaMetaCapi();
+    const resumo = await query(
+      `SELECT status, count(*) AS qtd, max(criado_em) AS ultimo
+         FROM movatak_meta_eventos WHERE cliente_id = $1 AND criado_em > now() - interval '30 days'
+        GROUP BY status`, [req.params.id]);
+    const ultimos = await query(
+      `SELECT me.id, me.lead_id, l.nome AS lead_nome, me.event_name, me.valor, me.status,
+              me.http_status, left(coalesce(me.erro,''), 120) AS erro, me.criado_em
+         FROM movatak_meta_eventos me LEFT JOIN movatak_leads l ON l.id = me.lead_id
+        WHERE me.cliente_id = $1 ORDER BY me.criado_em DESC LIMIT 30`, [req.params.id]);
+    res.json({ resumo: resumo.rows, ultimos: ultimos.rows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Qual evento a coluna dispara ao receber um lead (NULL = nenhum).
+app.patch('/movatak/admin/funil/colunas/:id/meta-evento', ...exigeColuna, async (req, res) => {
+  try {
+    await garantirEstruturaMetaCapi();
+    const { meta_evento, meta_valor } = req.body || {};
+    const evento = (meta_evento === '' || meta_evento == null) ? null : String(meta_evento);
+    if (evento && !EVENTOS_META.includes(evento)) {
+      return res.status(400).json({ error: 'Evento não suportado pela Meta: ' + evento });
+    }
+    const valor = (meta_valor === '' || meta_valor == null) ? null : Number(meta_valor);
+    if (valor != null && !Number.isFinite(valor)) return res.status(400).json({ error: 'Valor inválido.' });
+    const r = await query(
+      `UPDATE movatak_funil_colunas SET meta_evento=$1, meta_valor=$2, atualizado_em=NOW()
+        WHERE id=$3 RETURNING id, nome, meta_evento, meta_valor`,
+      [evento, valor, req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Coluna não encontrada.' });
     res.json({ ok: true, coluna: r.rows[0] });
   } catch (e) { res.status(500).json({ error: e.message }); }

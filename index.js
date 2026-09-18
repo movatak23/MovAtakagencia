@@ -81,6 +81,7 @@ const menu = require('./src/menu');
 const { enviarBoasVindasLead, enviarMenuAtendimento, processarRespostaMenu } = menu;
 
 const funil = require('./src/funil');
+const metaCapi = require('./src/meta_capi');
 const { moverLeadParaFunilSlug, moverLeadParaColunaFunil, atribuirVendedorBalanceado } = funil;
 
 const antispam = require('./src/antispam');
@@ -2064,6 +2065,7 @@ rotasAdmin.register(app, {
   enviarFollowupsPendentesDoLead, erroEstruturaBanco, etapaSistemaPorSlug, exigeAgendamento, exigeCampanha,
   exigeColuna, exigeConversa, exigeLead, exigeMsgRapida, exigePlano,
   exigeQuestTemplate, exigeSetor, exigeTemplateFU, exigeVendedor, extrairComandosDoBody,
+  EVENTOS_META: metaCapi.EVENTOS_META, testarConexaoMeta: metaCapi.testarConexaoMeta, garantirEstruturaMetaCapi,
   followups, forcaClienteIdNaUrl, garantirColunasClientesPortal, garantirColunasVendedoresPortal, garantirEstruturaAgenda,
   garantirEstruturaCampanhasTemplates, garantirEstruturaCaptacao, garantirEstruturaConversas, garantirEstruturaFunil, garantirEstruturaMensagensRapidas,
   garantirEstruturaPlanos, garantirEstruturaQuestionario, garantirFunilPadraoCliente, gerarRespostaIALead, gerarToken,

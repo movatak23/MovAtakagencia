@@ -8,6 +8,7 @@ const { query, garantirEstruturaFunil } = require('./db');
 const { registrarEventoLead } = require('./leads');
 const { zapiAtribuirEtiqueta, zapiRemoverEtiqueta } = require('./zapi');
 const { cancelarCobrancaLead } = require('./cobranca');
+const { enviarEventoMeta } = require('./meta_capi');
 
 // Deps ainda no index.js, injetadas no boot via init() (dependem de nicho/
 // zapi-extractors que sairao depois). Corpo movido byte-identico.
@@ -66,7 +67,9 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
   const r = await query(
     `SELECT l.id, l.cliente_id, l.telefone, l.nome, l.funil_coluna_id AS coluna_anterior_id,
             fc.id AS coluna_id, fc.nome AS coluna_nome, fc.slug, fc.etapa_sistema, fc.sincronizar_whatsapp, fc.zapi_tag_id, fc.setor_id AS coluna_setor_id, fc.transfere_para_cliente_id,
-            c.zapi_instance, c.zapi_token, c.zapi_client_token
+            fc.meta_evento, fc.meta_valor,
+            c.zapi_instance, c.zapi_token, c.zapi_client_token,
+            c.meta_capi_ativo, c.meta_dataset_id, c.meta_access_token, c.meta_test_event_code
        FROM movatak_leads l
        JOIN movatak_funil_colunas fc ON fc.id = $2 AND fc.cliente_id = l.cliente_id AND fc.ativo = true
        JOIN movatak_clientes c ON c.id = l.cliente_id
@@ -125,6 +128,20 @@ async function moverLeadParaColunaFunil(leadId, colunaId, registrar = true) {
 
   if (registrar) {
     await registrarEventoLead(leadId, row.cliente_id, 'funil_movido', `Lead movido para ${row.coluna_nome}`, { coluna_id: colunaId, coluna_nome: row.coluna_nome, etapa });
+  }
+
+  // [meta-capi] Conversão pra Meta: a coluna de destino diz QUAL evento mandar
+  // (meta_evento). Sem isso configurado, nada sai — é o caso de toda coluna hoje.
+  // Fire-and-forget de propósito: o envio leva até 12s e não pode segurar o
+  // movimento do lead no funil. O módulo nunca lança e grava a própria auditoria.
+  if (row.meta_evento && row.meta_capi_ativo) {
+    enviarEventoMeta(
+      { id: row.cliente_id, meta_capi_ativo: row.meta_capi_ativo, meta_dataset_id: row.meta_dataset_id,
+        meta_access_token: row.meta_access_token, meta_test_event_code: row.meta_test_event_code },
+      { id: leadId, telefone: row.telefone },
+      row.meta_evento,
+      { valor: row.meta_valor, colunaId }
+    ).catch(e => console.error('[meta-capi] disparo do funil falhou:', e.message));
   }
 
   // [prospeccao] Transferencia automatica: se a coluna de destino estiver marcada
