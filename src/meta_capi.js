@@ -11,8 +11,8 @@
 // número na API oficial da Meta; aqui tudo roda na Z-API. O telefone é o método que a
 // própria Meta recomenda pra dado vindo de CRM.
 //
-// ⚠️ NINGUÉM CHAMA ESTE MÓDULO AINDA. A Fase 2 é que liga os gatilhos no funil.
-// Enquanto isso o arquivo é inerte: importá-lo não muda comportamento nenhum.
+// Quem chama: moverLeadParaColunaFunil (src/funil.js), quando a coluna de destino tem
+// meta_evento configurado e o cliente está com meta_capi_ativo. Fire-and-forget.
 //
 // Regras que valem sempre:
 //   - gated: só envia se o cliente tiver meta_capi_ativo = true, dataset e token;
@@ -98,13 +98,17 @@ function montarPayload(cliente, lead, eventName, opts = {}) {
   return corpo;
 }
 
+// ⚠️ O índice único de event_id é PARCIAL (WHERE event_id IS NOT NULL), e o Postgres
+// só casa ON CONFLICT com índice parcial se o predicado for repetido aqui. Sem ele o
+// INSERT falha com "no unique or exclusion constraint matching" — foi o que deixou a
+// auditoria vazia na primeira noite, mesmo com os eventos chegando na Meta.
 async function registrarAuditoria(dados) {
   await garantirEstruturaMetaCapi();
   await query(
     `INSERT INTO movatak_meta_eventos
        (cliente_id, lead_id, coluna_id, event_name, event_id, valor, moeda, status, http_status, resposta, erro)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-     ON CONFLICT (event_id) DO NOTHING`,
+     ON CONFLICT (event_id) WHERE event_id IS NOT NULL DO NOTHING`,
     [dados.clienteId, dados.leadId || null, dados.colunaId || null, dados.eventName,
      dados.eventId || null, dados.valor ?? null, dados.moeda || null, dados.status,
      dados.httpStatus || null, dados.resposta ? String(dados.resposta).slice(0, 2000) : null,
